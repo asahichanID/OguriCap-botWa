@@ -123,6 +123,7 @@ import { profile } from './musume/upgrade/profile.js'
 import { leaderboard } from './musume/upgrade/leaderboard.js'
 import { afk } from './musume/upgrade/afk.js'
 import { play } from './musume/upgrade/play.js'
+import { play2 } from './musume/upgrade/play2.js'
 import { ytmp3, ytmp4, tiktok, ttmp3, cariSpotify, unduhSpotify, instagram } from './musume/upgrade/tracendd.js'
 import { audit, bansos } from './musume/economy/academy.js'
 import { banktracen, cekbank } from './musume/economy/banktracen.js'
@@ -4206,6 +4207,19 @@ Select Bot Settings:
                 
                 }
                 
+                break
+    			case 'play2':
+                case 'ytplay2':
+                case 'spotify2': {
+                await play2(
+                naze,
+                m,
+                text,
+                prefix,
+                command,
+                db
+                )
+                }
                 break
     			case 'pixiv': {
 				if (!isLimit) return m.reply(global.mess.limit)
