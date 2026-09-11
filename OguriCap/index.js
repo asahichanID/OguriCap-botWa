@@ -523,7 +523,7 @@ async function startNazeBot() {
 					await naze.sendMessage(o, { document: fs.readFileSync(datanya), mimetype: 'application/json', fileName: new Date().toISOString().replace(/[:.]/g, '-') + '_database.json' })
 					console.log(chalk.cyanBright(`[AUTO BACKUP] Backup success send to ${o}`));
 				} catch (e) {
-					console.error(chalk.cyanBright(`[AUTO BACKUP] Failed to Sending Backup ${o}:`, error));
+					console.error(chalk.cyanBright(`[AUTO BACKUP] Failed to Sending Backup ${o}:`, e));
 				}
 			}
 		}

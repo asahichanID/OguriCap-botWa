@@ -159,6 +159,12 @@ export const pull = async (naze, m, db) => {
     const user = db.users[m.sender]
     if (!user) return m.reply('❌ Data tidak ditemukan.')
 
+    if (user.afkTime > -1) {
+      user.afkTime = -1
+      user.afkReason = ''
+      if (global._dbDirty !== undefined) global._dbDirty = true
+    }
+
     if (isPullLocked(m.sender)) {
       return m.reply('⏳ Pull sedang diproses. Harap tunggu...')
     }
@@ -168,10 +174,12 @@ export const pull = async (naze, m, db) => {
       await handleSinglePull(naze, m, db, user, 'permanent', false)
     } finally {
       releasePullLock(m.sender)
+      cleanAfterPull(m.sender)
     }
   } catch (err) {
     console.log('❌ PULL ERROR:', err)
     releasePullLock(m.sender)
+    cleanAfterPull(m.sender)
     return m.reply('❌ Pull Error. Coba lagi.')
   } finally {
     guard.release()
@@ -189,6 +197,12 @@ export const multipull = async (naze, m, db, jumlahPull = null) => {
     const user = db.users[m.sender]
     if (!user) return m.reply('❌ Data tidak ditemukan.')
 
+    if (user.afkTime > -1) {
+      user.afkTime = -1
+      user.afkReason = ''
+      if (global._dbDirty !== undefined) global._dbDirty = true
+    }
+
     if (isPullLocked(m.sender)) {
       return m.reply('⏳ Pull sedang diproses. Harap tunggu...')
     }
@@ -198,10 +212,12 @@ export const multipull = async (naze, m, db, jumlahPull = null) => {
       await handleMultiPull(naze, m, db, user, 'permanent', false, jumlahPull)
     } finally {
       releasePullLock(m.sender)
+      cleanAfterPull(m.sender)
     }
   } catch (err) {
     console.log('❌ MULTIPULL ERROR:', err)
     releasePullLock(m.sender)
+    cleanAfterPull(m.sender)
     return m.reply('❌ Multi Pull Error. Coba lagi.')
   } finally {
     guard.release()
@@ -221,6 +237,12 @@ export const lpull = async (naze, m, db) => {
     const user = db.users[m.sender]
     if (!user) return m.reply('❌ Data tidak ditemukan.')
 
+    if (user.afkTime > -1) {
+      user.afkTime = -1
+      user.afkReason = ''
+      if (global._dbDirty !== undefined) global._dbDirty = true
+    }
+
     if (isPullLocked(m.sender)) {
       return m.reply('⏳ Pull sedang diproses. Harap tunggu...')
     }
@@ -230,10 +252,12 @@ export const lpull = async (naze, m, db) => {
       await handleSinglePull(naze, m, db, user, 'limited', false)
     } finally {
       releasePullLock(m.sender)
+      cleanAfterPull(m.sender)
     }
   } catch (err) {
     console.log('❌ LPULL ERROR:', err)
     releasePullLock(m.sender)
+    cleanAfterPull(m.sender)
     return m.reply('❌ Limited Pull Error. Coba lagi.')
   } finally {
     guard.release()
@@ -252,6 +276,12 @@ export const lmulti = async (naze, m, db, jumlahPull = null) => {
     const user = db.users[m.sender]
     if (!user) return m.reply('❌ Data tidak ditemukan.')
 
+    if (user.afkTime > -1) {
+      user.afkTime = -1
+      user.afkReason = ''
+      if (global._dbDirty !== undefined) global._dbDirty = true
+    }
+
     if (isPullLocked(m.sender)) {
       return m.reply('⏳ Pull sedang diproses. Harap tunggu...')
     }
@@ -261,10 +291,12 @@ export const lmulti = async (naze, m, db, jumlahPull = null) => {
       await handleMultiPull(naze, m, db, user, 'limited', false, jumlahPull)
     } finally {
       releasePullLock(m.sender)
+      cleanAfterPull(m.sender)
     }
   } catch (err) {
     console.log('❌ LMULTI ERROR:', err)
     releasePullLock(m.sender)
+    cleanAfterPull(m.sender)
     return m.reply('❌ Limited Multi Error. Coba lagi.')
   } finally {
     guard.release()
@@ -280,6 +312,12 @@ export const tpull = async (naze, m, db, args) => {
     const user = db.users[m.sender]
     if (!user) return m.reply('❌ Data tidak ditemukan.')
 
+    if (user.afkTime > -1) {
+      user.afkTime = -1
+      user.afkReason = ''
+      if (global._dbDirty !== undefined) global._dbDirty = true
+    }
+
     const type = args?.[0]?.toLowerCase() === 'limited' ? 'limited' : 'permanent'
 
     if (isPullLocked(m.sender)) {
@@ -291,10 +329,12 @@ export const tpull = async (naze, m, db, args) => {
       await handleSinglePull(naze, m, db, user, type, true)
     } finally {
       releasePullLock(m.sender)
+      cleanAfterPull(m.sender)
     }
   } catch (err) {
     console.log('❌ TPULL ERROR:', err)
     releasePullLock(m.sender)
+    cleanAfterPull(m.sender)
     return m.reply('❌ Ticket Pull Error.')
   }
 }

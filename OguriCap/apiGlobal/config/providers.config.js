@@ -43,7 +43,7 @@ const DEFAULTS = {
 	// path/response persis untuk layanan lain PERLU diverifikasi ulang
 	// oleh pemilik bot sebelum diaktifkan penuh (lihat AUDIT_REPORT.md).
 	neoxr: {
-		baseUrl: 'https://api.neoxr.eu/api',
+		baseUrl: 'https://neo-api1.asahichanid.deno.net/api',
 		key: 'j3i3mg'
 	},
 	// Provider fallback tambahan yang sebelumnya sudah dipakai secara

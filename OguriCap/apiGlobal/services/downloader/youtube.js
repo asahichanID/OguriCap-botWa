@@ -37,6 +37,7 @@ function normalize(raw) {
 		download: pickField(raw, ['download', 'url']),
 		filename: pickField(raw, ['filename', 'title']),
 		author: pickField(raw, ['author', 'channel']),
+		thumbnail: pickField(raw, ['thumbnail', 'image', 'cover']),
 		views: rawViews ? Number(String(rawViews).replace(/[^\d]/g, '')) || 0 : 0,
 		ago: pickField(raw, ['ago', 'publish']),
 		size: pickField(raw, ['size']),
@@ -94,19 +95,16 @@ export async function apiYoutubeSearch(query) {
   const timeout = getTimeout(SERVICE_GROUP)
 
   const providers = [
-  
-    nazeRequest(
-      '/search/youtube',
-      { query },
-      { timeout }
-    ),
-    
     neoxrRequest(
       '/yts',
       { q: query },
       { timeout }
+    ),
+    nazeRequest(
+      '/search/youtube',
+      { query },
+      { timeout }
     )
-    
   ]
 
   const { raw, providerName } = await runProviders(
@@ -118,42 +116,72 @@ export async function apiYoutubeSearch(query) {
     }
   )
 
-  let result = []
+  let items = []
 
   if (providerName === 'neoxr') {
-    result = raw?.data ?? []
+    items = raw?.data ?? []
 
-    if (!Array.isArray(result)) {
-      result =
-        result?.items ??
-        result?.videos ??
-        result?.results ??
+    if (!Array.isArray(items)) {
+      items =
+        items?.items ??
+        items?.videos ??
+        items?.results ??
         []
     }
+
+    items = items.map(v => {
+      const vid = v.videoId || (v.url && v.url.match(/(?:v=|youtu\.be\/)([\w-]{11})/)?.[1]) || '';
+      const thumb = v.thumbnail || v.image || (vid ? `https://i.ytimg.com/vi/${vid}/hqdefault.jpg` : '');
+      const dur = v.timestamp || (v.duration && (v.duration.timestamp || v.duration.seconds)) || (v.seconds ? `${Math.floor(v.seconds / 60)}:${String(v.seconds % 60).padStart(2, '0')}` : '--:--');
+      const authorName = (v.author && (v.author.name || v.author)) || 'YouTube Music';
+      return {
+        type: 'video',
+        videoId: vid,
+        url: v.url || `https://youtube.com/watch?v=${vid}`,
+        title: v.title || '',
+        description: v.description || '',
+        thumbnail: thumb,
+        image: thumb,
+        timestamp: typeof dur === 'string' ? dur : '03:30',
+        seconds: v.seconds || (v.duration && v.duration.seconds) || 0,
+        ago: v.ago || '',
+        views: v.views || 0,
+        author: {
+          name: authorName,
+          url: v.author?.url || ''
+        }
+      };
+    });
   } else {
-    const items =
+    const rawList =
       raw?.result?.items ??
       raw?.data?.items ??
       []
 
-    result = items.map(v => ({
-      title: v.snippet?.title,
+    items = rawList.map(v => ({
+      type: 'video',
+      title: v.snippet?.title || '',
       url: `https://youtu.be/${v.id?.videoId}`,
-      videoId: v.id?.videoId,
+      videoId: v.id?.videoId || '',
       thumbnail:
         v.snippet?.thumbnails?.high?.url ??
         v.snippet?.thumbnails?.medium?.url ??
-        v.snippet?.thumbnails?.default?.url,
+        v.snippet?.thumbnails?.default?.url ??
+        '',
+      image:
+        v.snippet?.thumbnails?.high?.url ??
+        v.snippet?.thumbnails?.medium?.url ??
+        '',
       timestamp: '--:--',
-      ago: v.snippet?.publishedAt,
+      ago: v.snippet?.publishedAt || '',
       views: 0,
       author: {
-        name: v.snippet?.channelTitle
+        name: v.snippet?.channelTitle || 'YouTube Music'
       }
     }))
   }
 
-  return envelope(result, providerName, raw)
+  return envelope(items, providerName, raw)
 }
 /**
  * Unduh AUDIO YouTube berdasarkan URL video (dipakai oleh layanan `play`
@@ -166,12 +194,11 @@ export async function apiYoutubeAudio(url) {
 	if (!url) throw new ValidationError('apiYoutubeAudio: parameter "url" wajib diisi.');
 
 	const timeout = getTimeout(SERVICE_GROUP);
-	const isValid = (raw) => Boolean(mergeNeoxr(raw)?.url || raw?.result?.download);
+	const isValid = (raw) => Boolean(mergeNeoxr(raw)?.url || raw?.result?.download || raw?.data?.url);
 
 	const providers = [
-	
-        validated(nazeRequest('/download/aio2', { url }, { timeout }), raw => Boolean(pickAio2Audio(raw)?.url)),	
 		validated(neoxrRequest('/youtube', { url, type: 'audio', quality: '128kbps' }, { timeout }), isValid),
+		validated(nazeRequest('/download/aio2', { url }, { timeout }), raw => Boolean(pickAio2Audio(raw)?.url)),	
 		nazeRequest('/download/youtube', { url, format: 'mp3' }, { timeout })
 	];
 

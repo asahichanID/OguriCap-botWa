@@ -67,7 +67,10 @@ export function neoxrRequest(endpoint, params = {}, options = {}) {
 		timeout,
 
 		async run() {
-			const base = getBaseUrl('neoxr');
+			const primaryBase = getBaseUrl('neoxr');
+			const fallbackBase = primaryBase?.includes('neo-api1.asahichanid.deno.net') 
+				? 'https://api.neoxr.eu/api' 
+				: 'https://neo-api1.asahichanid.deno.net/api';
 			const apikey = getApiKey('neoxr');
 			const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
@@ -77,61 +80,77 @@ export function neoxrRequest(endpoint, params = {}, options = {}) {
 				extensionHint
 			};
 
-			let response;
+			async function doRequest(baseUrl) {
+				// ===========================
+				// GET
+				// ===========================
+				if (method.toUpperCase() === 'GET') {
+					const queryObj = { ...params };
+					if (apikey) queryObj.apikey = apikey;
+					const query = new URLSearchParams(queryObj);
 
-			// ===========================
-			// GET
-			// ===========================
-			if (method.toUpperCase() === 'GET') {
-				const query = new URLSearchParams({ ...params, apikey });
+					return await request({
+						...requestOptions,
+						url: `${baseUrl}${path}?${query}`,
+						method: 'GET',
+						responseType: 'json'
+					});
 
-				response = await request({
-					...requestOptions,
-					url: `${base}${path}?${query}`,
-					method: 'GET',
-					responseType: 'json'
-				});
-
-			// ===========================
-			// FORM DATA
-			// ===========================
-			} else if (form) {
-            	form.append('apikey', apikey);
-            
-            	response = await request({
-            		...requestOptions,
-            		url: `${base}${path}`,
-            		method: 'POST',
-            		data: form,
-            		responseType: 'json',
-            		headers: {
-            			...(typeof form.getHeaders === 'function' ? form.getHeaders() : {}),
-            			...headers
-            		}
-            	});
-            
-            console.log('===== NEOXR REMINI RESPONSE =====')
-            console.dir(response, { depth: null })
-
-			// ===========================
-			// POST JSON
-			// ===========================
-			} else {
-				response = await request({
-					...requestOptions,
-					url: `${base}${path}`,
-					method: 'POST',
-					responseType: 'json',
-					headers: {
-						'content-type': 'application/json',
-						...headers
-					},
-					data: {
-						...params,
-						...(body || {}),
-						apikey
+				// ===========================
+				// FORM DATA
+				// ===========================
+				} else if (form) {
+					if (apikey && typeof form.append === 'function') {
+						form.append('apikey', apikey);
 					}
-				});
+
+					return await request({
+						...requestOptions,
+						url: `${baseUrl}${path}`,
+						method: 'POST',
+						data: form,
+						responseType: 'json',
+						headers: {
+							...(typeof form.getHeaders === 'function' ? form.getHeaders() : {}),
+							...headers
+						}
+					});
+
+				// ===========================
+				// POST JSON
+				// ===========================
+				} else {
+					return await request({
+						...requestOptions,
+						url: `${baseUrl}${path}`,
+						method: 'POST',
+						responseType: 'json',
+						headers: {
+							'content-type': 'application/json',
+							...headers
+						},
+						data: {
+							...params,
+							...(body || {}),
+							...(apikey ? { apikey } : {})
+						}
+					});
+				}
+			}
+
+			let response;
+			try {
+				response = await doRequest(primaryBase);
+			} catch (err) {
+				if (fallbackBase && fallbackBase !== primaryBase) {
+					try {
+						response = await doRequest(fallbackBase);
+					} catch {
+						throw err;
+					}
+				} else {
+					throw err;
+				}
 			}
 
 			// ===========================
@@ -143,15 +162,14 @@ export function neoxrRequest(endpoint, params = {}, options = {}) {
 			// 'stream'/'buffer', provider WAJIB otomatis mengunduh file itu
 			// sendiri supaya command tidak perlu tahu ada 2 langkah request.
 			if (responseType === 'stream' || responseType === 'buffer') {
-			console.log('Resolved fileUrl:', fileUrl)
 				const fileUrl =
-                    response?.data?.url ??
-                    response?.data?.result ??
-                    response?.data?.image ??
-                    response?.data?.video ??
-                    response?.data?.audio ??
-                    response?.url ??
-                    response?.result
+					response?.data?.url ??
+					response?.data?.result ??
+					response?.data?.image ??
+					response?.data?.video ??
+					response?.data?.audio ??
+					response?.url ??
+					response?.result;
 
 				if (!fileUrl) return response;
 

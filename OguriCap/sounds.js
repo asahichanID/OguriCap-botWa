@@ -21,7 +21,7 @@ export const autoSound = async (
 	.toLowerCase()
 	.trim()
 
-	if (!pesan)
+	if (!pesan || m.key?.fromMe || m.fromMe || m.isBaileys)
 		return false
 
 	let kata = Object.keys(

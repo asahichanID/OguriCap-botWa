@@ -49,6 +49,7 @@ import {
 
 import { addBankActivity } from '../bankaktivitas.js'
 import { getCharacterImage } from '../umaimage.js'
+import { cleanAfterPull } from './garbage/cleaner.js'
 
 // ── Absolute Monster Router Hook ───────────────────────────────────────
 import {
@@ -272,6 +273,13 @@ export const handleSinglePull = async (naze, m, db, user, bannerType = 'permanen
     return handleMonsterPull(naze, m, db, user)
   }
 
+  // Proteksi status AFK pengguna: jangan biarkan status AFK aktif selama proses pull
+  if (user && user.afkTime > -1) {
+    user.afkTime = -1
+    user.afkReason = ''
+    if (global._dbDirty !== undefined) global._dbDirty = true
+  }
+
   try {
     const cfg = getConfig(bannerType)
     const ticketType = bannerType === 'limited' ? 'limited' : 'banner'
@@ -389,6 +397,8 @@ export const handleSinglePull = async (naze, m, db, user, bannerType = 'permanen
   } catch (err) {
     console.log('❌ SINGLE PULL ERROR:', err)
     return m.reply('❌ Pull Error. Silakan coba lagi.')
+  } finally {
+    cleanAfterPull(m.sender)
   }
 }
 
@@ -400,6 +410,13 @@ export const handleMultiPull = async (naze, m, db, user, bannerType = 'permanent
   // ── ABSOLUTE MONSTER ROUTER HOOK ──────────────────────────────────────
   if (bannerType === 'limited' && isMonsterActive()) {
     return handleMonsterMulti(naze, m, db, user, count)
+  }
+
+  // Proteksi status AFK pengguna: jangan biarkan status AFK aktif selama proses pull
+  if (user && user.afkTime > -1) {
+    user.afkTime = -1
+    user.afkReason = ''
+    if (global._dbDirty !== undefined) global._dbDirty = true
   }
 
   try {
@@ -543,8 +560,10 @@ export const handleMultiPull = async (naze, m, db, user, bannerType = 'permanent
     console.log(`✅ MULTI PULL [${bannerType}] ${m.sender} — ${results.length} hasil`)
 
   } catch (err) {
-    console.log('❌ MULTI PULL ERROR:', err)
+    console.log('❌ MULTIPULL ERROR:', err)
     return m.reply('❌ Multi Pull Error. Silakan coba lagi.')
+  } finally {
+    cleanAfterPull(m.sender)
   }
 }
 

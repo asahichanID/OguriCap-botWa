@@ -865,74 +865,109 @@ const naze = async (naze, m, msg, store) => {
 			}
 		}
 		
-	// Afk
-        const afkuma = getUmaQuote(pickRandom)
-        const returnuma = getUmaQuote(pickRandom)
-        let mentionUser = [...new Set([
-        	...(m.mentionedJid || []),
-        	...(m.quoted ? [m.quoted.sender] : [])
-        ])]
-        
-        for (let jid of mentionUser) {
-        
-        	let user = db.users[jid]
-        	if (!user) continue
-        
-        	let afkTime = user.afkTime
-        	if (!afkTime || afkTime < 0) continue
-        
-        	let reason = user.afkReason || 'Sedang beristirahat'
-        
-        	m.reply(`
-        ╭─❖「 🏇 𝐓𝐑𝐀𝐈𝐍𝐄𝐑 𝐁𝐑𝐄𝐀𝐊 🏇 」
-        │
-        ├ 🐎 Runner
-        │ ❍ @${jid.split('@')[0]}
-        │
-        ├ 📝 Last Training
-        │ ❍ ${reason}
-        │
-        ├ ⏳ Rest Duration
-        │ ❍ ${clockString(new Date - afkTime)}
-        │
-        ╰─────────────❖
-        
-        💬 ${afkuma.name}
-        "${afkuma.quote}"
-        `.trim(), {
-        		mentions: [jid]
-        	})
-        
-        }
-        
-        if (db.users[m.sender].afkTime > -1) {
-        
-        	let user = db.users[m.sender]
-        
-        	m.reply(`
-        ╭─❖「 🏁 𝐓𝐑𝐀𝐈𝐍𝐄𝐑 𝐑𝐄𝐓𝐔𝐑𝐍𝐒 🏁 」
-        │
-        ├ 🐎 Runner
-        │ ❍ @${m.sender.split('@')[0]}
-        │
-        ├ 📝 Finished Training
-        │ ❍ ${user.afkReason || 'Istirahat'}
-        │
-        ├ ⏳ Break Duration
-        │ ❍ ${clockString(new Date - user.afkTime)}
-        │
-        ╰─────────────❖
-        
-        💬 ${returnuma.name}
-        "${returnuma.quote}"
-        `.trim(), {
-        		mentions: [m.sender]
-        	})
-        
-        	user.afkTime = -1
-        	user.afkReason = ''
-        
-        }
+	// Afk (dengan proteksi anti-spam, anti-loop, dan isolasi pesan bot)
+	const isSenderBot = Boolean(
+		m.key?.fromMe ||
+		m.fromMe ||
+		m.isBot ||
+		m.sender === botNumber ||
+		m.sender === naze.decodeJid(naze.user?.lid || '')
+	);
+
+	if (!isSenderBot && db.users && db.users[m.sender]) {
+		// 1. Trainer Returns: Pengguna kembali dari AFK
+		if (db.users[m.sender].afkTime > -1) {
+			const user = db.users[m.sender];
+			const previousAfkTime = user.afkTime;
+			const previousAfkReason = user.afkReason || 'Istirahat';
+
+			// Reset status AFK SECARA LANGSUNG sebelum reply untuk mencegah race condition
+			user.afkTime = -1;
+			user.afkReason = '';
+			global._dbDirty = true;
+
+			const returnuma = getUmaQuote(pickRandom);
+			await m.reply(`
+╭─❖「 🏁 𝐓𝐑𝐀𝐈𝐍𝐄𝐑 𝐑𝐄𝐓𝐔𝐑𝐍𝐒 🏁 」
+│
+├ 🐎 Runner
+│ ❍ @${m.sender.split('@')[0]}
+│
+├ 📝 Finished Training
+│ ❍ ${previousAfkReason}
+│
+├ ⏳ Break Duration
+│ ❍ ${clockString(new Date - previousAfkTime)}
+│
+╰─────────────❖
+
+💬 ${returnuma.name}
+"${returnuma.quote}"
+`.trim(), {
+				mentions: [m.sender]
+			});
+		}
+
+		// 2. Trainer Break: Pengguna lain mention/quote pengguna yang sedang AFK
+		let mentionUser = [...new Set([
+			...(m.mentionedJid || []),
+			...(m.quoted ? [m.quoted.sender] : [])
+		])].filter(jid =>
+			jid &&
+			jid !== m.sender &&
+			jid !== botNumber &&
+			jid !== naze.decodeJid(naze.user?.lid || '')
+		);
+
+		if (mentionUser.length > 0) {
+			global._afkNotifyCooldown ??= new Map();
+			const now = Date.now();
+
+			for (let jid of mentionUser) {
+				let user = db.users[jid];
+				if (!user) continue;
+
+				let afkTime = user.afkTime;
+				if (!afkTime || afkTime < 0) continue;
+
+				// Rate limit: maksimal 1 notifikasi AFK per user per chat dalam 30 detik
+				const cdKey = `${m.chat}:${jid}`;
+				const lastNotified = global._afkNotifyCooldown.get(cdKey) || 0;
+				if (now - lastNotified < 30000) continue;
+				global._afkNotifyCooldown.set(cdKey, now);
+
+				let reason = user.afkReason || 'Sedang beristirahat';
+				const afkuma = getUmaQuote(pickRandom);
+
+				await m.reply(`
+╭─❖「 🏇 𝐓𝐑𝐀𝐈𝐍𝐄𝐑 𝐁𝐑𝐄𝐀𝐊 🏇 」
+│
+├ 🐎 Runner
+│ ❍ @${jid.split('@')[0]}
+│
+├ 📝 Last Training
+│ ❍ ${reason}
+│
+├ ⏳ Rest Duration
+│ ❍ ${clockString(new Date - afkTime)}
+│
+╰─────────────❖
+
+💬 ${afkuma.name}
+"${afkuma.quote}"
+`.trim(), {
+					mentions: [jid]
+				});
+			}
+
+			// Prune cooldown map jika sudah terlalu banyak entri
+			if (global._afkNotifyCooldown.size > 500) {
+				for (const [k, v] of global._afkNotifyCooldown.entries()) {
+					if (now - v > 60000) global._afkNotifyCooldown.delete(k);
+				}
+			}
+		}
+	}
         
         await autoSound(
         	naze,
@@ -2867,7 +2902,7 @@ ${sisaLimit <= 0 ? '❌ Energimu (limit) habis untuk hari ini.\nLimit akan otoma
             break
             // ── Banner Shop v2 ──────────────────────────────
             case 'pull': case 'gacha': {
-            	pull(naze,m,db)
+            	await pull(naze,m,db)
             	global._dbDirty = true
             }
             break
@@ -2879,7 +2914,7 @@ ${sisaLimit <= 0 ? '❌ Energimu (limit) habis untuk hari ini.\nLimit akan otoma
             break           
 
             case 'lpull': case 'limitedpull': {
-            	lpull(naze,m,db)
+            	await lpull(naze,m,db)
             	global._dbDirty = true
             }
             break
@@ -2890,49 +2925,49 @@ ${sisaLimit <= 0 ? '❌ Energimu (limit) habis untuk hari ini.\nLimit akan otoma
             }
             break
             case 'tpull': case 'ticketpull': {
-            	tpull(naze,m,db,args)
+            	await tpull(naze,m,db,args)
             	global._dbDirty = true
             }
             break
             case 'banner': case 'infobanner': {
-            	banner(naze,m,db,args)
+            	await banner(naze,m,db,args)
             }
             break
             case 'bannerl': case 'bannerltd': case 'limitedinfo': {
-            	bannerl(naze,m,db,args)
+            	await bannerl(naze,m,db,args)
             }
             break
             case 'koleksi': case 'collection': case 'inventory': {
-            	koleksi(naze,m,db)
+            	await koleksi(naze,m,db)
             }
             break
             case 'exchange': case 'tukar': {
-            	exchange(naze,m,db,args)
+            	await exchange(naze,m,db,args)
             	global._dbDirty = true
             }
             break
             // ── Owner Banner Commands ──────────────────────
             case 'testpull': {
             	if (!isCreator) return m.reply(global.mess.owner)
-            	testpull(naze,m,db,args)
+            	await testpull(naze,m,db,args)
             	global._dbDirty = true
             }
             break
             case 'givechar': {
             	if (!isCreator) return m.reply(global.mess.owner)
-            	givechar(naze,m,db,args)
+            	await givechar(naze,m,db,args)
             	global._dbDirty = true
             }
             break
             case 'givemedal': {
             	if (!isCreator) return m.reply(global.mess.owner)
-            	givemedal(naze,m,db,args)
+            	await givemedal(naze,m,db,args)
             	global._dbDirty = true
             }
             break
             case 'event': {
             	if (!isCreator) return m.reply(global.mess.owner)
-            	event(naze,m,db,args)
+            	await event(naze,m,db,args)
             	global._dbDirty = true
             }
             break
@@ -2944,17 +2979,17 @@ ${sisaLimit <= 0 ? '❌ Energimu (limit) habis untuk hari ini.\nLimit akan otoma
             break
             // ────────────────────────────────────────────────
             case 'race': {
-            	race(naze,m,db,isCreator)
+            	await race(naze,m,db,isCreator)
             	global._dbDirty = true
             }
             break
             case 'training': {
-            	training(naze,m,db,isCreator)
+            	await training(naze,m,db,isCreator)
             	global._dbDirty = true
             }
             break
             case 'feed': {
-            	feed(naze,m,db,isCreator)
+            	await feed(naze,m,db,isCreator)
             	global._dbDirty = true
             }
             break
@@ -3232,9 +3267,10 @@ Select Bot Settings:
 			}
 			break
 		case 'afk': {
-	       await afk(naze,m,db,text)
-            }
-            break
+			await afk(naze,m,db,text)
+			global._dbDirty = true
+		}
+		break
 			case 'readviewonce': case 'readviewone': case 'rvo': {
 				if (!m.quoted) return m.reply(global.mess.quoted)
 				try {

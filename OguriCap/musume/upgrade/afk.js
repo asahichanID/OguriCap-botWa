@@ -11,8 +11,10 @@ export const afk = async (
 
 	try {
 
-		let user = db.users[m.sender]
+		let user = db?.users?.[m.sender]
+		if (!user) return m.reply('❌ Data pengguna tidak ditemukan.')
 		user.afkTime = +new Date
+		if (global._dbDirty !== undefined) global._dbDirty = true
 		const uma = getUmaQuote()
 		const umaName = [
 			'Oguri Cap',

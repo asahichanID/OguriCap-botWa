@@ -24,9 +24,9 @@ export function generateSpotifyPlayerHtml(songs = [], initialAudio = {}) {
   const initialAudioJson = JSON.stringify(initialAudio).replace(/</g, '\\u003c');
 
   const firstSong = songs[0] || {};
-  const firstThumb = initialAudio.thumbnail || firstSong.thumbnail || 'https://i.scdn.co/image/ab67616d0000b273b7d6ca50bf766ad72226290c';
+  const firstThumb = initialAudio.thumbnail || firstSong.thumbnail || firstSong.image || (firstSong.videoId ? `https://i.ytimg.com/vi/${firstSong.videoId}/hqdefault.jpg` : '') || 'https://i.ytimg.com/vi/fKRtnMYMW08/hqdefault.jpg';
   const firstTitle = initialAudio.title || firstSong.title || 'Lagu Pilihan';
-  const firstArtist = initialAudio.artist || (firstSong.author && firstSong.author.name) ? firstSong.author.name : (firstSong.author || 'Spotify Music');
+  const firstArtist = initialAudio.artist || ((firstSong.author && firstSong.author.name) ? firstSong.author.name : (firstSong.author || 'YouTube Music'));
   const firstAudioUrl = initialAudio.download || initialAudio.url || initialAudio.preview || '';
 
   return `<style>
@@ -624,6 +624,10 @@ body{padding:10px 8px 24px;overflow-y:auto}
   var isRepeat = false;
   var isDownloaded = false;
   var dlTimer = null;
+  var isFetchingAudio = false;
+  var currentFetchUrl = '';
+  var autoPlayOnReady = false;
+  var audioCache = {};
 
   var audioEl = document.getElementById('audioEl');
   var artImg = document.getElementById('artImg');
@@ -662,22 +666,6 @@ body{padding:10px 8px 24px;overflow-y:auto}
     return m + ':' + (s < 10 ? '0' : '') + s;
   }
 
-  function getAudioUrl(idx) {
-    if (idx === undefined) idx = currentIndex;
-    var cur = playlist[idx] || {};
-    if (idx === 0) {
-      if (initialAudio && initialAudio.download) return initialAudio.download;
-      if (initialAudio && initialAudio.url) return initialAudio.url;
-      if (initialAudio && initialAudio.preview) return initialAudio.preview;
-    }
-    if (cur.download) return cur.download;
-    if (cur.audioUrl) return cur.audioUrl;
-    if (cur.preview) return cur.preview;
-    if (initialAudio && initialAudio.download) return initialAudio.download;
-    if (initialAudio && initialAudio.preview) return initialAudio.preview;
-    return '';
-  }
-
   // Render carousel daftar lagu dengan thumbnail asli dari API
   function renderCarousel() {
     if (!carouselTracks) return;
@@ -688,7 +676,8 @@ body{padding:10px 8px 24px;overflow-y:auto}
         var authorName = (song.author && song.author.name) ? song.author.name : (song.author || '-');
         var card = document.createElement('div');
         card.className = 'sp-mini-card' + (idx === currentIndex ? ' active' : '');
-        card.innerHTML = '<img class="sp-mini-thumb" src="' + (song.thumbnail || '') + '" referrerpolicy="no-referrer" alt=""/>' +
+        var thumbUrl = song.thumbnail || song.image || (song.videoId ? ('https://i.ytimg.com/vi/' + song.videoId + '/hqdefault.jpg') : '');
+        card.innerHTML = '<img class="sp-mini-thumb" src="' + thumbUrl + '" onerror="this.onerror=null;this.src=\\'https://i.ytimg.com/vi/fKRtnMYMW08/hqdefault.jpg\\'" referrerpolicy="no-referrer" alt=""/>' +
                          '<div class="sp-mini-name">' + (song.title || ('Lagu ' + (idx + 1))) + '</div>' +
                          '<div class="sp-mini-artist">' + authorName + '</div>';
         card.onclick = function() { selectTrack(idx); };
@@ -705,7 +694,7 @@ body{padding:10px 8px 24px;overflow-y:auto}
     songArtist.textContent = authorName + (cur.timestamp ? ' • ' + cur.timestamp : '');
     
     // Thumbnail asli dari hasil API
-    var realThumb = cur.thumbnail || (initialAudio && initialAudio.thumbnail) || '';
+    var realThumb = cur.thumbnail || cur.image || (cur.videoId ? ('https://i.ytimg.com/vi/' + cur.videoId + '/hqdefault.jpg') : '') || (initialAudio && initialAudio.thumbnail) || '';
     if (realThumb) {
       artImg.src = realThumb;
     }
@@ -716,44 +705,144 @@ body{padding:10px 8px 24px;overflow-y:auto}
     renderCarousel();
   }
 
-  // Indikator download lagu X% dari API
-  function startDownloadProgress(onComplete) {
-    if (dlTimer) clearInterval(dlTimer);
-    isDownloaded = false;
-    dlFill.style.width = '0%';
-    dlPct.textContent = '0%';
-    var curSong = playlist[currentIndex] || {};
-    var trackName = curSong.title ? (curSong.title.slice(0, 22) + '...') : 'audio asli';
-    dlLabel.innerHTML = '<span>⬇️ Mengunduh ' + trackName + '...</span>';
+  // Sistem background downloader audio YouTube asli
+  function prepareAndDownloadAudio(idx, shouldPlay) {
+    if (idx === undefined) idx = currentIndex;
+    var song = playlist[idx] || {};
+    if (!song || !song.url) return;
 
-    var cur = 0;
-    dlTimer = setInterval(function(){
-      var step = Math.floor(Math.random() * 12) + 16;
-      cur = Math.min(100, cur + step);
-      dlFill.style.width = cur + '%';
-      dlPct.textContent = cur + '%';
+    if (shouldPlay) autoPlayOnReady = true;
 
-      if (cur >= 100) {
-        clearInterval(dlTimer);
-        dlTimer = null;
-        isDownloaded = true;
-        dlLabel.innerHTML = '<span>✅ Audio asli siap diputar • 100%</span>';
-        dlPct.textContent = '100%';
-        if (typeof onComplete === 'function') {
-          setTimeout(onComplete, 150);
-        }
+    // Cek apakah audio sudah ada di cache
+    var cached = audioCache[song.url] || song.audioUrl || (idx === 0 && initialAudio && (initialAudio.download || initialAudio.url));
+    if (cached) {
+      if (audioEl.src !== cached) {
+        audioEl.src = cached;
+        audioEl.load();
       }
-    }, 90);
-  }
-
-  // Putar audio asli dari API (TIDAK ADA DUMMY / SYNTH)
-  function playAudio() {
-    var audioUrl = getAudioUrl();
-    if (audioUrl && (!audioEl.src || audioEl.src.indexOf(audioUrl) === -1)) {
-      audioEl.src = audioUrl;
-      audioEl.load();
+      isDownloaded = true;
+      dlFill.style.backgroundColor = '#1ed760';
+      dlFill.style.width = '100%';
+      dlPct.textContent = '100%';
+      dlLabel.innerHTML = '<span>✅ Audio siap diputar • Full Stream</span>';
+      if (shouldPlay || autoPlayOnReady) {
+        autoPlayOnReady = false;
+        playAudio();
+      }
+      return;
     }
 
+    if (isFetchingAudio && currentFetchUrl === song.url) {
+      if (shouldPlay) autoPlayOnReady = true;
+      return;
+    }
+
+    if (dlTimer) { clearInterval(dlTimer); dlTimer = null; }
+    isFetchingAudio = true;
+    currentFetchUrl = song.url;
+    isDownloaded = false;
+    dlFill.style.backgroundColor = '#1ed760';
+    dlFill.style.width = '15%';
+    dlPct.textContent = '15%';
+    dlLabel.innerHTML = '<span>⚡ Memproses lagu di API YouTube...</span>';
+
+    // Animasi progres halus saat API memproses
+    var simPct = 15;
+    dlTimer = setInterval(function(){
+      if (simPct < 55) {
+        simPct += Math.floor(Math.random() * 4) + 2;
+        dlFill.style.width = simPct + '%';
+        dlPct.textContent = simPct + '%';
+      }
+    }, 200);
+
+    var isSpotifyUrl = song.url.indexOf('spotify.com') !== -1;
+    var apiUrl1 = isSpotifyUrl
+      ? 'https://neo-api1.asahichanid.deno.net/api/spotify?url=' + encodeURIComponent(song.url)
+      : 'https://neo-api1.asahichanid.deno.net/api/youtube?url=' + encodeURIComponent(song.url) + '&type=audio&quality=128kbps';
+    var apiUrl2 = isSpotifyUrl
+      ? 'https://api.neoxr.eu/api/spotify?url=' + encodeURIComponent(song.url) + '&apikey=j3i3mg'
+      : 'https://api.neoxr.eu/api/youtube?url=' + encodeURIComponent(song.url) + '&type=audio&quality=128kbps&apikey=j3i3mg';
+
+    function requestApi(url1, url2) {
+      return fetch(url1, { headers: { 'Accept': 'application/json' } })
+        .then(function(res){
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.json();
+        })
+        .catch(function(err){
+          if (url2) {
+            return fetch(url2, { headers: { 'Accept': 'application/json' } })
+              .then(function(r){ return r.json(); });
+          }
+          throw err;
+        });
+    }
+
+    requestApi(apiUrl1, apiUrl2)
+      .then(function(json){
+        if (dlTimer) { clearInterval(dlTimer); dlTimer = null; }
+        if (currentFetchUrl !== song.url) return; // User sudah beralih lagu
+
+        var streamUrl = (json && json.data && (json.data.url || json.data.download)) ||
+                        (json && (json.url || json.download)) ||
+                        (json && json.result && (json.result.url || json.result.download)) || '';
+
+        if (!streamUrl) {
+          throw new Error((json && (json.msg || json.message)) || 'URL stream audio tidak ditemukan');
+        }
+
+        // Tahap 2: Mengunduh stream audio asli
+        dlLabel.innerHTML = '<span>📥 Mengunduh stream audio asli...</span>';
+        dlFill.style.width = '80%';
+        dlPct.textContent = '80%';
+
+        audioCache[song.url] = streamUrl;
+        song.audioUrl = streamUrl;
+
+        audioEl.src = streamUrl;
+        audioEl.load();
+
+        var onReady = function(){
+          audioEl.removeEventListener('canplay', onReady);
+          audioEl.removeEventListener('loadeddata', onReady);
+          if (currentFetchUrl !== song.url) return;
+
+          isDownloaded = true;
+          isFetchingAudio = false;
+          dlFill.style.width = '100%';
+          dlPct.textContent = '100%';
+          dlLabel.innerHTML = '<span>✅ Audio siap diputar • Full Stream</span>';
+
+          if (autoPlayOnReady) {
+            autoPlayOnReady = false;
+            playAudio();
+          }
+        };
+
+        audioEl.addEventListener('canplay', onReady);
+        audioEl.addEventListener('loadeddata', onReady);
+
+        setTimeout(function(){
+          if (!isDownloaded && currentFetchUrl === song.url) {
+            onReady();
+          }
+        }, 2200);
+      })
+      .catch(function(err){
+        if (dlTimer) { clearInterval(dlTimer); dlTimer = null; }
+        isFetchingAudio = false;
+        if (currentFetchUrl === song.url) {
+          dlFill.style.backgroundColor = '#e74c3c';
+          dlFill.style.width = '100%';
+          dlPct.textContent = '!';
+          dlLabel.innerHTML = '<span>⚠️ Audio gagal diunduh. Coba lagu lain di daftar ◀ / ▶</span>';
+        }
+      });
+  }
+
+  // Putar audio asli dari API
+  function playAudio() {
     setPlayingState(true);
 
     var playPromise = audioEl.play();
@@ -777,12 +866,13 @@ body{padding:10px 8px 24px;overflow-y:auto}
     if (isPlaying) {
       pauseAudio();
     } else {
-      if (!isDownloaded) {
-        startDownloadProgress(function(){
-          playAudio();
-        });
-      } else {
+      var curSong = playlist[currentIndex] || {};
+      var cached = audioCache[curSong.url] || curSong.audioUrl;
+      if (isDownloaded && cached && audioEl.src) {
         playAudio();
+      } else {
+        autoPlayOnReady = true;
+        prepareAndDownloadAudio(currentIndex, true);
       }
     }
   }
@@ -806,19 +896,14 @@ body{padding:10px 8px 24px;overflow-y:auto}
     if (idx < 0) idx = playlist.length - 1;
     if (idx >= playlist.length) idx = 0;
     currentIndex = idx;
-    updateSongInfo();
+    var wasPlaying = isPlaying;
     pauseAudio();
+    updateSongInfo();
 
-    // Set audio source untuk lagu terpilih
-    var url = getAudioUrl(idx);
-    if (url) {
-      audioEl.src = url;
-      audioEl.load();
-    }
+    dlFill.style.backgroundColor = '#1ed760';
+    isDownloaded = false;
 
-    startDownloadProgress(function(){
-      playAudio();
-    });
+    prepareAndDownloadAudio(currentIndex, wasPlaying);
   }
 
   // FUNGSI GESER (SLIDE) DENGAN ANIMASI
@@ -863,9 +948,9 @@ body{padding:10px 8px 24px;overflow-y:auto}
       var diff = touchEndX - touchStartX;
       if (Math.abs(diff) > 35) {
         if (diff < 0) {
-          nextTrack(); // Geser Kiri -> Lagu Selanjutnya
+          nextTrack();
         } else {
-          prevTrack(); // Geser Kanan -> Lagu Sebelumnya
+          prevTrack();
         }
       }
     }
@@ -924,11 +1009,10 @@ body{padding:10px 8px 24px;overflow-y:auto}
     heartBtn.classList.toggle('liked');
   };
 
-  // Inisialisasi awal
+  // Inisialisasi awal tampilan
   updateSongInfo();
-  startDownloadProgress(function(){
-    // Audio asli dari API siap diputar
-  });
+  // Mulai siapkan audio lagu pertama di latar belakang
+  prepareAndDownloadAudio(0, false);
 })();
 </script>`;
 }
@@ -1088,93 +1172,54 @@ export const play2 = async (naze, m, text, prefix, command, db) => {
 
     // 3. JIKA PENCARIAN JUDUL LAGU
     if (!songs.length) {
-      // Prioritas A: Cari lewat Spotify API
+      // Prioritas Utama: Cari lewat YouTube Search (yts via Neoxr)
       try {
-        const spSearch = await Promise.race([
-          apiSpotifySearch(text),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Spotify timeout')), 4500))
-        ]);
+        const ytSearch = await apiYoutubeSearch(text);
+        const ytResults = ytSearch?.result || [];
 
-        if (spSearch?.result?.length) {
-          songs = spSearch.result.slice(0, 10).map((s, idx) => ({
-            id: idx + 1,
-            title: s.title || text,
-            url: s.url,
-            thumbnail: s.thumbnail || '',
-            timestamp: s.duration || '03:30',
-            author: {
-              name: s.artist || (s.title && s.title.includes('-') ? s.title.split('-')[0].trim() : 'Spotify Music')
-            }
-          }));
+        if (ytResults.length) {
+          songs = ytResults.slice(0, 10).map((v, idx) => {
+            const vid = v.videoId || (v.url && v.url.match(/(?:v=|youtu\.be\/)([\w-]{11})/)?.[1]) || '';
+            const thumb = v.thumbnail || v.image || (vid ? `https://i.ytimg.com/vi/${vid}/hqdefault.jpg` : '');
+            const dur = v.timestamp || '03:30';
+            const authorName = (v.author && (v.author.name || v.author)) || 'YouTube Music';
+            const videoUrl = v.url || (vid ? `https://youtube.com/watch?v=${vid}` : '');
 
-          const targetSong = songs[0];
-          if (targetSong?.url) {
-            try {
-              const spDl = await apiSpotifyDownload(targetSong.url);
-              if (spDl?.result) {
-                const res = spDl.result;
-                audioData = {
-                  title: res.title || targetSong.title,
-                  artist: res.artist || targetSong.author.name,
-                  download: res.url || res.download || res.preview || '',
-                  preview: res.preview || '',
-                  thumbnail: res.thumbnail || targetSong.thumbnail
-                };
-                if (res.thumbnail) {
-                  targetSong.thumbnail = res.thumbnail;
-                }
-              }
-            } catch (dlErr) {
-              console.warn('[PLAY2] Gagal unduh Spotify target:', dlErr?.message || dlErr);
-            }
-          }
-        }
-      } catch (spErr) {
-        console.warn('[PLAY2] Spotify search gagal/timeout, fallback ke YouTube:', spErr?.message || spErr);
-      }
-
-      // Prioritas B: Fallback ke YouTube API jika Spotify tidak dapat lagu atau audio
-      if (!songs.length || !audioData.download) {
-        try {
-          const ytSearch = await apiYoutubeSearch(text);
-          const ytResults = ytSearch?.result || [];
-
-          if (ytResults.length) {
-            songs = ytResults.slice(0, 10).map((v, idx) => ({
+            return {
               id: idx + 1,
               title: v.title || text,
-              url: v.url,
-              videoId: v.videoId,
-              thumbnail: v.thumbnail || v.image || '',
-              timestamp: v.timestamp || '03:30',
+              url: videoUrl,
+              videoId: vid,
+              thumbnail: thumb,
+              timestamp: dur,
               author: {
-                name: (v.author && v.author.name) ? v.author.name : (v.author || 'YouTube Music')
+                name: authorName
+              }
+            };
+          });
+        }
+      } catch (ytErr) {
+        console.warn('[PLAY2] YouTube search error, fallback ke Spotify search:', ytErr?.message || ytErr);
+      }
+
+      // Prioritas Cadangan: Fallback ke Spotify API jika YouTube tidak dapat lagu
+      if (!songs.length) {
+        try {
+          const spSearch = await apiSpotifySearch(text);
+          if (spSearch?.result?.length) {
+            songs = spSearch.result.slice(0, 10).map((s, idx) => ({
+              id: idx + 1,
+              title: s.title || text,
+              url: s.url,
+              thumbnail: s.thumbnail || '',
+              timestamp: s.duration || '03:30',
+              author: {
+                name: s.artist || (s.title && s.title.includes('-') ? s.title.split('-')[0].trim() : 'Spotify Music')
               }
             }));
-
-            const targetSong = songs[0];
-            if (targetSong?.url) {
-              try {
-                const ytDl = await apiYoutubeAudio(targetSong.url);
-                if (ytDl?.result) {
-                  const res = ytDl.result;
-                  audioData = {
-                    title: res.title || targetSong.title,
-                    artist: res.author || targetSong.author.name,
-                    download: res.download || res.url || '',
-                    thumbnail: res.thumbnail || targetSong.thumbnail
-                  };
-                  if (res.thumbnail) {
-                    targetSong.thumbnail = res.thumbnail;
-                  }
-                }
-              } catch (e) {
-                console.warn('[PLAY2] YouTube audio download error:', e?.message || e);
-              }
-            }
           }
-        } catch (ytErr) {
-          console.warn('[PLAY2] YouTube search error:', ytErr?.message || ytErr);
+        } catch (spErr) {
+          console.warn('[PLAY2] Spotify search fallback error:', spErr?.message || spErr);
         }
       }
     }

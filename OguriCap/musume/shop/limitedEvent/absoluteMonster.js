@@ -921,6 +921,13 @@ export const handleMonsterPull = async (naze, m, db, user) => {
     // ── 5. Validasi User ─────────────────────────────────────────────────
     if (!user) return m.reply('❌ Data tidak ditemukan.')
 
+    // Proteksi AFK: reset status AFK agar tidak terjadi spam pesan Trainer Returns
+    if (user.afkTime > -1) {
+      user.afkTime = -1
+      user.afkReason = ''
+      if (global._dbDirty !== undefined) global._dbDirty = true
+    }
+
     // ── 6. Cek Pool — apakah semua Monster sudah dimiliki?
     const dynamicPool = buildMonsterDynamicPool(user)
     // Pool bisa kosong tapi pull tetap bisa jalan (dapat legend/epic/carat)
@@ -1058,6 +1065,13 @@ export const handleMonsterMulti = async (naze, m, db, user, count = 10) => {
   try {
     // ── 5. Validasi User ─────────────────────────────────────────────────
     if (!user) return m.reply('❌ Data tidak ditemukan.')
+
+    // Proteksi AFK: reset status AFK agar tidak terjadi spam pesan Trainer Returns
+    if (user.afkTime > -1) {
+      user.afkTime = -1
+      user.afkReason = ''
+      if (global._dbDirty !== undefined) global._dbDirty = true
+    }
 
     // ── 6. Complete Check ─────────────────────────────────────────────────
     const allOwned = monsterAbsolutePool.length > 0 &&
