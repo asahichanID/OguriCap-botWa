@@ -51,6 +51,9 @@ import { getSholatConfig, updateSholatGroupState, generateRamadanPrayerCanvas, g
 import { JadiBot, StopJadiBot, ListJadiBot } from './src/jadibot.js';
 import { cmdAdd, cmdAddHit, addExpired, getPosition, getExpired, getStatus, checkStatus, getAllExpired, checkExpired } from './src/database.js';
 import { rdGame, iGame, tGame, gameSlot, gameCasinoSolo, gameSamgongSolo, gameMerampok, gameBegal, daily, buy, setLimit, addLimit, addMoney, setMoney, transfer, Blackjack, SnakeLadder } from './lib/game.js';
+import { kirimCatur } from './catur.js';
+import { kirimSlot } from './slot.js';
+import { kirimSonic } from './sonic.js';
 import { getRandom, getBuffer, fetchJson, runtime, clockString, sleep, isUrl, formatDate, formatp, generateProfilePicture, errorCache, normalize, normalizeAnswer, runUpdate, updateSettings, parseMention, fixBytes, similarity, pickRandom, encodeToLetters, tarBackup } from './lib/function.js';
 import {
 	apiInstagramDownload,
@@ -4951,8 +4954,22 @@ break
 			break
 			
 			// Game Menu
-			case 'slot': {
-				await gameSlot(naze, m, db)
+			case 'slot': case 'slots': case 'mesin': case 'mesinslot': {
+				try {
+					await kirimSlot(naze, m.chat)
+				} catch (e) {
+					console.error('[SLOT]', e?.stack || e?.message || e)
+					await m.reply('❌ Gagal mengirim game: ' + (e?.message || e))
+				}
+			}
+			break
+			case 'sonic': case 'sonik': case 'dash': case 'speedy': case 'speeddash': {
+				try {
+					await kirimSonic(naze, m.chat)
+				} catch (e) {
+					console.error('[SONIC]', e?.message || e)
+					await m.reply('❌ Gagal mengirim game: ' + (e?.message || e))
+				}
 			}
 			break
 			case 'casino': {
@@ -5331,93 +5348,12 @@ break
 			}
 			break
 			case 'chess': case 'catur': case 'ct': {
-				const { DEFAUT_POSITION } = await import('chess.js').then(m => m.Chess);
-				if (!m.isGroup) return m.reply(global.mess.group)
-				if (chess[m.chat] && !(chess[m.chat] instanceof Chess)) {
-					chess[m.chat] = Object.assign(new Chess(chess[m.chat].fen), chess[m.chat]);
+				try {
+					await kirimCatur(naze, m.chat)
+				} catch (e) {
+					console.error('[CATUR]', e?.message || e)
+					await m.reply('❌ Gagal mengirim game: ' + (e?.message || e))
 				}
-				switch(args[0]) {
-					case 'start':
-					if (!chess[m.chat]) return m.reply('Tidak Ada Sesi Yang Sedang Berlangsung!')
-					if (!chess[m.chat].acc) return m.reply('Pemain Tidak Lengkap!')
-					if (chess[m.chat].player1 !== m.sender) return m.reply('Hanya Pemain Utama Yang bisa Memulai!')
-					if (chess[m.chat].turn !== m.sender && !chess[m.chat].start) {
-						try {
-							const { result: data } = await apiChessBoardImage(chess[m.chat]._fen);
-							let { key } = await m.reply({ image: data, caption: `♟️${command.toUpperCase()} GAME\n\nGiliran: @${m.sender.split('@')[0]}\n\nReply Pesan Ini untuk lanjut bermain!\nExample: from to -> b1 c3`, mentions: [m.sender] });
-							chess[m.chat].start = true
-							chess[m.chat].turn = m.sender
-							chess[m.chat].id = key.id;
-							return;
-						} catch (e) {}
-						if (!chess[m.chat].key) {
-							m.reply(`Gagal Memulai Permainan!\nGagal Mengirim Papan Permainan!`)
-						}
-					} else if ([chess[m.chat].player1, chess[m.chat].player2].includes(m.sender)) {
-						const isPlayer2 = chess[m.chat].player2 === m.sender
-						const nextPlayer = isPlayer2 ? chess[m.chat].player1 : chess[m.chat].player2;
-						try {
-							chess[m.chat].turn = chess[m.chat].turn === m.sender ? m.sender : nextPlayer;
-							const { result: data } = await apiChessBoardImage(chess[m.chat]._fen, { flip: !isPlayer2 });
-							let { key } = await m.reply({ image: data, caption: `♟️CHESS GAME\n\nGiliran: @${chess[m.chat].turn.split('@')[0]}\n\nReply Pesan Ini untuk lanjut bermain!\nExample: from to -> b1 c3`, mentions: [chess[m.chat].turn] });
-							chess[m.chat].id = key.id;
-						} catch (e) {}
-					}
-					break
-					case 'join':
-					if (chess[m.chat]) {
-						if (chess[m.chat].player1 !== m.sender) {
-							if (chess[m.chat].acc) return m.reply(`Pemain Sudah Terisi\nSilahkan Coba Lagi Nanti`)
-							let teks = chess[m.chat].player2 === m.sender ? 'TerimaKasih Sudah Mau Bergabung' : `Karena @${chess[m.chat].player2.split('@')[0]} Tidak Merespon\nAkan digantikan Oleh @${m.sender.split('@')[0]}`
-							chess[m.chat].player2 = m.sender
-							chess[m.chat].acc = true
-							m.reply(`${teks}\nSilahkan @${chess[m.chat].player1.split('@')[0]} Untuk Memulai Game (${prefix + command} start)`)
-						} else m.reply(`Kamu Sudah Bergabung\nBiarkan Orang Lain Menjadi Lawanmu!`)
-					} else m.reply('Tidak Ada Sesi Yang Sedang Berlangsung!')
-					break
-					case 'end': case 'leave':
-					if (chess[m.chat]) {
-						if (![chess[m.chat].player1, chess[m.chat].player2].includes(m.sender)) return m.reply('Hanya Pemain yang Bisa Menghentikan Permainan!')
-						delete chess[m.chat]
-						m.reply('Sukses Menghapus Sesi Game')
-					} else m.reply('Tidak Ada Sesi Yang Sedang Berlangsung!')
-					break
-					case 'bot': case 'computer':
-					if (chess[m.sender]) {
-						delete chess[m.sender];
-						return m.reply('Sukses Menghapus Sesi vs BOT')
-					} else {
-						const { DEFAUT_POSITION } = await import('chess.js').then(m => m.Chess);
-						chess[m.sender] = new Chess(DEFAUT_POSITION);
-						chess[m.sender]._fen = chess[m.sender].fen();
-						chess[m.sender].turn = m.sender;
-						chess[m.sender].botMode = true;
-						chess[m.sender].time = Date.now();
-						try {
-							const { result: data } = await apiChessBoardImage(chess[m.sender]._fen);
-							let { key } = await m.reply({ image: data, caption: `♟️CHESS GAME\n\nGiliran: @${chess[m.sender].turn.split('@')[0]}\n\nReply Pesan Ini untuk lanjut bermain!\nExample: from to -> b1 c3`, mentions: [chess[m.sender].turn] });
-							chess[m.sender].id = key.id;
-						} catch (e) {}
-					}
-					break
-					default:
-					if (/^@?\d+$/.test(args[0])) {
-						const { DEFAUT_POSITION } = await import('chess.js').then(m => m.Chess);
-						if (chess[m.chat]) return m.reply('Masih Ada Sesi Yang Belum Diselesaikan!')
-						if (m.mentionedJid.length < 1) return m.reply('Tag Orang yang Mau diajak Bermain!')
-						chess[m.chat] = new Chess(DEFAUT_POSITION);
-						chess[m.chat]._fen = chess[m.chat].fen();
-						chess[m.chat].player1 = m.sender
-						chess[m.chat].player2 = m.mentionedJid ? m.mentionedJid[0] : null
-						chess[m.chat].time = Date.now();
-						chess[m.chat].turn = null
-						chess[m.chat].acc = false
-						m.reply(`♟️${command.toUpperCase()} GAME\n\n@${m.sender.split('@')[0]} Menantang @${m.mentionedJid[0].split('@')[0]}\nUntuk Bergabung ${prefix + command} join`)
-					} else {
-						m.reply(`♟️${command.toUpperCase()} GAME\n\nExample: ${prefix + command} @tag/number\n- start\n- leave\n- join\n- computer\n- end`)
-					}
-				}
-				
 			}
 			break
 			case 'blackjack': case 'bj': {
@@ -5881,6 +5817,7 @@ break
 │${setv} ${prefix}ulartangga
 │${setv} ${prefix}blackjack
 │${setv} ${prefix}catur
+│${setv} ${prefix}sonic
 │${setv} ${prefix}casino (nominal)
 │${setv} ${prefix}samgong (nominal)
 │${setv} ${prefix}rampok (@tag)
@@ -6280,6 +6217,7 @@ await naze.sendMessage(
 │${setv} ${prefix}ulartangga
 │${setv} ${prefix}blackjack
 │${setv} ${prefix}catur
+│${setv} ${prefix}sonic
 │${setv} ${prefix}casino (nominal)
 │${setv} ${prefix}samgong (nominal)
 │${setv} ${prefix}rampok (@tag)
