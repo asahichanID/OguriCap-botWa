@@ -28,7 +28,7 @@ canvas{width:100%;display:block;touch-action:none}
 <div class="gw"><canvas id="cv" width="404" height="300"></canvas></div>
 <div class="pads"><button class="pd" id="boostB">⚡ BOOST</button><button class="pd" id="jumpB">⤒ JUMP</button></div>
 <div class="hint">Lompat saat garis merah LASER kedip cepat! · kena musuh = ring turun 10% saja · tiap 50 ring = BOSS! · 🔊 = sound</div>
-<div class="credit">Fitur by: Anita Putri Azzahra · Saluran: WhatsApp Channel</div>
+<div class="credit">Fitur by: Shiro Anna</div>
 </div>
 <script>
 window.onerror=function(m,s,l){var e=document.getElementById('hint');if(e){e.textContent='⚠ '+m+' @'+l;e.style.color='#ff7a8a'}};
