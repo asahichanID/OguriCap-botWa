@@ -3758,7 +3758,6 @@ Select Bot Settings:
 			}
 			break
 			case 'smeme': case 'stickmeme': case 'stikmeme': case 'stickermeme': case 'stikermeme': {
-				if (!isLimit) return m.reply(global.mess.limit)
 				if (!/image|video|sticker/.test(quoted.type)) return m.reply(`Kirim/reply gambar (jpg/jpeg/png/webp) dengan caption ${prefix + command} teks atas|teks bawah\n\nContoh: ${prefix + command} kalau gabut|nyoba bot`)
 				if (!text) return m.reply(`Sertakan teksnya, pisahkan atas dan bawah dengan "|"\n\nContoh: ${prefix + command} kalau gabut|nyoba bot`)
 
@@ -3788,7 +3787,6 @@ Select Bot Settings:
 						}
 					)
 
-					setLimit(m, db)
 					m.react('✅')
 				} catch (e) {
 					console.log(e)
@@ -3798,7 +3796,6 @@ Select Bot Settings:
 			}
 			break
 			case 'smemec': case 'stickmemec': case 'stikmemec': case 'stickermemec': case 'stikermemec': {
-				if (!isLimit) return m.reply(global.mess.limit)
 				if (!/image|video|sticker/.test(quoted.type)) return m.reply(`Kirim/reply gambar (jpg/jpeg/png/webp) dengan caption ${prefix + command} teks atas|teks bawah|parameter\n\nContoh: ${prefix + command} kalau gabut|nyoba bot|f42|s8`)
 				if (!text) return m.reply(`Sertakan teksnya, pisahkan atas|bawah|parameter dengan "|"\n\nContoh: ${prefix + command} kalau gabut|nyoba bot|f42|s8\n\nParameter tersedia: t,b,f,fn,fx,s,sb,sx,sy,pt,pb,pl,pr,ls,lh,a,ml,uc,sa,es,ex,ey`)
 
@@ -3831,7 +3828,6 @@ Select Bot Settings:
 						}
 					)
 
-					setLimit(m, db)
 					m.react('✅')
 				} catch (e) {
 					console.log(e)
@@ -3957,14 +3953,12 @@ Select Bot Settings:
 			}
 			break
 			case 'brat': {
-				if (!isLimit) return m.reply(global.mess.limit)
 				if (!text && (!m.quoted || !m.quoted.text)) return m.reply(`Kirim/reply pesan *${prefix + command}* Teksnya`)
 				let queryText = text ? text : m.quoted.text;
 				if (queryText.length >= 200) return m.reply('Max 200 Length!')
 				try {
 					let { result: res } = await apiBratSticker(queryText);
 					await naze.sendAsSticker(m.chat, res, m)
-					setLimit(m, db)
 				} catch (e) {
 					console.log(e)
 					m.reply(global.mess.fail)

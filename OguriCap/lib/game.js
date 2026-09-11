@@ -20,7 +20,6 @@ const iGame = (bd, id) => (a => a && bd[a].id)(Object.keys(bd).find(a => a.start
 const tGame = (bd, id) => (a => a && bd[a].time)(Object.keys(bd).find(a => a.startsWith(id)));
 
 const gameSlot = async (conn, m, db) => {
-	if (db.users[m.sender].limit < 1) return m.reply(global.mess.limit)
 	const sotoy = ['🍇','🍉','🍋','🍌','🍎','🍑','🍒','🫐','🥥','🥑']
 	const slot1 = pickRandom(sotoy)
 	const slot2 = pickRandom(sotoy)
@@ -28,20 +27,15 @@ const gameSlot = async (conn, m, db) => {
 	const listSlot1 = `${pickRandom(sotoy)} : ${pickRandom(sotoy)} : ${pickRandom(sotoy)}`
 	const listSlot2 = `${slot1} : ${slot2} : ${slot3}`
 	const listSlot3 = `${pickRandom(sotoy)} : ${pickRandom(sotoy)} : ${pickRandom(sotoy)}`
-	const randomLimit = Math.floor(Math.random() * 10)
+	const randomUang = (Math.floor(Math.random() * 10) + 1) * 500
 	const botNumber = conn.decodeJid(conn.user.id)
 	try {
 		if (slot1 === slot2 && slot2 === slot3) {
-			db.users[m.sender].limit -= 1
-			db.set[botNumber].limit += 1
-			let sloth =`[  🎰VIRTUAL SLOT 🎰  ]\n------------------------\n\n${listSlot1}\n${listSlot2} <=====\n${listSlot3}\n\n------------------------\n[  🎰 VIRTUAL SLOT 🎰  ]\n\n*Keterangan* :\n_You Win🎉_ <=====Limit + ${randomLimit}, Uang + ${randomLimit * 500}`
+			let sloth =`[  🎰VIRTUAL SLOT 🎰  ]\n------------------------\n\n${listSlot1}\n${listSlot2} <=====\n${listSlot3}\n\n------------------------\n[  🎰 VIRTUAL SLOT 🎰  ]\n\n*Keterangan* :\n_You Win🎉_ <=====\nUang + ${randomUang}`
 			conn.sendMessage(m.chat, { text: sloth }, { quoted: m })
-			db.users[m.sender].limit += randomLimit
-			db.users[m.sender].money += randomLimit * 500
+			db.users[m.sender].money += randomUang
 		} else {
-			db.users[m.sender].limit -= 1
-			db.set[botNumber].limit += 1
-			let sloth =`[  🎰VIRTUAL SLOT 🎰  ]\n------------------------\n\n${listSlot1}\n${listSlot2} <=====\n${listSlot3}\n\n------------------------\n[  🎰 VIRTUAL SLOT 🎰  ]\n\n*Keterangan* :\n_You Lose_ <=====\nLimit - 1`
+			let sloth =`[  🎰VIRTUAL SLOT 🎰  ]\n------------------------\n\n${listSlot1}\n${listSlot2} <=====\n${listSlot3}\n\n------------------------\n[  🎰 VIRTUAL SLOT 🎰  ]\n\n*Keterangan* :\n_You Lose_ <=====\nCoba lagi!`
 			conn.sendMessage(m.chat, { text: sloth }, { quoted: m })
 		}
 	} catch (e) {
@@ -52,7 +46,6 @@ const gameSlot = async (conn, m, db) => {
 const gameCasinoSolo = async (conn, m, prefix, db) => {
 	try {
 		let buatall = 1
-		if (db.users[m.sender].limit < 1) return m.reply(global.mess.limit)
 		const botNumber = conn.decodeJid(conn.user.id)
 		let randomaku = `${Math.floor(Math.random() * 101)}`.trim()
 		let randomkamu = `${Math.floor(Math.random() * 81)}`.trim() //hehe Biar Susah Menang :v
@@ -64,7 +57,6 @@ const gameCasinoSolo = async (conn, m, prefix, db) => {
 		if (m.args.length < 1) return m.reply(prefix + 'casino <jumlah>\n' + prefix + 'casino 1000')
 		if (isNaN(m.args[0])) return m.reply(`Masukkan jumlahnya!\nContoh : ${prefix + m.command} 1000`)
 		if (db.users[m.sender].money >= count * 1) {
-			db.users[m.sender].limit -= 1
 			db.users[m.sender].money -= count * 1
 			db.set[botNumber].money += count * 1
 			if (Aku > Kamu) {
@@ -85,12 +77,10 @@ const gameCasinoSolo = async (conn, m, prefix, db) => {
 const gameSamgongSolo = async (conn, m, db) => {
 	const suits = ['♥️', '♦️', '♣️', '♠️'];
 	const ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
-	if (db.users[m.sender].limit < 1) return m.reply(global.mess.limit)
 	const count = parseInt(m.args[0]);
 	if (isNaN(count) || count < 5000) return m.reply('Taruhan minimal adalah 5000!');
 	if (db.users[m.sender].money < count) return m.reply(`Uang kamu tidak mencukupi untuk Samgong silahkan *kumpulkan* terlebih dahulu!`)
 	db.users[m.sender].money -= count;
-	db.users[m.sender].limit -= 1
 	let { key } = await m.reply('*🃏Permainan dimulai!* Kartu sedang dibagikan...');
 	await sleep(5000);
 	const deck = ranks.flatMap(rank => suits.map(suit => `${rank} ${suit}`)).sort(() => Math.random() - 0.5);
@@ -116,8 +106,6 @@ const gameSamgongSolo = async (conn, m, db) => {
 }
 
 const gameMerampok = async (m, db) => {
-	if (db.users[m.sender].limit < 1) return m.reply(global.mess.limit)
-	db.users[m.sender].limit -= 1
 	let __timers = (new Date - db.users[m.sender].lastrampok)
 	let _timers = (3600000 - __timers)
 	let timers = clockString(_timers)
@@ -137,8 +125,6 @@ const gameMerampok = async (m, db) => {
 }
 
 const gameBegal = async (conn, m, db) => {
-	if (db.users[m.sender].limit < 1) return m.reply(global.mess.limit)
-	db.users[m.sender].limit -= 1
 	let user = db.users[m.sender]
 	let __timers = (new Date - user.lastbegal)
 	let _timers = (3600000 - __timers)

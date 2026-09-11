@@ -12,13 +12,45 @@ export const OGURI_LIMIT_MESSAGE = `🥕 *Oguri Cap:*
 Aku harus istirahat dan makan wortel dulu... 🥕
 Limit harianmu (${global.limit?.free || 5} limit) akan terisi kembali besok pukul 00:00 WIB, atau Trainer bisa upgrade ke VIP untuk akses tanpa batas!"`.trim();
 
-// Daftar perintah gratis (informasi / status / bantuan) yang tidak memotong limit dan bisa diakses saat limit 0
+// Daftar perintah gratis (informasi / status / bantuan / game / sticker lokal / brat) yang tidak memotong limit dan bisa diakses saat limit 0
 export const freeCommands = new Set([
+	// Informasi & Status
 	'menu', 'help', 'listmenu', 'allmenu',
 	'limit', 'ceklimit', 'profile', 'me', 'cek',
 	'owner', 'creator', 'sewa', 'buyvip', 'vip', 'premium', 'buy', 'price', 'listprem', 'listvip',
 	'ping', 'speed', 'runtime', 'uptime', 'status', 'rules', 'infobot', 'bot',
-	'afk', 'clearmemory', 'banktracen', 'daily'
+	'afk', 'clearmemory', 'banktracen', 'daily', 'buylimit', 'leaderboard', 'top', 'transfer',
+
+	// Fitur Sticker (Berjalan lokal tanpa API)
+	's', 'sticker', 'stiker', 'stickergif', 'stikergif', 'sgif',
+	'stickerwm', 'swm', 'wm', 'curi', 'colong', 'take', 'stickergifwm', 'sgifwm',
+	'smeme', 'stickmeme', 'stikmeme', 'stickermeme', 'stikermeme',
+	'smemec', 'stickmemec', 'stikmemec', 'stickermemec', 'stikermemec',
+	'toimg', 'tovideo', 'tovid', 'tomp4', 'tomp3', 'tovn', 'toaudio', 'toaud',
+
+	// Brat Sticker (.brat bebas limit karena lokal, catatan: bratvid tetap pakai limit)
+	'brat',
+
+	// Fitur Game (Semua game bebas limit)
+	'slot', 'slots', 'mesin', 'mesinslot',
+	'sonic', 'sonik', 'dash', 'speedy', 'speeddash',
+	'casino', 'samgong', 'kartu', 'rampok', 'merampok', 'begal',
+	'suit', 'suitpvp', 'delsuit', 'deletesuit',
+	'ttc', 'ttt', 'tictactoe', 'delttc', 'delttt',
+	'tebakbom', 'tekateki', 'tebaklirik', 'tebakkata', 'family100', 'susunkata', 'tebakkimia',
+	'caklontong', 'tebaknegara', 'tebakgambar', 'tebakbendera', 'tebakangka', 'butawarna', 'colorblind',
+	'kuismath', 'math', 'ulartangga', 'snakeladder', 'ut', 'chess', 'catur', 'ct',
+	'dadu', 'roll', 'dice', 'flip', 'koin',
+
+	// Fitur Uma Musume & RPG Lokal
+	'uma', 'umamusume', 'gacha', 'pull', 'lpull', 'limitedpull', 'multi', 'lmulti', 'limitedmulti',
+	'banner', 'bannerl', 'bannerltd', 'limitedinfo', 'race', 'balap', 'balapan', 'train', 'training',
+	'umainfo', 'myuma', 'inventory', 'inv', 'shop', 'toko', 'monsterrace', 'testpull',
+
+	// Grup & Utilitas Lokal
+	'kick', 'add', 'promote', 'demote', 'group', 'hidetag', 'tagall', 'linkgroup', 'infogroup',
+	'open', 'close', 'setppgroup', 'setnamegc', 'setdesc', 'revoke',
+	'readviewonce', 'rvo', 'quoted', 'q', 'del', 'delete', 'clearchat'
 ]);
 
 /**
