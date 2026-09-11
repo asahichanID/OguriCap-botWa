@@ -1,0 +1,20 @@
+{
+  "region": "DKI Jakarta & Sekitarnya",
+  "regionId": "jakarta",
+  "timezone": "Asia/Jakarta",
+  "tzLabel": "WIB",
+  "schedule": {
+    "Imsak": "04:21",
+    "Subuh": "04:31",
+    "Terbit": "05:48",
+    "Dzuhur": "11:49",
+    "Ashar": "15:04",
+    "Maghrib": "17:51",
+    "Isya": "19:00"
+  },
+  "enabledGroups": {
+    "120363024829384729@g.us": false
+  },
+  "updatedAt": 1788861879877,
+  "lastSyncedDate": "2026-09-11"
+}
