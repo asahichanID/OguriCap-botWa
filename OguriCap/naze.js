@@ -481,23 +481,6 @@ const naze = async (naze, m, msg, store) => {
 				console.log(chalk.bgRed('[ SPAM ] : '), chalk.black(chalk.bgHex('#1CFFF7')(`From -> ${m.sender}`), chalk.bgHex('#E015FF')(` In ${m.isGroup ? m.chat : 'Private Chat'}`)))
 				return m.reply('「 ❗ 」Beri Jeda 5 Detik Per Command Kak')
 			}
-			
-			if (command && set.didyoumean) {
-				let _b = ''
-				let _s = 0
-				for (const c of cases) {
-			        let sim = similarity(command.toLowerCase(), c.toLowerCase())
-			        let lengthDiff = Math.abs(command.length - c.length)
-			        if (sim > _s && lengthDiff <= 1) {
-			            _s = sim
-			            _b = c
-			        }
-			    }
-			    let s_percentage = parseInt(_s * 100)
-			    if (_s >= almost && command.toLowerCase() !== _b.toLowerCase()) {
-			        return m.reply(`Command Tidak Ditemukan!\nMungkin yang kamu maksud:\n- ${prefix + _b}\n- Similarity: ${s_percentage}%`);
-			    }
-			}
 		}
 		
 		if (isCmd && !isCreator) antiSpam.addFilter(m.sender)
