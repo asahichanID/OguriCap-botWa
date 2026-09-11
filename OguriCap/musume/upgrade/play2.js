@@ -1,64 +1,84 @@
 import { randomUUID } from 'crypto';
+import { spawn } from 'child_process';
 import axios from 'axios';
 import {
   apiYoutubeAudio,
-  apiYoutubeSearch,
-  apiSpotifySearch,
-  apiSpotifyDownload
+  apiYoutubeSearch
 } from '../../apiGlobal/index.js';
 import { cekSpam } from '../umahelper.js';
 
-// Cache Pterodactyl untuk hasil play2 (Bertahan 1 Jam Pas)
-const play2Cache = new Map();
+// Cache Pterodactyl untuk hasil play2 YouTube (Bertahan 1 Jam Pas)
+const ytPlayerCache = new Map();
 const CACHE_TTL = 60 * 60 * 1000; // 1 Jam pas (60 menit)
 
-// Auto-purge permanen cache yang sudah lewat 1 jam agar memori/bandwidth Pterodactyl tidak bengkak
-setInterval(() => {
+// Auto-purge permanen cache yang sudah lewat 1 jam
+const purgeInterval = setInterval(() => {
   const now = Date.now();
-  for (const [key, val] of play2Cache.entries()) {
+  for (const [key, val] of ytPlayerCache.entries()) {
     if (val.expiresAt && val.expiresAt <= now) {
-      play2Cache.delete(key);
-      console.log(`[PLAY2-CACHE] Cache kedaluwarsa 1 jam berhasil dihapus permanen: ${key}`);
+      ytPlayerCache.delete(key);
+      console.log(`[YTPLAYER-CACHE] Cache kedaluwarsa 1 jam dibersihkan: ${key}`);
     }
   }
 }, 5 * 60 * 1000);
+if (purgeInterval && typeof purgeInterval.unref === 'function') {
+  purgeInterval.unref();
+}
 
-async function fetchThumbBase64(url) {
+/**
+ * Fetch thumbnail dan convert ke Base64 (Ringan ~10-20KB)
+ */
+async function fetchImageBase64(url) {
   if (!url) return '';
   try {
     const res = await axios.get(url, {
       responseType: 'arraybuffer',
-      timeout: 3500,
+      timeout: 5000,
       headers: {
         'User-Agent': 'Mozilla/5.0'
       }
     });
-    if (res.data && res.data.length > 200) {
+    if (res.data && res.data.length > 100) {
       const mime = res.headers['content-type'] || 'image/jpeg';
       return `data:${mime};base64,${Buffer.from(res.data).toString('base64')}`;
     }
-  } catch (e) {}
+  } catch (e) {
+    console.warn('[YTPLAYER] Gagal unduh cover Base64:', e?.message || e);
+  }
   return '';
 }
 
-async function fetchAudioBase64(url) {
-  if (!url) return '';
-  try {
-    const res = await axios.get(url, {
-      responseType: 'arraybuffer',
-      timeout: 25000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0'
+/**
+ * Kompres audio ke format MP3 48kbps (Maks 01:20 = 80 detik)
+ * Ukuran biner ~460KB -> Base64 string ~620KB (sangat aman di bawah 1MB)
+ */
+export async function compressAudioToMp3Base64(inputUrl, maxSeconds = 80, bitrate = '48k') {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn('ffmpeg', [
+      '-y',
+      '-i', inputUrl,
+      '-t', String(maxSeconds),
+      '-c:a', 'libmp3lame',
+      '-b:a', bitrate,
+      '-ac', '2',
+      '-ar', '44100',
+      '-f', 'mp3',
+      'pipe:1'
+    ]);
+
+    const chunks = [];
+    ffmpeg.stdout.on('data', (chunk) => chunks.push(chunk));
+    ffmpeg.stderr.on('data', () => {});
+    ffmpeg.on('close', (code) => {
+      if (code === 0) {
+        const buf = Buffer.concat(chunks);
+        resolve(`data:audio/mpeg;base64,${buf.toString('base64')}`);
+      } else {
+        reject(new Error(`ffmpeg exited with code ${code}`));
       }
     });
-    if (res.data && res.data.length > 5000) {
-      const mime = res.headers['content-type'] || 'audio/mpeg';
-      return `data:${mime};base64,${Buffer.from(res.data).toString('base64')}`;
-    }
-  } catch (e) {
-    console.warn('[PLAY2] Gagal unduh buffer audio untuk Base64:', e?.message || e);
-  }
-  return '';
+    ffmpeg.on('error', reject);
+  });
 }
 
 const SIG = "TklYRUwuTWVzc2FnZUJ1aWxkZXJWNC43LVNpZ25hdHVyZS5NZXRhZGF0Ye32cK55nffkX/8bQ81i2l+P9aU3T50k86t95+JkW6Y0yRkYmPz+dY4iR7qgK9FwN6fPzJk=";
@@ -66,973 +86,602 @@ const CERT1 = "TklYRUwuTWVzc2FnZUJ1aWxkZXJWNC43LUNlcnRpZmljYXRlQ2hhaW4uTWV0YWRhd
 const CERT2 = "TklYRUwuTWVzc2FnZUJ1aWxkZXJWNC43LUNlcnRpZmljYXRlQ2hhaW4uTWV0YWRhdGHsL0Ccm0ELINFZ2IaBhKaeWnVuh0o6nZLCioCn9xpSADzwIS5VCWO+1eVXT2atJOyf7FYlpB0/JA3Us+aQtekuIkHu/zBXijORZ4ClF4+sF3cSTNg6gY/+6iwLK/zs3bMg+GeJrcI65vXfs95Shxlb2Rd5GRT2/2yBmR6Zkf5QwMJuptUHWtM26WY7/xlkEKGFYDZVqOSylusiOzSALa815zC6dCiHoJNLBEKMlaZZQOk57/+OYoU5zzTaEgLhyvNFHSyAlyLQ3SGFtVHAaJZHSmmSPyJowCOB+92Gkk6SWVMsk6FbU8QJWFtlhzV/W/gZ7WzUlS/AKgN0th9/cq20ToFkW7X9c+rtYavufmuieqFhXgaMD8AGsoN9QC/HzNC9D1nydPfFYEUr9BHVy2nF5gM58Y59r2rT8p5LPARIkUp8g+5DLhyW0tdZFZ1305o4AHCayZnp5rjcU2Xi/c1Qf/djBGakmijlMs4aMzKJYD0c4Q8jdI7sNyd876K2wRD+L6KeD2QB3PtCS4P7BWAl5gh5CJ6ZBrwcaKXZqcSjEwm52MqVCgYZdapAaNYUy/QndttjLOG0wxxwuX1hIhMjPnIKZR1kwnqD5EqlHpilrnojRZvjVGN4zEKmilS8rNstt4HHs/D849W+Q6LRVWiWMs0cT2IugrX+Skxd8En7Gq52UEmuVBrSTpN+UpIu20NsVb9lsvuYh3XO441606tOEY2eKcZJdTtqrOTNqbbTk0zVn1yhbOCvmfctBNDhTwaC5QMi0P9wjU5XI9SBtkdQLizc5oqpoiHeqgb8+aJHVLcbgIJ/KLZKtRWFDfzRNM02Csx4etUUapVd2NA/L0oMs/O5T9sVj9FBJ7q99GWr3PVmxJb36mHZlXC4k1gGN9swE0LtzYsUdT5tUo9ri/hS3W/SM+F1p4Kh4QIgRcG3ciIHGN44bnDh3HDCz0fDnzKYw0bclMxZPctEyJ5gEOPF6OAkjD9dEaRGq/tEPf1k9Aub+v2dEjnfrYWAm4E5Zfhs2Xh0CT0k+SzhgKd0K/46ChJ20G5+blwpIvahvTVS68+aVIX6CwXs4tcVx6FnmVsMOOkIasfaqQLZYvNBkuLoZnQAq4j8yRekrQ==";
 
 /**
- * Generate Spotify 9:16 HTML Player
- * Catatan:
- * - Menggunakan format HTML Fragment murni agar tidak terpotong (100% tampilan muncul).
- * - Thumbnail ASLI dari hasil API (Spotify / YouTube CDN).
- * - Audio ASLI dari hasil API (bukan synth / dummy).
- * - Tombol geser fisik (◀ dan ▶) pada album art dan kontrol.
+ * Generate YouTube 9:16 HTML Player (Base64 Audio 01:20 Terkompresi < 800KB)
  */
-export function generateSpotifyPlayerHtml(songs = [], initialAudio = {}) {
-  const songsJson = JSON.stringify(songs).replace(/</g, '\\u003c');
-  const initialAudioJson = JSON.stringify(initialAudio).replace(/</g, '\\u003c');
-
-  const firstSong = songs[0] || {};
-  const firstThumb = initialAudio.thumbnail || firstSong.thumbBase64 || firstSong.thumbnail || firstSong.image || (firstSong.videoId ? `https://i.ytimg.com/vi/${firstSong.videoId}/mqdefault.jpg` : '') || 'https://i.ytimg.com/vi/fKRtnMYMW08/mqdefault.jpg';
-  const firstTitle = initialAudio.title || firstSong.title || 'Lagu Pilihan';
-  const firstArtist = initialAudio.artist || ((firstSong.author && firstSong.author.name) ? firstSong.author.name : (firstSong.author || 'YouTube Music'));
-  const firstAudioUrl = initialAudio.download || initialAudio.url || initialAudio.preview || '';
+export function generateYoutubePlayerHtml(track = {}) {
+  const coverUrl = track.coverBase64 || track.thumbnail || 'https://i.ytimg.com/vi/fKRtnMYMW08/mqdefault.jpg';
+  const title = (track.title || 'YouTube Music').replace(/"/g, '&quot;');
+  const artist = (track.author || 'YouTube Audio').replace(/"/g, '&quot;');
+  const duration = track.duration || '01:20';
+  const audioDataUri = track.audioBase64 || '';
 
   return `<style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
-html,body{width:100%;min-height:100%;background:#090909;color:#fff}
-body{padding:10px 8px 24px;overflow-y:auto}
+html,body{width:100%;min-height:100%;background:#09090c;color:#fff}
+body{padding:12px 10px 20px;overflow-y:auto}
 
-#spApp{
+#ytApp{
   width:100%;
-  max-width:390px;
+  max-width:380px;
   margin:0 auto;
   position:relative;
-  background:radial-gradient(circle at 50% 8%, #143e26 0%, #111e17 35%, #121212 65%, #0a0a0a 100%);
+  background:radial-gradient(circle at 50% 10%, #2e0b0b 0%, #1c0808 30%, #121217 65%, #09090c 100%);
   border-radius:24px;
   border:1.5px solid rgba(255,255,255,0.12);
-  box-shadow:0 16px 40px rgba(0,0,0,0.85), 0 0 24px rgba(29,185,84,0.18);
-  padding:16px 14px 14px;
+  box-shadow:0 18px 45px rgba(0,0,0,0.9), 0 0 28px rgba(255,0,0,0.18);
+  padding:16px 16px 14px;
   display:flex;
   flex-direction:column;
-  gap:10px;
+  gap:12px;
   overflow:visible;
 }
 
 /* HEADER */
-.sp-header{
+.yt-header{
   display:flex;
   align-items:center;
   justify-content:space-between;
-  height:36px;
+  height:32px;
 }
-.sp-logo-badge{
+.yt-brand{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:1px;
+  color:#fff;
+  text-transform:uppercase;
+}
+.yt-brand svg{
+  width:22px;
+  height:22px;
+  fill:#ff0000;
+}
+.yt-badge-wrap{
   display:flex;
   align-items:center;
   gap:6px;
-  font-size:11px;
-  font-weight:700;
-  letter-spacing:1px;
-  color:#1ed760;
-  text-transform:uppercase;
 }
-.sp-logo-badge svg{
-  width:18px;
-  height:18px;
-  fill:#1ed760;
-}
-.sp-title-mode{
-  text-align:center;
+.yt-badge{
   font-size:10px;
-  letter-spacing:1.5px;
-  color:#a7a7a7;
   font-weight:700;
-  text-transform:uppercase;
+  color:#ff4444;
+  background:rgba(255,0,0,0.12);
+  border:1px solid rgba(255,0,0,0.25);
+  border-radius:10px;
+  padding:2px 8px;
+  letter-spacing:0.5px;
 }
-.sp-btn-icon{
-  background:none;
-  border:none;
-  color:#b3b3b3;
-  cursor:pointer;
-  padding:6px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  transition:transform .15s, color .15s;
-}
-.sp-btn-icon:hover{color:#fff;transform:scale(1.1)}
-.sp-btn-icon:active{transform:scale(0.92)}
-.sp-heart-btn svg{
-  width:22px;
-  height:22px;
-  fill:#b3b3b3;
-  transition:fill .2s, transform .2s;
-}
-.sp-heart-btn.liked svg{
-  fill:#1ed760;
-  transform:scale(1.15);
+.yt-badge-sec{
+  font-size:10px;
+  font-weight:700;
+  color:#2ecc71;
+  background:rgba(46,204,113,0.12);
+  border:1px solid rgba(46,204,113,0.25);
+  border-radius:10px;
+  padding:2px 8px;
 }
 
-/* ARTWORK CAROUSEL WITH DEDICATED SLIDE BUTTONS */
-.sp-art-wrap{
-  position:relative;
+/* COVER ART CONTAINER */
+.yt-cover-box{
   width:100%;
-  max-width:270px;
-  margin:4px auto 2px;
-  aspect-ratio:1/1;
-  display:flex;
-  justify-content:center;
-  align-items:center;
-  touch-action:pan-y;
-}
-
-/* TOMBOL GESER FISIK DI KIRI & KANAN COVER */
-.sp-slide-btn{
-  position:absolute;
-  top:50%;
-  transform:translateY(-50%);
-  width:36px;
-  height:36px;
-  border-radius:50%;
-  background:rgba(18,18,18,0.85);
-  border:1.5px solid rgba(255,255,255,0.2);
-  color:#fff;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  cursor:pointer;
-  z-index:20;
-  box-shadow:0 6px 16px rgba(0,0,0,0.6);
-  transition:transform .15s, background-color .15s, border-color .15s, color .15s;
-}
-.sp-slide-btn:hover{
-  background:#1ed760;
-  color:#000;
-  border-color:#1ed760;
-  transform:translateY(-50%) scale(1.12);
-}
-.sp-slide-btn:active{
-  transform:translateY(-50%) scale(0.92);
-}
-.sp-slide-btn svg{
-  width:18px;
-  height:18px;
-  fill:currentColor;
-}
-.sp-slide-left{ left:-10px; }
-.sp-slide-right{ right:-10px; }
-
-.sp-vinyl{
-  position:absolute;
-  width:86%;
-  height:86%;
-  border-radius:50%;
-  background:radial-gradient(circle, #080808 20%, #1f1f1f 45%, #0e0e0e 65%, #252525 80%, #141414 100%);
-  box-shadow:0 10px 30px rgba(0,0,0,0.9);
-  right:2%;
-  z-index:1;
-  transition:transform .5s cubic-bezier(.34,1.56,.64,1);
-  display:flex;
-  align-items:center;
-  justify-content:center;
-}
-.sp-vinyl::after{
-  content:'';
-  width:24%;
-  height:24%;
-  background:#1ed760;
-  border-radius:50%;
-  border:4px solid #121212;
-}
-.sp-vinyl.playing{
-  animation:spinVinyl 5s linear infinite;
-  transform:translateX(18px);
-}
-@keyframes spinVinyl{
-  from{transform:translateX(18px) rotate(0deg)}
-  to{transform:translateX(18px) rotate(360deg)}
-}
-
-.sp-art-card{
+  aspect-ratio:16/9;
+  border-radius:16px;
   position:relative;
-  width:90%;
-  height:90%;
-  border-radius:18px;
   overflow:hidden;
-  box-shadow:0 14px 30px rgba(0,0,0,0.7);
-  z-index:2;
-  background:#222;
-  border:1.5px solid rgba(255,255,255,0.15);
-  transition:transform .2s cubic-bezier(.25,1,.5,1), opacity .2s ease;
-  cursor:grab;
+  background:#1e1e24;
+  box-shadow:0 10px 25px rgba(0,0,0,0.7);
+  border:1px solid rgba(255,255,255,0.08);
 }
-.sp-art-img{
+.yt-cover-img{
   width:100%;
   height:100%;
   object-fit:cover;
   display:block;
-  background:#1e1e1e;
+  transition:transform 0.4s ease;
 }
-.sp-visualizer{
+.yt-cover-box:hover .yt-cover-img{
+  transform:scale(1.03);
+}
+.yt-cover-overlay{
   position:absolute;
-  bottom:10px;
-  right:10px;
-  display:flex;
-  align-items:flex-end;
-  gap:3px;
-  height:18px;
-  padding:3px 6px;
-  background:rgba(0,0,0,0.65);
-  backdrop-filter:blur(8px);
-  border-radius:8px;
+  inset:0;
+  background:linear-gradient(to top, rgba(0,0,0,0.65) 0%, transparent 50%);
+  pointer-events:none;
 }
-.sp-bar{
-  width:3px;
-  height:4px;
-  background:#1ed760;
-  border-radius:2px;
-  transition:height .15s ease;
-}
-.playing .sp-bar:nth-child(1){animation:bounceBar .8s ease infinite alternate .1s}
-.playing .sp-bar:nth-child(2){animation:bounceBar .6s ease infinite alternate .3s}
-.playing .sp-bar:nth-child(3){animation:bounceBar .9s ease infinite alternate .2s}
-.playing .sp-bar:nth-child(4){animation:bounceBar .7s ease infinite alternate .4s}
-@keyframes bounceBar{
-  0%{height:4px}
-  100%{height:15px}
-}
-
-/* BAR KONTROL GESER KIRI/KANAN CEPAT */
-.sp-slide-pills-row{
-  display:flex;
+.yt-live-tag{
+  position:absolute;
+  bottom:8px;
+  left:10px;
+  display:inline-flex;
   align-items:center;
-  justify-content:space-between;
-  gap:8px;
-  margin:-2px 0 2px;
-}
-.sp-pill-action{
-  flex:1;
-  background:rgba(255,255,255,0.06);
-  border:1px solid rgba(255,255,255,0.12);
-  border-radius:20px;
-  color:#ccc;
-  font-size:11px;
-  font-weight:600;
-  padding:5px 8px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
   gap:5px;
-  cursor:pointer;
-  transition:background .15s, color .15s, border-color .15s;
+  background:rgba(0,0,0,0.65);
+  backdrop-filter:blur(6px);
+  padding:3px 8px;
+  border-radius:6px;
+  font-size:9px;
+  font-weight:700;
+  color:#eee;
+  border:1px solid rgba(255,255,255,0.1);
 }
-.sp-pill-action:hover{
-  background:rgba(30,215,96,0.15);
-  color:#1ed760;
-  border-color:#1ed760;
+.yt-pulse-dot{
+  width:6px;
+  height:6px;
+  border-radius:50%;
+  background:#2ecc71;
+  box-shadow:0 0 8px #2ecc71;
+  animation:ytPulse 1.4s infinite;
 }
-.sp-pill-action:active{
-  transform:scale(0.96);
-}
-.sp-pill-action svg{
-  width:14px;
-  height:14px;
-  fill:currentColor;
+@keyframes ytPulse{
+  0%{opacity:1;transform:scale(1)}
+  50%{opacity:0.4;transform:scale(0.85)}
+  100%{opacity:1;transform:scale(1)}
 }
 
 /* TRACK INFO */
-.sp-track-info{
+.yt-track-info{
   display:flex;
-  align-items:center;
-  justify-content:space-between;
-  margin:2px 0;
+  flex-direction:column;
+  gap:3px;
 }
-.sp-meta{
-  max-width:100%;
-  overflow:hidden;
-}
-.sp-song-title{
-  font-size:16px;
+.yt-title{
+  font-size:15px;
   font-weight:700;
   color:#fff;
-  white-space:nowrap;
+  line-height:1.25;
+  display:-webkit-box;
+  -webkit-line-clamp:2;
+  -webkit-box-orient:vertical;
   overflow:hidden;
-  text-overflow:ellipsis;
-  margin-bottom:2px;
 }
-.sp-song-artist{
+.yt-artist{
   font-size:12px;
-  color:#b3b3b3;
+  color:#a5a5ad;
   font-weight:500;
   white-space:nowrap;
   overflow:hidden;
   text-overflow:ellipsis;
+  display:flex;
+  align-items:center;
+  gap:4px;
+}
+.yt-artist svg{
+  width:12px;
+  height:12px;
+  fill:#ff4444;
 }
 
-/* DOWNLOAD PROGRESS BAR DARI HASIL API */
-.sp-download-box{
-  background:rgba(255,255,255,0.06);
-  border:1px solid rgba(255,255,255,0.1);
-  border-radius:12px;
-  padding:8px 12px;
-  backdrop-filter:blur(8px);
-}
-.sp-dl-header{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  font-size:11px;
-  margin-bottom:6px;
-}
-.sp-dl-label{
-  color:#1ed760;
-  font-weight:700;
+/* NOTICE BANNER: GUNAKAN .PLAY JIKA INGIN FULL */
+.yt-notice-banner{
+  background:rgba(255,0,0,0.08);
+  border:1px solid rgba(255,0,0,0.22);
+  border-radius:8px;
+  padding:6px 10px;
   display:flex;
   align-items:center;
   gap:6px;
+  font-size:10.5px;
+  color:#ff9999;
 }
-.sp-dl-pct{
+.yt-notice-banner svg{
+  width:14px;
+  height:14px;
+  fill:#ff4444;
+  flex-shrink:0;
+}
+.yt-notice-banner strong{
   color:#fff;
   font-weight:700;
-  font-variant-numeric:tabular-nums;
-}
-.sp-dl-track{
-  width:100%;
-  height:6px;
-  background:rgba(255,255,255,0.12);
-  border-radius:3px;
-  overflow:hidden;
-}
-.sp-dl-fill{
-  width:0%;
-  height:100%;
-  background:linear-gradient(90deg, #1db954, #1ed760);
-  border-radius:3px;
-  transition:width .12s ease-out;
-  box-shadow:0 0 10px rgba(30,215,96,0.6);
 }
 
-/* SEEKBAR */
-.sp-seek-section{
-  width:100%;
-  margin:2px 0;
+/* SCRUBBER & TIMELINE */
+.yt-scrubber-box{
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+  margin-top:2px;
 }
-.sp-seek-bar{
+.yt-progress-bg{
   width:100%;
   height:6px;
   background:rgba(255,255,255,0.15);
-  border-radius:3px;
-  position:relative;
+  border-radius:4px;
   cursor:pointer;
-  touch-action:none;
-}
-.sp-seek-progress{
-  width:0%;
-  height:100%;
-  background:#1ed760;
-  border-radius:3px;
   position:relative;
 }
-.sp-seek-thumb{
+.yt-progress-fill{
+  height:100%;
+  width:0%;
+  background:#ff0000;
+  border-radius:4px;
+  position:relative;
+  transition:width 0.1s linear;
+}
+.yt-progress-handle{
   position:absolute;
   right:-5px;
-  top:-4px;
-  width:14px;
-  height:14px;
-  background:#fff;
+  top:50%;
+  transform:translateY(-50%);
+  width:12px;
+  height:12px;
   border-radius:50%;
-  box-shadow:0 2px 6px rgba(0,0,0,0.5);
+  background:#fff;
+  box-shadow:0 0 6px rgba(255,0,0,0.8);
 }
-.sp-time-row{
+.yt-time-row{
   display:flex;
   justify-content:space-between;
-  font-size:11px;
-  color:#a7a7a7;
+  font-size:10px;
   font-weight:600;
-  margin-top:5px;
+  color:#8e8e99;
 }
 
-/* CONTROLS */
-.sp-controls{
+/* CONTROLS ROW */
+.yt-controls{
   display:flex;
   align-items:center;
-  justify-content:space-between;
-  padding:2px 4px;
+  justify-content:space-evenly;
+  margin-top:2px;
 }
-.sp-ctrl-btn{
+.yt-btn-sub{
   background:none;
   border:none;
-  color:#b3b3b3;
+  color:#999;
   cursor:pointer;
   padding:8px;
   display:flex;
   align-items:center;
   justify-content:center;
-  transition:transform .12s, color .12s;
+  transition:transform 0.15s, color 0.15s;
 }
-.sp-ctrl-btn:hover{color:#fff;transform:scale(1.1)}
-.sp-ctrl-btn:active{transform:scale(0.92)}
-.sp-ctrl-btn.active{color:#1ed760}
-.sp-ctrl-btn svg{width:22px;height:22px;fill:currentColor}
+.yt-btn-sub:hover{color:#fff;transform:scale(1.1)}
+.yt-btn-sub:active{transform:scale(0.92)}
+.yt-btn-sub.active{color:#ff0000}
+.yt-btn-sub svg{width:20px;height:20px;fill:currentColor}
 
-.sp-play-btn{
-  width:54px;
-  height:54px;
+.yt-play-btn{
+  width:56px;
+  height:56px;
   border-radius:50%;
-  background:#1ed760;
+  background:linear-gradient(135deg, #ff0000 0%, #cc0000 100%);
   border:none;
-  color:#000;
   display:flex;
   align-items:center;
   justify-content:center;
   cursor:pointer;
-  box-shadow:0 8px 20px rgba(30,215,96,0.4);
-  transition:transform .12s, background-color .12s;
+  box-shadow:0 6px 20px rgba(255,0,0,0.45);
+  transition:transform 0.15s, box-shadow 0.15s;
 }
-.sp-play-btn:active{transform:scale(0.94)}
-.sp-play-btn svg{width:26px;height:26px;fill:#000;margin-left:2px}
-.sp-play-btn.is-playing svg{margin-left:0}
+.yt-play-btn:hover{transform:scale(1.08);box-shadow:0 8px 24px rgba(255,0,0,0.6)}
+.yt-play-btn:active{transform:scale(0.95)}
+.yt-play-btn svg{width:24px;height:24px;fill:#fff;margin-left:2px}
+.yt-play-btn.is-playing svg{margin-left:0}
 
-/* COMPACT TRACK BADGE */
-.sp-track-badge{
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
-  background:rgba(255,255,255,0.08);
-  border:1px solid rgba(255,255,255,0.12);
-  border-radius:12px;
-  padding:3px 10px;
-  font-size:10px;
-  font-weight:700;
-  color:#1ed760;
-  letter-spacing:1px;
-}
-
-.sp-hint-row{
+/* BOTTOM COMPACT LOG STATUS */
+.yt-log-bar{
   display:flex;
   align-items:center;
-  justify-content:center;
-  gap:6px;
+  justify-content:space-between;
+  background:rgba(255,255,255,0.04);
+  border:1px solid rgba(255,255,255,0.07);
+  border-radius:10px;
+  padding:6px 10px;
   font-size:10px;
-  color:#888;
-  text-align:center;
+  color:#8e8e96;
   margin-top:2px;
+}
+.yt-log-left{
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.yt-status-dot{
+  width:6px;
+  height:6px;
+  border-radius:50%;
+  background:#2ecc71;
+  transition:background 0.3s ease;
+}
+.yt-log-text{
+  font-weight:600;
+  color:#ddd;
+}
+.yt-log-right{
+  color:#777;
+  font-weight:500;
 }
 </style>
 
-<div id="spApp">
-  <!-- TOP HEADER -->
-  <div class="sp-header">
-    <div class="sp-logo-badge">
-      <svg viewBox="0 0 24 24"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
-      <span>Spotify</span>
+<div id="ytApp">
+  <!-- AUDIO BASE64 EMBEDDED -->
+  <audio id="ytAudioEl" preload="auto" playsinline src="${audioDataUri}"></audio>
+
+  <!-- HEADER -->
+  <div class="yt-header">
+    <div class="yt-brand">
+      <svg viewBox="0 0 24 24"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+      <span>YOUTUBE PLAYER</span>
     </div>
-    <div class="sp-title-mode">SPOTIFY 9:16 PLAYER</div>
-    <button class="sp-btn-icon sp-heart-btn" id="heartBtn" title="Favorit">
-      <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
-    </button>
+    <div class="yt-badge-wrap">
+      <div class="yt-badge">01:20</div>
+      <div class="yt-badge-sec">BASE64</div>
+    </div>
   </div>
 
-  <!-- ARTWORK CAROUSEL WITH DEDICATED SLIDE BUTTONS (◀ dan ▶) -->
-  <div class="sp-art-wrap" id="artWrap">
-    <!-- Tombol Fisik Geser Kiri -->
-    <button class="sp-slide-btn sp-slide-left" id="btnSlideLeft" title="Geser Lagu Sebelumnya (Kiri)">
-      <svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
-    </button>
+  <!-- COVER ART -->
+  <div class="yt-cover-box" id="coverBox">
+    <img class="yt-cover-img" id="coverImg" src="${coverUrl}" referrerpolicy="no-referrer" alt="Cover"/>
+    <div class="yt-cover-overlay"></div>
+    <div class="yt-live-tag">
+      <div class="yt-pulse-dot" id="pulseDot"></div>
+      <span id="liveState">Siap Diputar</span>
+    </div>
+  </div>
 
-    <div class="sp-vinyl" id="vinylDisc"></div>
-    <div class="sp-art-card" id="artCard">
-      <img class="sp-art-img" id="artImg" src="${firstThumb}" referrerpolicy="no-referrer" alt="Album Art" />
-      <div class="sp-visualizer">
-        <div class="sp-bar"></div><div class="sp-bar"></div><div class="sp-bar"></div><div class="sp-bar"></div>
+  <!-- TRACK META -->
+  <div class="yt-track-info">
+    <div class="yt-title" id="trackTitle">${title}</div>
+    <div class="yt-artist" id="trackArtist">
+      <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+      <span>${artist}</span>
+    </div>
+  </div>
+
+  <!-- NOTICE BANNER: GUNAKAN .PLAY JIKA INGIN FULL -->
+  <div class="yt-notice-banner">
+    <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+    <span>Audio preview 01:20 Base64. <strong>Gunakan .play jika ingin full</strong></span>
+  </div>
+
+  <!-- SCRUBBER -->
+  <div class="yt-scrubber-box">
+    <div class="yt-progress-bg" id="progressBg">
+      <div class="yt-progress-fill" id="progressFill">
+        <div class="yt-progress-handle"></div>
       </div>
     </div>
-
-    <!-- Tombol Fisik Geser Kanan -->
-    <button class="sp-slide-btn sp-slide-right" id="btnSlideRight" title="Geser Lagu Berikutnya (Kanan)">
-      <svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
-    </button>
-  </div>
-
-  <!-- TOMBOL GESER CEPAT (PILLS) -->
-  <div class="sp-slide-pills-row">
-    <button class="sp-pill-action" id="btnPillPrev">
-      <svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
-      <span>Geser Kiri</span>
-    </button>
-    <button class="sp-pill-action" id="btnPillNext">
-      <span>Geser Kanan</span>
-      <svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
-    </button>
-  </div>
-
-  <!-- TRACK INFO -->
-  <div class="sp-track-info">
-    <div class="sp-meta">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px">
-        <div class="sp-song-title" id="songTitle">${firstTitle}</div>
-        <div class="sp-track-badge" id="trackBadge">1 / ${songs.length}</div>
-      </div>
-      <div class="sp-song-artist" id="songArtist">${firstArtist}</div>
-    </div>
-  </div>
-
-  <!-- DOWNLOAD PROGRESS BAR (AUDIO DARI HASIL API) -->
-  <div class="sp-download-box" id="dlBox">
-    <div class="sp-dl-header">
-      <div class="sp-dl-label" id="dlLabel">
-        <span>⚡ Memuat audio...</span>
-      </div>
-      <div class="sp-dl-pct" id="dlPct">0%</div>
-    </div>
-    <div class="sp-dl-track">
-      <div class="sp-dl-fill" id="dlFill"></div>
-    </div>
-  </div>
-
-  <!-- SEEKBAR -->
-  <div class="sp-seek-section">
-    <div class="sp-seek-bar" id="seekBar">
-      <div class="sp-seek-progress" id="seekProgress">
-        <div class="sp-seek-thumb"></div>
-      </div>
-    </div>
-    <div class="sp-time-row">
-      <span id="curTime">0:00</span>
-      <span id="totTime">0:00</span>
+    <div class="yt-time-row">
+      <span id="timeCur">0:00</span>
+      <span id="timeTot">${duration}</span>
     </div>
   </div>
 
   <!-- CONTROLS -->
-  <div class="sp-controls">
-    <button class="sp-ctrl-btn" id="btnShuffle" title="Acak">
-      <svg viewBox="0 0 24 24"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
+  <div class="yt-controls">
+    <!-- REPEAT -->
+    <button class="yt-btn-sub" id="btnRepeat" title="Ulangi Lagu">
+      <svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
     </button>
-    <button class="sp-ctrl-btn" id="btnPrev" title="Sebelumnya (Geser Kiri)">
-      <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+
+    <!-- REWIND 10s -->
+    <button class="yt-btn-sub" id="btnRewind" title="Mundur 10 Detik">
+      <svg viewBox="0 0 24 24"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg>
     </button>
-    <button class="sp-play-btn" id="btnPlay" title="Putar">
+
+    <!-- MAIN PLAY/PAUSE -->
+    <button class="yt-play-btn" id="btnPlay" title="Putar / Jeda">
       <svg id="playIcon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
     </button>
-    <button class="sp-ctrl-btn" id="btnNext" title="Selanjutnya (Geser Kanan)">
-      <svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+
+    <!-- FORWARD 10s -->
+    <button class="yt-btn-sub" id="btnForward" title="Maju 10 Detik">
+      <svg viewBox="0 0 24 24"><path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/></svg>
     </button>
-    <button class="sp-ctrl-btn" id="btnRepeat" title="Ulang">
-      <svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+
+    <!-- MUTE/VOLUME -->
+    <button class="yt-btn-sub" id="btnMute" title="Bisu / Suara">
+      <svg id="volIcon" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
     </button>
   </div>
 
-  <div class="sp-hint-row">
-    <span>💡 Tekan tombol ◀ / ▶ atau geser layar untuk ganti lagu (1-${songs.length})</span>
+  <!-- BOTTOM COMPACT STATUS LOG -->
+  <div class="yt-log-bar">
+    <div class="yt-log-left">
+      <div class="yt-status-dot" id="statusDot"></div>
+      <span class="yt-log-text" id="statusLog">⚡ Base64 Aktif • Sentuh Tombol Play</span>
+    </div>
+    <div class="yt-log-right" id="bitrateLog">48kbps MP3</div>
   </div>
 </div>
 
-<audio id="audioEl" preload="auto" src="${firstAudioUrl}"></audio>
-
 <script>
 (function(){
-  var playlist = ${songsJson} || [];
-  var initialAudio = ${initialAudioJson} || {};
-  var currentIndex = 0;
-  var isPlaying = false;
-  var isShuffle = false;
-  var isRepeat = false;
-  var isDownloaded = false;
-  var dlTimer = null;
-  var isFetchingAudio = false;
-  var currentFetchUrl = '';
-  var autoPlayOnReady = false;
-  var audioCache = {};
-
-  var audioEl = document.getElementById('audioEl');
-  var artImg = document.getElementById('artImg');
-  var vinylDisc = document.getElementById('vinylDisc');
-  var songTitle = document.getElementById('songTitle');
-  var songArtist = document.getElementById('songArtist');
-  var dlBox = document.getElementById('dlBox');
-  var dlLabel = document.getElementById('dlLabel');
-  var dlPct = document.getElementById('dlPct');
-  var dlFill = document.getElementById('dlFill');
-  var seekBar = document.getElementById('seekBar');
-  var seekProgress = document.getElementById('seekProgress');
-  var curTimeEl = document.getElementById('curTime');
-  var totTimeEl = document.getElementById('totTime');
+  var audio = document.getElementById('ytAudioEl');
   var btnPlay = document.getElementById('btnPlay');
   var playIcon = document.getElementById('playIcon');
-  var btnPrev = document.getElementById('btnPrev');
-  var btnNext = document.getElementById('btnNext');
-  var btnShuffle = document.getElementById('btnShuffle');
+  var progressBg = document.getElementById('progressBg');
+  var progressFill = document.getElementById('progressFill');
+  var timeCur = document.getElementById('timeCur');
+  var timeTot = document.getElementById('timeTot');
+  var btnRewind = document.getElementById('btnRewind');
+  var btnForward = document.getElementById('btnForward');
   var btnRepeat = document.getElementById('btnRepeat');
-  var heartBtn = document.getElementById('heartBtn');
-  var trackBadge = document.getElementById('trackBadge');
-  var artWrap = document.getElementById('artWrap');
-  var artCard = document.getElementById('artCard');
+  var btnMute = document.getElementById('btnMute');
+  var volIcon = document.getElementById('volIcon');
+  var statusLog = document.getElementById('statusLog');
+  var statusDot = document.getElementById('statusDot');
+  var liveState = document.getElementById('liveState');
 
-  // Tombol geser baru
-  var btnSlideLeft = document.getElementById('btnSlideLeft');
-  var btnSlideRight = document.getElementById('btnSlideRight');
-  var btnPillPrev = document.getElementById('btnPillPrev');
-  var btnPillNext = document.getElementById('btnPillNext');
+  var isPlaying = false;
+  var isRepeat = false;
+  var isMuted = false;
 
-  function fmtTime(sec) {
-    if (isNaN(sec) || sec < 0) return '0:00';
+  function fmtTime(sec){
+    if (!sec || isNaN(sec)) return '0:00';
     var m = Math.floor(sec / 60);
     var s = Math.floor(sec % 60);
     return m + ':' + (s < 10 ? '0' : '') + s;
   }
 
-  // Update tampilan data lagu dengan thumbnail asli API
-  function updateSongInfo() {
-    var cur = playlist[currentIndex] || {};
-    var authorName = (cur.author && cur.author.name) ? cur.author.name : (cur.author || 'Artis');
-    songTitle.textContent = cur.title || 'Lagu Pilihan';
-    songArtist.textContent = authorName + (cur.timestamp ? ' • ' + cur.timestamp : '');
-    if (trackBadge) {
-      trackBadge.textContent = (currentIndex + 1) + ' / ' + playlist.length;
-    }
-    
-    // Thumbnail asli dari hasil API (Base64 instan)
-    var realThumb = cur.thumbBase64 || cur.thumbnail || cur.image || (cur.videoId ? ('https://i.ytimg.com/vi/' + cur.videoId + '/mqdefault.jpg') : '') || (initialAudio && initialAudio.thumbnail) || '';
-    if (realThumb) {
-      artImg.src = realThumb;
-    }
-
-    totTimeEl.textContent = cur.timestamp || '03:30';
-    curTimeEl.textContent = '0:00';
-    seekProgress.style.width = '0%';
+  function updateStatus(text, dotColor, liveText){
+    if (statusLog) statusLog.textContent = text;
+    if (statusDot && dotColor) statusDot.style.background = dotColor;
+    if (liveState && liveText) liveState.textContent = liveText;
   }
 
-  // Sistem background downloader audio YouTube asli
-  function prepareAndDownloadAudio(idx, shouldPlay) {
-    if (idx === undefined) idx = currentIndex;
-    var song = playlist[idx] || {};
-    if (!song || (!song.url && !song.videoId && !song.audioBase64)) return;
-
-    if (shouldPlay) autoPlayOnReady = true;
-
-    // Cek apakah audio sudah ada di cache (Base64 atau URL yang sudah diresolve)
-    var cached = song.audioBase64 || audioCache[song.url] || song.audioUrl || (idx === 0 && initialAudio && (initialAudio.base64 || initialAudio.download || initialAudio.url));
-    if (cached) {
-      if (audioEl.src !== cached) {
-        audioEl.src = cached;
-        audioEl.load();
-      }
-      isDownloaded = true;
-      isFetchingAudio = false;
-      dlFill.style.backgroundColor = '#1ed760';
-      dlFill.style.width = '100%';
-      dlPct.textContent = '100%';
-      dlLabel.innerHTML = '<span>⚡ Audio Base64 Siap Diputar • Full Kualitas</span>';
-      if (shouldPlay || autoPlayOnReady) {
-        autoPlayOnReady = false;
-        playAudio();
-      }
-      return;
-    }
-
-    if (isFetchingAudio && currentFetchUrl === song.url) {
-      if (shouldPlay) autoPlayOnReady = true;
-      return;
-    }
-
-    if (dlTimer) { clearInterval(dlTimer); dlTimer = null; }
-    isFetchingAudio = true;
-    currentFetchUrl = song.url;
-    isDownloaded = false;
-    dlFill.style.backgroundColor = '#1ed760';
-    dlFill.style.width = '15%';
-    dlPct.textContent = '15%';
-    dlLabel.innerHTML = '<span>⚡ Memproses lagu di API YouTube...</span>';
-
-    // Animasi progres halus saat API memproses
-    var simPct = 15;
-    dlTimer = setInterval(function(){
-      if (simPct < 55) {
-        simPct += Math.floor(Math.random() * 4) + 2;
-        dlFill.style.width = simPct + '%';
-        dlPct.textContent = simPct + '%';
-      }
-    }, 200);
-
-    var targetUrl = song.url || (song.videoId ? ('https://youtube.com/watch?v=' + song.videoId) : '');
-    var isSpotifyUrl = targetUrl.indexOf('spotify.com') !== -1;
-    var apiUrl1 = isSpotifyUrl
-      ? 'https://neo-api1.asahichanid.deno.net/api/spotify?url=' + encodeURIComponent(targetUrl)
-      : 'https://neo-api1.asahichanid.deno.net/api/youtube?url=' + encodeURIComponent(targetUrl) + '&type=audio&quality=128kbps';
-    var apiUrl2 = isSpotifyUrl
-      ? 'https://api.neoxr.eu/api/spotify?url=' + encodeURIComponent(targetUrl) + '&apikey=j3i3mg'
-      : 'https://api.neoxr.eu/api/youtube?url=' + encodeURIComponent(targetUrl) + '&type=audio&quality=128kbps&apikey=j3i3mg';
-
-    function requestApi(url1, url2) {
-      function tryFetch(u) {
-        return fetch(u).then(function(res){
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          return res.json();
+  function togglePlay(){
+    if (!audio) return;
+    if (audio.paused) {
+      updateStatus('⚡ Memutar Base64 audio...', '#ff0000', 'Playing');
+      var p = audio.play();
+      if (p !== undefined) {
+        p.then(function(){
+          isPlaying = true;
+          btnPlay.classList.add('is-playing');
+          playIcon.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
+          updateStatus('▶️ Sedang Memutar Base64', '#ff0000', 'Playing');
+        }).catch(function(err){
+          console.warn('Playback error:', err);
+          audio.load();
+          audio.play().then(function(){
+            isPlaying = true;
+            btnPlay.classList.add('is-playing');
+            playIcon.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
+            updateStatus('▶️ Sedang Memutar Base64', '#ff0000', 'Playing');
+          }).catch(function(err2){
+            console.error('Final play error:', err2);
+            isPlaying = false;
+            btnPlay.classList.remove('is-playing');
+            playIcon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+            updateStatus('👉 Sentuh Play untuk memulai', '#f39c12', 'Sentuh Play');
+          });
         });
       }
-      function tryXhr(u) {
-        return new Promise(function(resolve, reject){
-          var xhr = new XMLHttpRequest();
-          xhr.open('GET', u, true);
-          xhr.onload = function(){
-            if (xhr.status >= 200 && xhr.status < 300) {
-              try { resolve(JSON.parse(xhr.responseText)); } catch(e){ reject(e); }
-            } else {
-              reject(new Error('HTTP ' + xhr.status));
-            }
-          };
-          xhr.onerror = function(){ reject(new Error('Koneksi terputus')); };
-          xhr.ontimeout = function(){ reject(new Error('Timeout')); };
-          xhr.timeout = 15000;
-          xhr.send();
-        });
-      }
-
-      return tryFetch(url1)
-        .catch(function(){ return tryXhr(url1); })
-        .catch(function(err){
-          if (url2) {
-            return tryFetch(url2).catch(function(){ return tryXhr(url2); });
-          }
-          throw err;
-        });
-    }
-
-    requestApi(apiUrl1, apiUrl2)
-      .then(function(json){
-        if (dlTimer) { clearInterval(dlTimer); dlTimer = null; }
-        if (currentFetchUrl !== song.url) return; // User sudah beralih lagu
-
-        var streamUrl = (json && json.data && (json.data.url || json.data.download)) ||
-                        (json && (json.url || json.download)) ||
-                        (json && json.result && (json.result.url || json.result.download)) || '';
-
-        if (!streamUrl) {
-          throw new Error((json && (json.msg || json.message)) || 'URL audio tidak ditemukan');
-        }
-
-        // Update thumbnail jika tersedia dari API
-        var newThumb = (json && json.thumbnail) || (json && json.data && json.data.thumbnail);
-        if (newThumb) {
-          artImg.src = newThumb;
-          song.thumbnail = newThumb;
-        }
-
-        // Tahap 2: Menyiapkan stream audio asli
-        dlLabel.innerHTML = '<span>📥 Menyiapkan stream audio...</span>';
-        dlFill.style.width = '80%';
-        dlPct.textContent = '80%';
-
-        audioCache[song.url] = streamUrl;
-        song.audioUrl = streamUrl;
-
-        audioEl.src = streamUrl;
-        audioEl.load();
-
-        var onReady = function(){
-          audioEl.removeEventListener('canplay', onReady);
-          audioEl.removeEventListener('loadeddata', onReady);
-          if (currentFetchUrl !== song.url) return;
-
-          isDownloaded = true;
-          isFetchingAudio = false;
-          dlFill.style.backgroundColor = '#1ed760';
-          dlFill.style.width = '100%';
-          dlPct.textContent = '100%';
-          dlLabel.innerHTML = '<span>✅ Audio siap diputar • Full Audio</span>';
-
-          if (autoPlayOnReady) {
-            autoPlayOnReady = false;
-            playAudio();
-          }
-        };
-
-        audioEl.addEventListener('canplay', onReady);
-        audioEl.addEventListener('loadeddata', onReady);
-
-        setTimeout(function(){
-          if (!isDownloaded && currentFetchUrl === song.url) {
-            onReady();
-          }
-        }, 2200);
-      })
-      .catch(function(err){
-        if (dlTimer) { clearInterval(dlTimer); dlTimer = null; }
-        isFetchingAudio = false;
-        if (currentFetchUrl === song.url) {
-          dlFill.style.backgroundColor = '#e74c3c';
-          dlFill.style.width = '100%';
-          dlPct.textContent = '!';
-          dlLabel.innerHTML = '<span>⚠️ ' + (err && err.message ? err.message : 'Audio gagal diunduh') + '. Coba lagu lain di daftar ◀ / ▶</span>';
-        }
-      });
-  }
-
-  // Putar audio asli dari API
-  function playAudio() {
-    setPlayingState(true);
-
-    var playPromise = audioEl.play();
-    if (playPromise && playPromise.then) {
-      playPromise.then(function(){
-        dlLabel.innerHTML = '<span>▶️ Memutar audio asli • Full Stream</span>';
-      }).catch(function(e){
-        setPlayingState(false);
-        dlLabel.innerHTML = '<span>👆 Tekan tombol ▶ untuk memutar</span>';
-      });
-    }
-  }
-
-  function pauseAudio() {
-    setPlayingState(false);
-    audioEl.pause();
-    dlLabel.innerHTML = '<span>⏸️ Audio dijeda</span>';
-  }
-
-  function togglePlay() {
-    if (isPlaying) {
-      pauseAudio();
     } else {
-      var curSong = playlist[currentIndex] || {};
-      var cached = audioCache[curSong.url] || curSong.audioUrl;
-      if (isDownloaded && cached && audioEl.src) {
-        playAudio();
-      } else {
-        autoPlayOnReady = true;
-        prepareAndDownloadAudio(currentIndex, true);
-      }
-    }
-  }
-
-  function setPlayingState(playing) {
-    isPlaying = playing;
-    if (playing) {
-      vinylDisc.classList.add('playing');
-      artCard.classList.add('playing');
-      btnPlay.classList.add('is-playing');
-      playIcon.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
-    } else {
-      vinylDisc.classList.remove('playing');
-      artCard.classList.remove('playing');
+      isPlaying = false;
+      audio.pause();
       btnPlay.classList.remove('is-playing');
       playIcon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+      updateStatus('⏸️ Audio Dijeda', '#f39c12', 'Paused');
     }
   }
 
-  function selectTrack(idx) {
-    if (idx < 0) idx = playlist.length - 1;
-    if (idx >= playlist.length) idx = 0;
-    currentIndex = idx;
-    var wasPlaying = isPlaying;
-    pauseAudio();
-    updateSongInfo();
-
-    dlFill.style.backgroundColor = '#1ed760';
-    isDownloaded = false;
-
-    prepareAndDownloadAudio(currentIndex, wasPlaying);
+  // Bind Click & Touch
+  if (btnPlay) {
+    btnPlay.addEventListener('click', function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      togglePlay();
+    });
   }
 
-  // FUNGSI GESER (SLIDE) DENGAN ANIMASI
-  function nextTrack() {
-    artCard.style.transform = 'translateX(-26px) scale(0.96)';
-    setTimeout(function(){ artCard.style.transform = 'none'; }, 220);
+  if (audio) {
+    audio.onplay = function(){
+      isPlaying = true;
+      btnPlay.classList.add('is-playing');
+      playIcon.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
+      updateStatus('▶️ Sedang Memutar Base64', '#ff0000', 'Playing');
+    };
 
-    if (isShuffle && playlist.length > 1) {
-      var nextIdx = Math.floor(Math.random() * playlist.length);
-      selectTrack(nextIdx);
-    } else {
-      selectTrack(currentIndex + 1);
-    }
+    audio.onpause = function(){
+      isPlaying = false;
+      btnPlay.classList.remove('is-playing');
+      playIcon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+      updateStatus('⏸️ Audio Dijeda', '#f39c12', 'Paused');
+    };
+
+    audio.oncanplay = function(){
+      if (!isPlaying) {
+        updateStatus('⚡ Base64 Aktif • Sentuh Tombol Play', '#2ecc71', 'Siap Diputar');
+      }
+    };
+
+    audio.ontimeupdate = function(){
+      if (!audio.duration) return;
+      var pct = (audio.currentTime / audio.duration) * 100;
+      progressFill.style.width = pct + '%';
+      timeCur.textContent = fmtTime(audio.currentTime);
+    };
+
+    audio.onloadedmetadata = function(){
+      if (audio.duration && !isNaN(audio.duration)) {
+        timeTot.textContent = fmtTime(audio.duration);
+      }
+    };
+
+    audio.onended = function(){
+      if (isRepeat) {
+        audio.currentTime = 0;
+        audio.play();
+      } else {
+        isPlaying = false;
+        btnPlay.classList.remove('is-playing');
+        playIcon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+        progressFill.style.width = '0%';
+        timeCur.textContent = '0:00';
+        updateStatus('✅ Preview 01:20 selesai', '#2ecc71', 'Completed');
+      }
+    };
   }
 
-  function prevTrack() {
-    artCard.style.transform = 'translateX(26px) scale(0.96)';
-    setTimeout(function(){ artCard.style.transform = 'none'; }, 220);
-
-    selectTrack(currentIndex - 1);
-  }
-
-  // EVENT TOMBOL GESER FISIK (◀ dan ▶)
-  btnSlideLeft.onclick = prevTrack;
-  btnSlideRight.onclick = nextTrack;
-  btnPillPrev.onclick = prevTrack;
-  btnPillNext.onclick = nextTrack;
-
-  // TOUCH SWIPE GESTURE PADA COVER
-  var touchStartX = 0;
-  var touchEndX = 0;
-
-  artWrap.addEventListener('touchstart', function(e){
-    if (e.changedTouches && e.changedTouches.length > 0) {
-      touchStartX = e.changedTouches[0].screenX;
-    }
-  }, false);
-
-  artWrap.addEventListener('touchend', function(e){
-    if (e.changedTouches && e.changedTouches.length > 0) {
-      touchEndX = e.changedTouches[0].screenX;
-      var diff = touchEndX - touchStartX;
-      if (Math.abs(diff) > 35) {
-        if (diff < 0) {
-          nextTrack();
-        } else {
-          prevTrack();
+  if (progressBg) {
+    progressBg.onclick = function(e){
+      e.stopPropagation();
+      var rect = progressBg.getBoundingClientRect();
+      var clickX = e.clientX - rect.left;
+      var ratio = Math.max(0, Math.min(1, clickX / rect.width));
+      if (audio && audio.duration) {
+        audio.currentTime = ratio * audio.duration;
+        progressFill.style.width = (ratio * 100) + '%';
+        if (audio.paused) {
+          togglePlay();
         }
       }
-    }
-  }, false);
+    };
+  }
 
-  // Audio elements events
-  audioEl.addEventListener('timeupdate', function(){
-    if (audioEl.duration && !isNaN(audioEl.duration)) {
-      var pct = (audioEl.currentTime / audioEl.duration) * 100;
-      seekProgress.style.width = pct + '%';
-      curTimeEl.textContent = fmtTime(audioEl.currentTime);
-      totTimeEl.textContent = fmtTime(audioEl.duration);
-    }
-  });
+  if (btnRewind) {
+    btnRewind.onclick = function(e){
+      e.stopPropagation();
+      if (audio) {
+        audio.currentTime = Math.max(0, audio.currentTime - 10);
+      }
+    };
+  }
 
-  audioEl.addEventListener('ended', function(){
-    if (isRepeat) {
-      audioEl.currentTime = 0;
-      playAudio();
-    } else {
-      nextTrack();
-    }
-  });
+  if (btnForward) {
+    btnForward.onclick = function(e){
+      e.stopPropagation();
+      if (audio) {
+        audio.currentTime = Math.min(audio.duration || 80, audio.currentTime + 10);
+      }
+    };
+  }
 
-  audioEl.addEventListener('error', function(){
-    dlLabel.innerHTML = '<span>⚠️ Audio sedang dimuat atau buffering...</span>';
-  });
+  if (btnRepeat) {
+    btnRepeat.onclick = function(e){
+      e.stopPropagation();
+      isRepeat = !isRepeat;
+      btnRepeat.classList.toggle('active', isRepeat);
+      updateStatus(isRepeat ? '🔂 Repeat 1 Lagu Aktif' : '⚡ Normal Playback', '#2ecc71', isRepeat ? 'Repeat' : 'Siap Diputar');
+    };
+  }
 
-  // Seekbar click handler
-  seekBar.addEventListener('click', function(e){
-    var rect = seekBar.getBoundingClientRect();
-    var pos = (e.clientX - rect.left) / rect.width;
-    if (audioEl.duration && !isNaN(audioEl.duration)) {
-      audioEl.currentTime = pos * audioEl.duration;
-    } else {
-      seekProgress.style.width = (pos * 100) + '%';
-    }
-  });
-
-  // Buttons click handler
-  btnPlay.onclick = togglePlay;
-  btnNext.onclick = nextTrack;
-  btnPrev.onclick = prevTrack;
-
-  btnShuffle.onclick = function(){
-    isShuffle = !isShuffle;
-    btnShuffle.classList.toggle('active', isShuffle);
-  };
-
-  btnRepeat.onclick = function(){
-    isRepeat = !isRepeat;
-    btnRepeat.classList.toggle('active', isRepeat);
-  };
-
-  heartBtn.onclick = function(){
-    heartBtn.classList.toggle('liked');
-  };
-
-  // Inisialisasi awal tampilan
-  updateSongInfo();
-  // Mulai siapkan audio lagu pertama di latar belakang
-  prepareAndDownloadAudio(0, false);
+  if (btnMute) {
+    btnMute.onclick = function(e){
+      e.stopPropagation();
+      isMuted = !isMuted;
+      if (audio) audio.muted = isMuted;
+      btnMute.classList.toggle('active', isMuted);
+      if (isMuted) {
+        volIcon.innerHTML = '<path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>';
+        updateStatus('🔇 Suara Dibisukan', '#f39c12', 'Muted');
+      } else {
+        volIcon.innerHTML = '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>';
+        updateStatus('🔊 Suara Aktif', '#2ecc71', 'Siap Diputar');
+      }
+    };
+  }
 })();
 </script>`;
 }
 
 /**
- * Kirim pesan Rich Response Spotify 9:16
+ * Kirim pesan Rich Response YouTube Player 9:16 (Base64)
  */
-export async function kirimSpotify(conn, chatId, html, title = "🎵 SPOTIFY 9:16 PLAYER") {
+export async function kirimYoutubePlayer(conn, chatId, html, title = "▶️ YOUTUBE PLAYER 9:16") {
   const data = Buffer.from(JSON.stringify({
     __typename: 'GenAIUnifiedResponse',
     response_id: randomUUID(),
@@ -1046,10 +695,16 @@ export async function kirimSpotify(conn, chatId, html, title = "🎵 SPOTIFY 9:1
           trusted_sources: [
             'https://neo-api1.asahichanid.deno.net',
             'https://api.neoxr.eu',
+            'https://*.neoxr.eu',
+            'https://neoxr.eu',
             'https://secure-signed.pages.dev',
+            'https://*.pages.dev',
+            'https://pages.dev',
             'https://i.ytimg.com',
-            'https://i.scdn.co',
-            'https://p.scdn.co'
+            'https://ytimg.com',
+            'https://youtube.com',
+            'https://*.youtube.com',
+            'https://youtu.be'
           ]
         }
       }
@@ -1097,31 +752,33 @@ export async function kirimSpotify(conn, chatId, html, title = "🎵 SPOTIFY 9:1
 }
 
 /**
- * Handler command .play2
- * Mengambil data asli dari API:
- * 1. Thumbnail resmi langsung dari API Spotify / YouTube.
- * 2. Audio asli stream / download resmi langsung dari API (bukan dummy).
- * 3. Navigasi geser dengan tombol fisik ◀ dan ▶ serta gesture swipe.
+ * Handler command .play2 (YouTube Player Single Track Base64 < 800KB)
  */
 export const play2 = async (naze, m, text, prefix, command, db) => {
   if (!text) {
     return m.reply(
-`╭─❖「 🎵 𝐒𝐏𝐎𝐓𝐈𝐅𝐘 𝟗:𝟏𝟔 𝐏𝐋𝐀𝐘𝐄𝐑 」
+`╭─❖「 ▶️ 𝐘𝐎𝐔𝐓𝐔𝐁𝐄 𝐏𝐋𝐀𝐘𝐄𝐑 𝟗:𝟏𝟔 」
 │
 ├ 💡 Gunakan perintah:
-│ ❍ ${prefix + command} <judul lagu / url spotify / youtube>
+│ ❍ ${prefix + command} <judul lagu / url youtube>
 │
 ├ 📝 Contoh:
-│ ❍ ${prefix + command} yoasobi idol
 │ ❍ ${prefix + command} komang
-│ ❍ ${prefix + command} https://open.spotify.com/track/...
+│ ❍ ${prefix + command} yoasobi idol
 │ ❍ ${prefix + command} https://youtu.be/...
+│
+├ ⚡ Fitur:
+│ ❍ Single Track Hasil Teratas
+│ ❍ Full Audio Base64 (Lancar Bebas Hambatan)
+│ ❍ Durasi 01:20 Menit (Kompresi 48kbps < 800KB)
+│ ❍ Gunakan .play jika ingin audio full
+│ ❍ UI YouTube Player 9:16 Rapih & Responsif
 ╰─────────────────❖`
     );
   }
 
   try {
-    const spam = cekSpam(m.sender, 'play2', 15);
+    const spam = cekSpam(m.sender, 'play2', 6);
     if (!spam.ok) {
       if (spam.warn) {
         const detik = Math.ceil(spam.sisa / 1000);
@@ -1133,200 +790,92 @@ export const play2 = async (naze, m, text, prefix, command, db) => {
     await m.react('🎧');
 
     const cacheKey = text.trim().toLowerCase();
-    let songs = [];
-    let audioData = {};
 
-    // 0. CEK CACHE PTERODACTYL (DURASI 1 JAM PAS)
-    const cachedEntry = play2Cache.get(cacheKey);
+    // 0. CEK CACHE PTERODACTYL (1 JAM PAS)
+    const cachedEntry = ytPlayerCache.get(cacheKey);
     if (cachedEntry && cachedEntry.expiresAt > Date.now()) {
-      songs = cachedEntry.songs;
-      audioData = cachedEntry.audioData;
-    } else {
-      // 1. JIKA URL SPOTIFY LANGSUNG
-      if (/spotify\.com/i.test(text)) {
-        try {
-          const dl = await apiSpotifyDownload(text);
-          if (dl?.result) {
-            const res = dl.result;
-            const artistName = res.artist || (Array.isArray(res.artists) ? res.artists.map(a => a.name).join(', ') : 'Spotify Music');
-            songs = [{
-              id: 1,
-              title: res.title || text,
-              url: text,
-              thumbnail: res.thumbnail || '',
-              timestamp: res.duration || '03:30',
-              author: { name: artistName }
-            }];
-            audioData = {
-              title: res.title || text,
-              artist: artistName,
-              download: res.url || res.download || res.preview || '',
-              preview: res.preview || '',
-              thumbnail: res.thumbnail || ''
-            };
-          }
-        } catch (e) {
-          console.warn('[PLAY2] Spotify direct download error:', e?.message || e);
-        }
-      }
-
-      // 2. JIKA URL YOUTUBE LANGSUNG
-      if (!songs.length && (text.includes('youtube.com') || text.includes('youtu.be'))) {
-        try {
-          const ytDl = await apiYoutubeAudio(text);
-          if (ytDl?.result) {
-            const res = ytDl.result;
-            songs = [{
-              id: 1,
-              title: res.title || text,
-              url: text,
-              thumbnail: res.thumbnail || '',
-              timestamp: '03:30',
-              author: { name: res.author || 'YouTube Music' }
-            }];
-            audioData = {
-              title: res.title || text,
-              artist: res.author || 'YouTube Music',
-              download: res.download || res.url || '',
-              thumbnail: res.thumbnail || ''
-            };
-          }
-        } catch (e) {
-          console.warn('[PLAY2] YouTube direct download error:', e?.message || e);
-        }
-      }
-
-      // 3. JIKA PENCARIAN JUDUL LAGU (BATASI 10 HASIL)
-      if (!songs.length) {
-        // Prioritas Utama: YouTube Search (yts via Neoxr)
-        try {
-          const ytSearch = await apiYoutubeSearch(text);
-          const ytResults = ytSearch?.result || [];
-
-          if (ytResults.length) {
-            songs = ytResults.slice(0, 10).map((v, idx) => {
-              const vid = v.videoId || (v.url && v.url.match(/(?:v=|youtu\.be\/)([\w-]{11})/)?.[1]) || '';
-              const thumb = v.thumbnail || v.image || (vid ? `https://i.ytimg.com/vi/${vid}/mqdefault.jpg` : '');
-              const dur = v.timestamp || '03:30';
-              const authorName = (v.author && (v.author.name || v.author)) || 'YouTube Music';
-              const videoUrl = v.url || (vid ? `https://youtube.com/watch?v=${vid}` : '');
-
-              return {
-                id: idx + 1,
-                title: v.title || text,
-                url: videoUrl,
-                videoId: vid,
-                thumbnail: thumb,
-                timestamp: dur,
-                author: {
-                  name: authorName
-                }
-              };
-            });
-          }
-        } catch (ytErr) {
-          console.warn('[PLAY2] YouTube search error, fallback ke Spotify search:', ytErr?.message || ytErr);
-        }
-
-        // Prioritas Cadangan: Spotify Search
-        if (!songs.length) {
-          try {
-            const spSearch = await apiSpotifySearch(text);
-            if (spSearch?.result?.length) {
-              songs = spSearch.result.slice(0, 10).map((s, idx) => ({
-                id: idx + 1,
-                title: s.title || text,
-                url: s.url,
-                thumbnail: s.thumbnail || '',
-                timestamp: s.duration || '03:30',
-                author: {
-                  name: s.artist || (s.title && s.title.includes('-') ? s.title.split('-')[0].trim() : 'Spotify Music')
-                }
-              }));
-            }
-          } catch (spErr) {
-            console.warn('[PLAY2] Spotify search fallback error:', spErr?.message || spErr);
-          }
-        }
-      }
-
-      if (!songs.length) {
-        return m.reply('❌ Maaf, lagu tidak dapat ditemukan di API Spotify maupun YouTube.');
-      }
-
-      // 4. WAJIB BASE64 LANGSUNG UNTUK SEMUA 10 THUMBNAIL
-      const allThumbTasks = songs.map(async (s) => {
-        const preferredThumb = (s.videoId ? `https://i.ytimg.com/vi/${s.videoId}/mqdefault.jpg` : '') || s.thumbnail || s.image || '';
-        if (preferredThumb) {
-          const b64 = await fetchThumbBase64(preferredThumb);
-          if (b64) {
-            s.thumbBase64 = b64;
-            s.thumbnail = b64;
-          }
-        }
-      });
-      await Promise.allSettled(allThumbTasks);
-
-      const targetSong = songs[0];
-
-      // 5. RESOLVE AUDIO & CONVERT KE BASE64 (TETAP FULL & SUARA UTUH JERNIH)
-      if (!audioData.download && targetSong.url) {
-        try {
-          const ytPromise = apiYoutubeAudio(targetSong.url);
-          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 7000));
-          const ytAudio = await Promise.race([ytPromise, timeoutPromise]);
-          if (ytAudio?.result?.download) {
-            const rawDownload = ytAudio.result.download;
-            audioData = {
-              title: ytAudio.result.title || targetSong.title,
-              artist: ytAudio.result.author || targetSong.author?.name || 'YouTube Music',
-              download: rawDownload,
-              thumbnail: targetSong.thumbnail || ytAudio.result.thumbnail || ''
-            };
-
-            // Alihkan beban berat ke Pterodactyl: unduh dan konversi ke Base64 utuh
-            const audioB64 = await fetchAudioBase64(rawDownload);
-            if (audioB64) {
-              audioData.base64 = audioB64;
-              audioData.download = audioB64;
-              targetSong.audioBase64 = audioB64;
-            }
-            targetSong.audioUrl = audioData.download;
-          }
-        } catch (e) {
-          console.log('[PLAY2] Pre-fetch & encoding Base64 audio pertama:', e?.message || e);
-        }
-      }
-
-      if (audioData.thumbnail && !targetSong.thumbnail) {
-        targetSong.thumbnail = audioData.thumbnail;
-      }
-
-      // 6. SIMPAN KE CACHE PTERODACTYL SELAMA 1 JAM PAS
-      play2Cache.set(cacheKey, {
-        songs,
-        audioData,
-        createdAt: Date.now(),
-        expiresAt: Date.now() + CACHE_TTL
-      });
+      const playerHtml = generateYoutubePlayerHtml(cachedEntry.track);
+      
+      return await kirimYoutubePlayer(
+        naze,
+        m.chat,
+        playerHtml,
+        `▶️ ${cachedEntry.track.title.slice(0, 30)} · YouTube Player`
+      );
     }
 
-    const targetSong = songs[0];
+    let targetVideoUrl = text.trim();
+    let videoTitle = '';
+    let videoAuthor = '';
+    let videoThumb = '';
 
-    // 7. Generate Spotify 9:16 Compact HTML Player
-    const playerHtml = generateSpotifyPlayerHtml(songs, audioData);
+    // 1. CARI LAGU DI YOUTUBE (HANYA AMBIL 1 HASIL TERATAS)
+    if (!text.includes('youtube.com') && !text.includes('youtu.be')) {
+      const searchRes = await apiYoutubeSearch(text);
+      const results = searchRes?.result || [];
+      if (!results.length) {
+        return m.reply('❌ Lagu tidak ditemukan di YouTube. Silakan coba dengan kata kunci lain.');
+      }
+      const top = results[0];
+      targetVideoUrl = top.url || (top.videoId ? `https://youtube.com/watch?v=${top.videoId}` : '');
+      videoTitle = top.title || text;
+      videoAuthor = (top.author && (top.author.name || top.author)) || 'YouTube Music';
+      videoThumb = top.thumbnail || top.image || (top.videoId ? `https://i.ytimg.com/vi/${top.videoId}/mqdefault.jpg` : '');
+    }
 
-    // 8. Kirim via Rich Response Message
-    await kirimSpotify(
+    // 2. FETCH AUDIO VIA API YOUTUBE NEOXR (128kbps Stream Source)
+    const audioRes = await apiYoutubeAudio(targetVideoUrl);
+    if (!audioRes?.result?.download) {
+      return m.reply('❌ Gagal mendapatkan stream audio YouTube dari server API.');
+    }
+
+    const resData = audioRes.result;
+    const finalTitle = resData.title || videoTitle || text;
+    const finalAuthor = resData.author || videoAuthor || 'YouTube Music';
+    const finalThumbUrl = resData.thumbnail || videoThumb || '';
+    const rawDownloadUrl = resData.download;
+
+    // 3. PROSES PARALEL: COVER BASE64 & KOMPRESI AUDIO KE MP3 BASE64 (80 DETIK / 01:20 @ 48kbps)
+    const [coverBase64, audioBase64] = await Promise.all([
+      fetchImageBase64(finalThumbUrl),
+      compressAudioToMp3Base64(rawDownloadUrl, 80, '48k')
+    ]);
+
+    if (!audioBase64) {
+      return m.reply('❌ Gagal memproses audio Base64. Silakan coba beberapa saat lagi.');
+    }
+
+    const trackObj = {
+      title: finalTitle,
+      author: finalAuthor,
+      duration: '01:20',
+      thumbnail: finalThumbUrl,
+      coverBase64: coverBase64 || finalThumbUrl,
+      audioBase64: audioBase64,
+      downloadUrl: rawDownloadUrl
+    };
+
+    // 4. SIMPAN KE CACHE PTERODACTYL (BERTAHAN 1 JAM PAS)
+    ytPlayerCache.set(cacheKey, {
+      track: trackObj,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + CACHE_TTL
+    });
+
+    // 5. GENERATE YOUTUBE 9:16 HTML PLAYER DENGAN INLINE BASE64 (<800KB)
+    const playerHtml = generateYoutubePlayerHtml(trackObj);
+
+    // 6. KIRIM VIA RICH RESPONSE MESSAGE
+    await kirimYoutubePlayer(
       naze,
       m.chat,
       playerHtml,
-      `🎧 ${targetSong.title.slice(0, 30)} · Spotify 9:16`
+      `▶️ ${finalTitle.slice(0, 30)} · YouTube Player`
     );
 
   } catch (error) {
-    console.error('[PLAY2-ERROR]', error);
-    m.reply('❌ Terjadi kesalahan saat memproses Spotify Player: ' + (error?.message || error));
+    console.error('[YTPLAYER-ERROR]', error);
+    m.reply('❌ Terjadi kesalahan saat memproses YouTube Player: ' + (error?.message || error));
   }
 };
 
