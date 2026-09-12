@@ -145,6 +145,7 @@ import { isLocked } from './group/kunci.js';
 import { absoluteGuard, GUARD_CONFIG } from './musume/absoluteGuard.js'
 import { getKhodam, buildKhodamText } from './game/khodamData.js'
 import { smeme, smemec } from './musume/sticker/smeme.js'
+import { renderBrat } from './musume/sticker/brat.js'
 import { stickerToVideo } from './musume/sticker/stickerEngine/index.js'
 import { handleUserLimit, OGURI_LIMIT_MESSAGE, isLimitedCommand } from './lib/limit.js'
 
@@ -4046,11 +4047,17 @@ Select Bot Settings:
 				let queryText = text ? text : m.quoted.text;
 				if (queryText.length >= 200) return m.reply('Max 200 Length!')
 				try {
-					let { result: res } = await apiBratSticker(queryText);
-					await naze.sendAsSticker(m.chat, res, m)
+					let res = await renderBrat(queryText);
+					await naze.sendAsSticker(m.chat, res, m, { packname, author })
 				} catch (e) {
-					console.log(e)
-					m.reply(global.mess.fail)
+					console.log('Local brat failed, falling back to apiBratSticker:', e)
+					try {
+						let { result: res } = await apiBratSticker(queryText);
+						await naze.sendAsSticker(m.chat, res, m, { packname, author })
+					} catch (err) {
+						console.log(err)
+						m.reply(global.mess.fail)
+					}
 				}
 			}
 			break

@@ -72,9 +72,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // versi/fork paket punya struktur sedikit berbeda, karena itu dicoba
 // berurutan supaya tetap tangguh (robust) tanpa perlu mengubah kode.
 const TWEMOJI_ASSET_CANDIDATES = [
+	path.join(__dirname, '..', 'assets', 'twemoji'),
+	path.join(__dirname, '..', 'assets', 'twemoji', '72x72'),
 	path.join(__dirname, '..', '..', '..', 'node_modules', 'twemoji', 'assets', '72x72'),
-	path.join(__dirname, '..', '..', '..', 'node_modules', '@twemoji', 'svg', '..', '72x72'),
-	path.join(__dirname, '..', 'assets', 'twemoji', '72x72')
+	path.join(__dirname, '..', '..', '..', 'node_modules', '@twemoji', 'svg', '..', '72x72')
 ]
 
 let resolvedAssetDir = null
@@ -95,10 +96,14 @@ function resolveAssetDir() {
 		}
 	}
 	if (!resolvedAssetDir) {
-		logger.warn(
-			'Twemoji asset directory tidak ditemukan (paket "twemoji" belum ter-install?). ' +
-				'Emoji akan memakai fallback font sistem sampai `npm install` dijalankan.'
-		)
+		const defaultDir = path.join(__dirname, '..', 'assets', 'twemoji')
+		try {
+			fs.mkdirSync(defaultDir, { recursive: true })
+			resolvedAssetDir = defaultDir
+			logger.info(`Twemoji asset directory dibuat: ${defaultDir}`)
+		} catch (err) {
+			logger.warn('Gagal membuat Twemoji asset directory: ' + err.message)
+		}
 	}
 	return resolvedAssetDir
 }
@@ -197,6 +202,64 @@ function findAssetPath(emojiChar) {
 	return result
 }
 
+/** Pastikan asset PNG Twemoji tersedia di disk (fetch on-demand jika belum ada). */
+async function ensureAssetOnDisk(emojiChar) {
+	const localPath = findAssetPath(emojiChar)
+	if (localPath) return localPath
+
+	const assetDir = resolveAssetDir()
+	if (!assetDir) return null
+
+	const filename = toTwemojiFilename(emojiChar)
+	const destPath = path.join(assetDir, `${filename}.png`)
+
+	// Coba fetch dari CDN Twemoji
+	const urls = [
+		`https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/${filename}.png`,
+		`https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/${filename}.png`,
+		`https://cdn.jsdelivr.net/gh/jdecked/twemoji@latest/assets/72x72/${filename}.png`
+	]
+
+	for (const url of urls) {
+		try {
+			const res = await fetch(url, { signal: AbortSignal.timeout(3500) })
+			if (res.ok) {
+				const buf = Buffer.from(await res.arrayBuffer())
+				await fs.promises.writeFile(destPath, buf)
+				cacheEngine.set(NS_ASSET, emojiChar, destPath)
+				return destPath
+			}
+		} catch (_) {
+			// coba cdn berikutnya
+		}
+	}
+
+	// Coba fallback ke base codepoint jika compound/ZWJ
+	const codePoints = toCodePoints(emojiChar)
+	if (codePoints.length > 1) {
+		const baseFilename = codePoints[0]?.toString(16)
+		if (baseFilename && baseFilename !== filename) {
+			const baseDest = path.join(assetDir, `${baseFilename}.png`)
+			if (fs.existsSync(baseDest)) {
+				cacheEngine.set(NS_ASSET, emojiChar, baseDest)
+				return baseDest
+			}
+			try {
+				const url = `https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/${baseFilename}.png`
+				const res = await fetch(url, { signal: AbortSignal.timeout(3500) })
+				if (res.ok) {
+					const buf = Buffer.from(await res.arrayBuffer())
+					await fs.promises.writeFile(baseDest, buf)
+					cacheEngine.set(NS_ASSET, emojiChar, baseDest)
+					return baseDest
+				}
+			} catch (_) {}
+		}
+	}
+
+	return null
+}
+
 /** Render fallback berbasis font (perilaku lama) — HANYA dipakai saat asset Twemoji tidak ditemukan. */
 async function renderFallbackGlyph(char, size) {
 	const lib = await loadCanvasLib()
@@ -226,7 +289,7 @@ async function renderTwemojiGlyph(assetPath, size) {
 }
 
 async function renderGlyph(char, size) {
-	const assetPath = findAssetPath(char)
+	const assetPath = await ensureAssetOnDisk(char)
 	if (assetPath) {
 		try {
 			return await renderTwemojiGlyph(assetPath, size)

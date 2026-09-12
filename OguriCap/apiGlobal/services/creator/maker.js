@@ -82,14 +82,20 @@ export async function apiQuoteCreate(payload) {
  */
 export async function apiBratSticker(text) {
 	if (!text) throw new ValidationError('apiBratSticker: parameter "text" wajib diisi.');
-	const timeout = getTimeout(SERVICE_GROUP);
-	const providers = [
-		{ ...validated(neoxrRequest('/brat', { text }, { timeout, responseType: 'stream' }), isFilePath), name: 'neoxr:brat' },
-		{ ...nazeRequest('/create/brat', { text }, { timeout, responseType: 'stream' }), name: 'naze:brat' },
-		{ ...nazeRequest('/create/brat3', { text }, { timeout, responseType: 'stream' }), name: 'naze:brat3' }
-	];
-	const { raw, providerName } = await runProviders('image.brat', providers, { defaultTimeout: timeout, defaultRetry: DEFAULT_RETRY });
-	return envelope(raw, providerName, raw);
+	try {
+		const { renderBrat } = await import('../../../musume/sticker/brat.js');
+		const buffer = await renderBrat(text);
+		return envelope(buffer, 'local:brat', buffer);
+	} catch (localErr) {
+		const timeout = getTimeout(SERVICE_GROUP);
+		const providers = [
+			{ ...validated(neoxrRequest('/brat', { text }, { timeout, responseType: 'stream' }), isFilePath), name: 'neoxr:brat' },
+			{ ...nazeRequest('/create/brat', { text }, { timeout, responseType: 'stream' }), name: 'naze:brat' },
+			{ ...nazeRequest('/create/brat3', { text }, { timeout, responseType: 'stream' }), name: 'naze:brat3' }
+		];
+		const { raw, providerName } = await runProviders('image.brat', providers, { defaultTimeout: timeout, defaultRetry: DEFAULT_RETRY });
+		return envelope(raw, providerName, raw);
+	}
 }
 
 /**
