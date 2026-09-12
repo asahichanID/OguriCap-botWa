@@ -21,7 +21,7 @@ const FileType = fileTypePkg.default || {
 import { checkStatus } from './database.js';
 import { isLocked } from '../group/kunci.js';
 import { acquireCommandSlot } from '../musume/absoluteGuard.js';
-import { installOutgoingGuard } from './botGuard.js';
+import { installOutgoingGuard, isBotSentMessage, recordSentBotMessage } from './botGuard.js';
 import { createSticker } from '../musume/sticker/sticker.js';
 import { imageToWebp, videoToWebp, writeExif, gifToWebp } from '../lib/exif.js';
 import { getBuffer, getSizeMedia, fetchJson, sleep, axiosss, fixBytes } from '../lib/function.js';
@@ -65,6 +65,11 @@ reloadHandler();
 // - Error di dalam handler ditangkap di sini (tidak lagi jadi
 //   unhandled rejection yang berisiko menjatuhkan bot).
 async function dispatchNazeHandler(naze, m, msg, store) {
+	// 🛡️ ANTI SELF-REPLY: Jangan pernah memproses pesan yang dikirim oleh bot ini sendiri
+	if (isBotSentMessage(m.id || msg?.key?.id)) return;
+	if (m.isBot && m.fromMe) return;
+	if (m.fromMe && !m.isCmd) return;
+
 	const slot = await acquireCommandSlot(m.sender, m.chat, m);
 	if (!slot || slot.ok === false) return;
 	try {
@@ -536,7 +541,22 @@ async function MessagesUpsert(naze, message, store) {
 	try {
 		let botNumber = naze.decodeJid(naze.user.id);
 		const msg = message.messages[0];
+		if (!msg || !msg.message) return;
 		if ((msg?.messageTimestamp * 1000) < botStartTime) return;
+
+		// 🛡️ ANTI SELF-REPLY / DOUBLE COMMAND:
+		// Abaikan seluruh pesan yang dikirim oleh proses bot ini atau bot Baileys
+		if (isBotSentMessage(msg.key?.id)) return;
+		if (msg.key?.fromMe && (
+			msg.key.id?.startsWith('3EB0') ||
+			msg.key.id?.includes('STARFALL') ||
+			msg.key.id?.startsWith('BAE5') ||
+			msg.key.id?.startsWith('HSK') ||
+			msg.key.id?.startsWith('B1E')
+		)) {
+			return;
+		}
+
 		const remoteJid = msg.key.remoteJid;
 		(store.messages ??= {})[remoteJid] ??= {};
 		store.messages[remoteJid].array ??= [];
@@ -1368,7 +1388,15 @@ async function Serialize(naze, msg, store) {
 		m.id = m.key.id
 		m.chat = m.key.remoteJidAlt || m.key.remoteJid
 		m.fromMe = m.key.fromMe
-		m.isBot = (m.id.startsWith('BAE5') || m.id.startsWith('HSK') || m.id.startsWith('B1E')) && [12, 16].includes(m.id.length) || false
+		m.isBot = Boolean(
+			isBotSentMessage(m.id) ||
+			m.id?.startsWith('BAE5') ||
+			m.id?.startsWith('HSK') ||
+			m.id?.startsWith('B1E') ||
+			m.id?.startsWith('3EB0') ||
+			m.id?.includes('STARFALL') ||
+			([12, 16, 18, 20, 22].includes(m.id?.length) && /^[A-Z0-9]+$/i.test(m.id) && m.fromMe)
+		);
 		m.isGroup = m.chat.endsWith('@g.us')
 		if (!m.isGroup && m.chat.endsWith('@lid')) m.chat = naze.findJidByLid(m.chat, store) || m.chat;
 		m.sender = naze.decodeJid(m.fromMe && naze.user.id || m.key.participantAlt || m.key.participant || m.chat || '')
@@ -1399,9 +1427,11 @@ async function Serialize(naze, msg, store) {
 		m.body = m.message?.conversation || m.msg?.text || m.msg?.conversation || m.msg?.caption || m.msg?.selectedButtonId || m.msg?.singleSelectReply?.selectedRowId || m.msg?.selectedId || m.msg?.contentText || m.msg?.selectedDisplayText || m.msg?.title || m.msg?.name || ''
 		m.mentionedJid = m.msg?.contextInfo?.mentionedJid?.map(a => naze.findJidByLid(a, store, true)) || []
 		m.text = m.msg?.text || m.msg?.caption || m.message?.conversation || m.msg?.contentText || m.msg?.selectedDisplayText || m.msg?.title || '';
-		m.prefix = /^[°•π÷×¶∆£¢€¥®™+✓_=|~!?@#$%^&.©^]/gi.test(m.body) ? m.body.match(/^[°•π÷×¶∆£¢€¥®™+✓_=|~!?@#$%^&.©^]/gi)[0] : /[\uD800-\uDBFF][\uDC00-\uDFFF]/gi.test(m.body) ? m.body.match(/[\uD800-\uDBFF][\uDC00-\uDFFF]/gi)[0] : ''
-		m.command = m.body && m.body.replace(m.prefix, '').trim().split(/ +/).shift()
-		m.args = m.body?.trim().replace(new RegExp("^" + m.prefix?.replace(/[.*=+:\-?^${}()|[\]\\]|\s/g, '\\$&'), 'i'), '').replace(m.command, '').split(/ +/).filter(a => a) || []
+		// Hapus regex surrogate pair emoji: emoji dekoratif (seperti 💰) tidak boleh dianggap sebagai command prefix!
+		m.prefix = /^[°•π÷×¶∆£¢€¥®™+✓_=|~!?@#$%^&.©^]/gi.test(m.body) ? m.body.match(/^[°•π÷×¶∆£¢€¥®™+✓_=|~!?@#$%^&.©^]/gi)[0] : '';
+		m.isCmd = Boolean(m.prefix && m.body?.startsWith(m.prefix));
+		m.command = m.isCmd ? m.body.slice(m.prefix.length).trim().split(/ +/).shift() : '';
+		m.args = m.isCmd ? m.body.trim().slice(m.prefix.length).replace(m.command, '').trim().split(/ +/).filter(Boolean) : [];
 		m.device = getDevice(m.id)
 		m.expiration = m.msg?.contextInfo?.expiration || m?.metadata?.ephemeralDuration || store?.messages?.[m.chat]?.array?.slice(-1)[0]?.metadata?.ephemeralDuration || 0
 		m.timestamp = (typeof m.messageTimestamp === "number" ? m.messageTimestamp : m.messageTimestamp.low ? m.messageTimestamp.low : m.messageTimestamp.high) || m.msg.timestampMs * 1000
@@ -1453,8 +1483,9 @@ async function Serialize(naze, msg, store) {
 			m.quoted.isGroup = m.quoted.chat.endsWith('@g.us')
 			m.quoted.mentions = m.quoted.msg?.contextInfo?.mentionedJid || []
 			m.quoted.body = m.quoted.msg?.text || m.quoted.msg?.caption || m.quoted?.message?.conversation || m.quoted.msg?.selectedButtonId || m.quoted.msg?.singleSelectReply?.selectedRowId || m.quoted.msg?.selectedId || m.quoted.msg?.contentText || m.quoted.msg?.selectedDisplayText || m.quoted.msg?.title || m.quoted?.msg?.name || ''
-			m.quoted.prefix = /^[°•π÷×¶∆£¢€¥®™+✓_=|~!?@#$%^&.©^]/gi.test(m.quoted.body) ? m.quoted.body.match(/^[°•π÷×¶∆£¢€¥®™+✓_=|~!?@#$%^&.©^]/gi)[0] : /[\uD800-\uDBFF][\uDC00-\uDFFF]/gi.test(m.quoted.body) ? m.quoted.body.match(/[\uD800-\uDBFF][\uDC00-\uDFFF]/gi)[0] : ''
-			m.quoted.command = m.quoted.body && m.quoted.body.replace(m.quoted.prefix, '').trim().split(/ +/).shift()
+			m.quoted.prefix = /^[°•π÷×¶∆£¢€¥®™+✓_=|~!?@#$%^&.©^]/gi.test(m.quoted.body) ? m.quoted.body.match(/^[°•π÷×¶∆£¢€¥®™+✓_=|~!?@#$%^&.©^]/gi)[0] : '';
+			m.quoted.isCmd = Boolean(m.quoted.prefix && m.quoted.body?.startsWith(m.quoted.prefix));
+			m.quoted.command = m.quoted.isCmd ? m.quoted.body.slice(m.quoted.prefix.length).trim().split(/ +/).shift() : '';
 			m.quoted.isMedia = !!m.quoted.msg?.mimetype || !!m.quoted.msg?.thumbnailDirectPath
 			if (m.quoted.isMedia) {
 				m.quoted.fileSha256 = m.quoted[m.quoted.type]?.fileSha256 || ''

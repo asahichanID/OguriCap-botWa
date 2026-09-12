@@ -43,6 +43,33 @@ let outgoingQueuePromise = Promise.resolve();
 let pendingOutgoingCount = 0;
 const MAX_PENDING_OUTGOING = 50;
 
+// Sent Bot Message ID Tracker (Anti Self-Reply / Double Reply)
+// Menyimpan ID pesan yang dikirim oleh proses bot ini agar tidak pernah diproses balik sebagai command
+const sentBotMessageIds = new Set();
+
+/**
+ * Merekam ID pesan yang dikirim oleh bot
+ * @param {string} id 
+ */
+export function recordSentBotMessage(id) {
+	if (!id || typeof id !== 'string') return;
+	sentBotMessageIds.add(id);
+	if (sentBotMessageIds.size > 3000) {
+		const oldest = sentBotMessageIds.values().next().value;
+		sentBotMessageIds.delete(oldest);
+	}
+}
+
+/**
+ * Memeriksa apakah suatu ID pesan dikirim oleh proses bot ini
+ * @param {string} id 
+ * @returns {boolean}
+ */
+export function isBotSentMessage(id) {
+	if (!id || typeof id !== 'string') return false;
+	return sentBotMessageIds.has(id);
+}
+
 // Incoming User Spam & Freeze State
 // sender -> { lastTime: number, warnCount: number, freezeUntil: number }
 const userSpamStore = new Map();
@@ -216,12 +243,22 @@ export function installOutgoingGuard(naze) {
 
 	// Override sendMessage
 	naze.sendMessage = async (jid, content, options = {}) => {
-		return queueSendTask(() => rawSendMessage(jid, content, options), jid, content);
+		if (options?.messageId) recordSentBotMessage(options.messageId);
+		return queueSendTask(async () => {
+			const res = await rawSendMessage(jid, content, options);
+			if (res?.key?.id) recordSentBotMessage(res.key.id);
+			return res;
+		}, jid, content);
 	};
 
 	// Override relayMessage
 	naze.relayMessage = async (jid, message, options = {}) => {
-		return queueSendTask(() => rawRelayMessage(jid, message, options), jid, message);
+		if (options?.messageId) recordSentBotMessage(options.messageId);
+		return queueSendTask(async () => {
+			const res = await rawRelayMessage(jid, message, options);
+			if (res?.key?.id) recordSentBotMessage(res.key.id);
+			return res;
+		}, jid, message);
 	};
 
 	console.log(chalk.greenBright('[BOT-GUARD] ✅ Outgoing Safety Guard & Circuit Breaker berhasil terpasang pada Baileys socket.'));

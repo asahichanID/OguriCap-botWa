@@ -20,11 +20,6 @@ export function sleep(ms) {
 }
 
 export function shouldIgnore(m) {
-console.log({
-    fromMe: m.fromMe,
-    isBaileys: m.isBaileys,
-    sender: m.sender
-})
 	if (!m?.body && !m?.text) return true
 	if (m.isBaileys) return true
 	if (m.fromMe) return true

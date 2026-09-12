@@ -43,7 +43,7 @@ import { generateWAMessageContent, jidNormalizedUser, getContentType } from 'bai
 import 'moment/min/locales.js';
 import TicTacToe from './lib/tictactoe.js';
 import { antiSpam } from './src/antispam.js';
-import { allowAutoResponse, allowModAlert } from './src/botGuard.js';
+import { allowAutoResponse, allowModAlert, isBotSentMessage } from './src/botGuard.js';
 import { ytMp4, ytMp3 } from './lib/scraper.js';
 import setTemplateMenu from './lib/template_menu.js';
 import { toAudio, toPTT, toVideo } from './lib/converter.js';
@@ -235,24 +235,36 @@ const naze = async (naze, m, msg, store) => {
 				return findJid && findJid === m.sender;
 			})
 		);
-		const symbolMatch = body.match(/^[°•π÷×¶∆£¢€¥®™+✓_=|~!?@()#,'"*+÷/\%^&.©^]/gi);
-		const emojiMatch = body.match(/^[\uD800-\uDBFF][\uDC00-\uDFFF]/gi); 
+		// Hapus regex emojiMatch agar emoji dekoratif (seperti 💰, 🎮, 🏆) tidak disangka sebagai command prefix!
 		const listMatch = global.listprefix.find(a => body?.startsWith(a));
-		const detectedPrefix = symbolMatch ? symbolMatch[0] : (emojiMatch ? emojiMatch[0] : listMatch);
-		const ownerPrefixes = Array.isArray(set.authorPrefix)
+		const symbolMatch = set.multiprefix ? body.match(/^[.!#/$%^&+=~]/) : null;
+		const detectedPrefix = symbolMatch ? symbolMatch[0] : listMatch;
+		const ownerPrefixes = (Array.isArray(set.authorPrefix)
           ? set.authorPrefix
-          : [set.authorPrefix].filter(Boolean)
+          : [set.authorPrefix]
+        ).filter(p => typeof p === 'string' && p.trim().length > 0);
         
         const detectedOwnerPrefix = isCreator
           ? ownerPrefixes.find(p => body.startsWith(p))
-          : null
+          : null;
         
         const prefix = isCreator
-          ? (detectedOwnerPrefix || detectedPrefix || listMatch || '¿')
+          ? (detectedOwnerPrefix || detectedPrefix || listMatch || '')
           : set.multiprefix
-            ? (detectedPrefix || '¿')
-            : (listMatch || '¿')      
-		const isCmd = body.startsWith(prefix)
+            ? (detectedPrefix || listMatch || '')
+            : (listMatch || '');
+
+		const isCmd = Boolean(prefix && body.startsWith(prefix));
+		const isOwnerEval = isCreator && (body.startsWith('>') || body.startsWith('<') || body.startsWith('$'));
+
+		// 🛡️ CRITICAL GUARD: Cegah bot merespons pesan keluar dari bot itu sendiri (anti self-reply loop)
+		if (isBotSentMessage(m.id || m.key?.id) || (m.fromMe && m.isBot)) {
+			return;
+		}
+		// Jika pesan dari akun bot sendiri (fromMe) tapi bukan command ber-prefix resmi atau eval owner, buang total!
+		if (m.key.fromMe && !isCmd && !isOwnerEval) {
+			return;
+		}
 		
 	// ==========================================
 	// PRE-CHECK: PROTEKSI GRUP YANG DIKUNCI
@@ -282,7 +294,7 @@ const naze = async (naze, m, msg, store) => {
 		}
 		const args = body.trim().split(/ +/).slice(1)
 		const quoted = m.quoted ? m.quoted : m
-		const command = isCmd ? body.replace(prefix, '').trim().split(/ +/).shift().toLowerCase() : '';
+		const command = isCmd ? body.slice(prefix.length).trim().split(/ +/).shift().toLowerCase() : '';
 		const modeMassal = args[0]?.toLowerCase() || ''
 		db.game.playlist ??= {}
         if (m.type === 'interactiveResponseMessage' && db.game.playlist[m.sender]) {

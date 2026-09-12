@@ -27,12 +27,10 @@ export async function oguriAI(naze, m, db) {
 		// 2. Cek fitur aktif di grup ini
 		const groupData = db.groups?.[m.chat]
 		if (!groupData?.oguriAI?.enable) return
-        console.log(groupData)
-        
+
 		// 3. Filter pesan yang tidak perlu diproses
 		if (shouldIgnore(m)) return
-        console.log("2. Ignore OK")
-        
+
 		// 4. Cek apakah ada trigger atau reply ke pesan bot
 		const text = (typeof m.text === 'string' ? m.text : m.body || '').trim()
 		const textLower = text.toLowerCase()
@@ -42,15 +40,9 @@ export async function oguriAI(naze, m, db) {
 			// exact match atau diawali trigger + spasi
 			return textLower === t || textLower.startsWith(t + ' ')
 		})
-		console.log({
-            text,
-            hasTrigger,
-            isReplyToBot
-        })
 
 		if (!hasTrigger && !isReplyToBot) return
-        console.log("3. Trigger OK")
-        
+
 		// 5. Jangan proses jika ini adalah command bot
 		const listprefix = global.listprefix || ['.', '!', '+']
 		if (listprefix.some(p => text.startsWith(p))) return
@@ -58,8 +50,7 @@ export async function oguriAI(naze, m, db) {
 		// 6. Cooldown per user per grup (5 detik)
 		const cooldownKey = `${m.chat}:${m.sender}`
 		if (!cekCooldown(cooldownKey, 5000)) return
-        console.log("4. Cooldown OK")
-        
+
 		// 7. Build key memory (isolasi per grup + per user)
 		const memKey = buildKey(m.chat, m.sender)
 
