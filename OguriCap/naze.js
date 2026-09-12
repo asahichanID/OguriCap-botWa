@@ -146,7 +146,7 @@ import { absoluteGuard, GUARD_CONFIG } from './musume/absoluteGuard.js'
 import { getKhodam, buildKhodamText } from './game/khodamData.js'
 import { smeme, smemec } from './musume/sticker/smeme.js'
 import { stickerToVideo } from './musume/sticker/stickerEngine/index.js'
-import { handleUserLimit, OGURI_LIMIT_MESSAGE } from './lib/limit.js'
+import { handleUserLimit, OGURI_LIMIT_MESSAGE, isLimitedCommand } from './lib/limit.js'
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -314,7 +314,7 @@ const naze = async (naze, m, msg, store) => {
 		
 		const isVip = isCreator || (db.users[m.sender] ? db.users[m.sender].vip : false)
 		const isBan = isCreator || (db.users[m.sender] ? db.users[m.sender].ban : false)
-		const isLimit = isCreator || isVip || (db.users[m.sender] ? (db.users[m.sender].limit > 0) : false)
+		const isLimit = isCreator || isVip || !isLimitedCommand(command) || (db.users[m.sender] ? (db.users[m.sender].limit > 0) : false)
 		const isPremium = isCreator || checkStatus(m.sender, premium) || false
 		const isNsfw = m.isGroup ? db.groups[m.chat].nsfw : false
 		

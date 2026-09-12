@@ -12,49 +12,53 @@ export const OGURI_LIMIT_MESSAGE = `🥕 *Oguri Cap:*
 Aku harus istirahat dan makan wortel dulu... 🥕
 Limit harianmu (${global.limit?.free || 5} limit) akan terisi kembali besok pukul 00:00 WIB, atau Trainer bisa upgrade ke VIP untuk akses tanpa batas!"`.trim();
 
-// Daftar perintah gratis (informasi / status / bantuan / game / sticker lokal / brat) yang tidak memotong limit dan bisa diakses saat limit 0
-export const freeCommands = new Set([
-	// Informasi & Status
-	'menu', 'help', 'listmenu', 'allmenu',
-	'limit', 'ceklimit', 'profile', 'me', 'cek',
-	'owner', 'creator', 'sewa', 'buyvip', 'vip', 'premium', 'buy', 'price', 'listprem', 'listvip',
-	'ping', 'speed', 'runtime', 'uptime', 'status', 'rules', 'infobot', 'bot',
-	'afk', 'clearmemory', 'banktracen', 'daily', 'buylimit', 'leaderboard', 'top', 'transfer',
-
-	// Fitur Sticker (Berjalan lokal tanpa API)
-	's', 'sticker', 'stiker', 'stickergif', 'stikergif', 'sgif',
-	'stickerwm', 'swm', 'wm', 'curi', 'colong', 'take', 'stickergifwm', 'sgifwm',
-	'smeme', 'stickmeme', 'stikmeme', 'stickermeme', 'stikermeme',
-	'smemec', 'stickmemec', 'stikmemec', 'stickermemec', 'stikermemec',
-	'toimg', 'tovideo', 'tovid', 'tomp4', 'tomp3', 'tovn', 'toaudio', 'toaud',
-
-	// Brat Sticker (.brat bebas limit karena lokal, catatan: bratvid tetap pakai limit)
-	'brat',
-
-	// Fitur Game (Semua game bebas limit)
-	'slot', 'slots', 'mesin', 'mesinslot',
-	'sonic', 'sonik', 'dash', 'speedy', 'speeddash',
-	'casino', 'samgong', 'kartu', 'rampok', 'merampok', 'begal',
-	'suit', 'suitpvp', 'delsuit', 'deletesuit',
-	'ttc', 'ttt', 'tictactoe', 'delttc', 'delttt',
-	'tebakbom', 'tekateki', 'tebaklirik', 'tebakkata', 'family100', 'susunkata', 'tebakkimia',
-	'caklontong', 'tebaknegara', 'tebakgambar', 'tebakbendera', 'tebakangka', 'butawarna', 'colorblind',
-	'kuismath', 'math', 'ulartangga', 'snakeladder', 'ut', 'chess', 'catur', 'ct',
-	'dadu', 'roll', 'dice', 'flip', 'koin',
-
-	// Fitur Uma Musume & RPG Lokal
-	'uma', 'umamusume', 'gacha', 'pull', 'lpull', 'limitedpull', 'multi', 'lmulti', 'limitedmulti',
-	'banner', 'bannerl', 'bannerltd', 'limitedinfo', 'race', 'balap', 'balapan', 'train', 'training',
-	'umainfo', 'myuma', 'inventory', 'inv', 'shop', 'toko', 'monsterrace', 'testpull',
-
-	// Grup & Utilitas Lokal
-	'kick', 'add', 'promote', 'demote', 'group', 'hidetag', 'tagall', 'linkgroup', 'infogroup',
-	'open', 'close', 'setppgroup', 'setnamegc', 'setdesc', 'revoke',
-	'readviewonce', 'rvo', 'quoted', 'q', 'del', 'delete', 'clearchat'
+// ============================================================
+// 🎫 FITUR BER-LIMIT (KHUSUS DOWNLOADER, IQC, & BRATVID)
+// Sesuai aturan: Hanya fitur eksternal/berat yang memiliki batas limit harian.
+// Seluruh fitur lokal (sticker, AI, RPG Uma Musume, game, tools, grup, quotes, dll.) BEBAS LIMIT!
+// ============================================================
+export const limitedCommands = new Set([
+	// Downloader: YouTube & Musik
+	'play', 'ytplay', 'play2', 'ytplay2', 'spotify2',
+	'ytmp3', 'yta', 'ytmp4', 'ytv', 'ytdl',
+	// Downloader: TikTok
+	'tt', 'tiktok', 'ttmp3', 'tta', 'ttdl', 'tiktokdl',
+	// Downloader: Instagram
+	'ig', 'igdl', 'instagram', 'igvideo', 'igimage', 'igvideoall', 'igimageall', 'igstory', 'reels',
+	// Downloader: Facebook
+	'fb', 'fbdl', 'fbdown', 'facebook', 'facebookdl', 'facebookdown', 'fbdownload', 'fbmp4', 'fbvideo',
+	// Downloader: Spotify
+	'spotify', 'spotifysearch', 'spotify_pilih', 'spotifydl',
+	// Downloader: File & Cloud Hosting
+	'mediafire', 'mf', 'git', 'gitclone', 'gdrive', 'capcut', 'snackvideo', 'threads', 'twitter', 'x', 'soundcloud',
+	
+	// Fitur Khusus: IQC (Fake Quote iPhone)
+	'iqc',
+	
+	// Fitur Khusus: Brat Video (Video GIF animasi brat)
+	'bratvid', 'bratvideo'
 ]);
 
 /**
- * Memeriksa dan memotong limit untuk perintah bot
+ * Memeriksa apakah suatu perintah termasuk dalam kategori yang dibatasi limit.
+ * @param {string} cmd Nama perintah
+ * @returns {boolean} true jika perintah memerlukan limit
+ */
+export function isLimitedCommand(cmd = '') {
+	const clean = (cmd || '').toLowerCase().trim();
+	return limitedCommands.has(clean);
+}
+
+// Backward compatibility jika ada modul yang mengimpor freeCommands
+export const freeCommands = {
+	has: (cmd) => !isLimitedCommand(cmd)
+};
+
+/**
+ * Memeriksa dan memotong limit untuk perintah bot.
+ * HANYA perintah dalam limitedCommands (downloader, iqc, bratvid) yang dipotong limit.
+ * Perintah umum dan lokal lainnya SELALU diizinkan tanpa memotong limit.
+ * 
  * @param {object} naze - Baileys client
  * @param {object} m - Objek pesan
  * @param {object} db - Database global
@@ -67,8 +71,10 @@ export async function handleUserLimit(naze, m, db, isCreator, cmd = '') {
 	if (!sender) return true;
 
 	const cleanCmd = (cmd || '').toLowerCase().trim();
-	// Perintah bebas limit diizinkan kapan saja
-	if (freeCommands.has(cleanCmd)) return true;
+
+	// 1. Jika BUKAN perintah terbatas (bukan downloader, iqc, bratvid),
+	// SELALU izinkan langsung tanpa memotong limit! (Bebas limit / Lokal)
+	if (!isLimitedCommand(cleanCmd)) return true;
 
 	if (!db.users) db.users = {};
 	if (!db.users[sender]) {
@@ -82,7 +88,7 @@ export async function handleUserLimit(naze, m, db, isCreator, cmd = '') {
 	const user = db.users[sender];
 	const isVip = isCreator || Boolean(user.vip);
 
-	// VIP & Owner: Akses tanpa batas (Unlimited), tidak dipotong limit
+	// VIP & Owner: Akses tanpa batas (Unlimited), tidak pernah dipotong limit
 	if (isVip) return true;
 
 	// Pastikan nilai limit adalah angka yang valid
@@ -90,7 +96,7 @@ export async function handleUserLimit(naze, m, db, isCreator, cmd = '') {
 		user.limit = global.limit?.free || 5;
 	}
 
-	// Jika limit sudah habis (<= 0)
+	// Jika limit untuk fitur berat ini sudah habis (<= 0)
 	if (user.limit <= 0) {
 		user.limit = 0;
 		// Kirim teks notifikasi Oguri Cap HANYA 1 KALI saja
@@ -103,11 +109,11 @@ export async function handleUserLimit(naze, m, db, isCreator, cmd = '') {
 				console.error('[LIMIT] Gagal mengirim peringatan limit Oguri:', e);
 			}
 		}
-		// Selebihnya diam (silent return) agar tidak spam jika terus mengirim command
+		// Selebihnya diam (silent return) agar tidak spam jika terus mencoba
 		return false;
 	}
 
-	// Jika masih memiliki limit, potong 1 limit untuk eksekusi perintah
+	// Jika masih memiliki limit, potong 1 limit untuk fitur berat ini
 	user.limit -= 1;
 	if (user.limit < 0) user.limit = 0;
 	user.limitNotified = false; // Reset status notifikasi selama masih punya sisa limit

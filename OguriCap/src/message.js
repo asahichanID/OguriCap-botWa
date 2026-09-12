@@ -65,13 +65,16 @@ reloadHandler();
 // - Error di dalam handler ditangkap di sini (tidak lagi jadi
 //   unhandled rejection yang berisiko menjatuhkan bot).
 async function dispatchNazeHandler(naze, m, msg, store) {
-	const slot = await acquireCommandSlot(m.sender, m.chat);
+	const slot = await acquireCommandSlot(m.sender, m.chat, m);
+	if (!slot || slot.ok === false) return;
 	try {
 		await nazeHandler(naze, m, msg, store);
 	} catch (err) {
 		console.error(chalk.redBright(`[HANDLER ERROR] ${err?.stack || err}`));
 	} finally {
-		slot.release();
+		if (slot && typeof slot.release === 'function') {
+			await slot.release();
+		}
 	}
 }
 

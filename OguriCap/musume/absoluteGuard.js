@@ -258,32 +258,84 @@ const dequeue = (category) => {
 //     slot.release()
 //   }
 
-// FIX (audit stress-test): 30 detik terlalu pendek untuk command berat
-// (.play / .tiktok / .ai / download video besar bisa >30 detik wajar).
-// Kalau safeguard menembak duluan, slot dilepas PADAHAL command asli masih
-// jalan -> command KEDUA dari user yang sama bisa mulai berbarengan dengan
-// yang pertama (race condition balik lagi, persis yang mau dicegah Target 2).
-// Dinaikkan jadi 5 menit: cukup besar untuk command wajar apa pun, tapi
-// tetap ada agar antrian tidak menggantung SELAMANYA kalau caller lupa
-// release() (mis. crash di luar try/finally).
-const CMD_QUEUE_SAFEGUARD_MS = 5 * 60 * 1000 // auto-release safeguard (anti deadlock/menggantung)
+// ============================================================
+// 🧵 STRICT GLOBAL COMMAND QUEUE & PACING JITTER (3 - 5 DETIK)
+// ============================================================
+// Sesuai mandat perlindungan nomor utama WhatsApp (anti-ban & anti-spam):
+// 1. Eksekusi command diproses secara antrian global sequential (cmdq:global).
+//    Jika User A sedang menjalankan perintah (cth. stiker, downloader, ai),
+//    pengguna lain di grup manapun wajib mengantri dan tidak bisa dieksekusi bersamaan.
+// 2. Wajib jeda acak 3 - 5 detik (human pacing) setelah command selesai:
+//    Bot beristirahat sejenak sebelum melayani perintah antrian berikutnya agar
+//    aktivitas tidak terlihat "gragas" atau mesin otomatis beruntun.
+// 3. Obrolan biasa (non-command) bebas antrian agar percakapan grup tidak lag.
 
-export const acquireCommandSlot = async (sender, chat) => {
-  const key = `cmdq:${chat}:${sender}`
+const CMD_QUEUE_SAFEGUARD_MS = 60 * 1000 // Safeguard 60 detik (anti-deadlock)
+const MAX_GLOBAL_COMMAND_QUEUE = 8 // Maksimal 8 antrian menunggu
+const activeCommandSenders = new Set() // Sender ID yang sedang dieksekusi atau mengantri
+
+export const acquireCommandSlot = async (sender, chat, m = null) => {
+  // 1. Deteksi apakah pesan merupakan sebuah command aktif
+  const isCommand = Boolean(
+    m?.prefix ||
+    m?.command ||
+    (m?.body && /^[./!#$°•\\~+]/.test(m.body.trim())) ||
+    m?.type === 'interactiveResponseMessage'
+  )
+
+  // Jika bukan command (obrolan santai grup / media tanpa teks),
+  // langsung izinkan lewat tanpa menyentuh antrian global
+  if (!isCommand) {
+    return { ok: true, release: () => {} }
+  }
+
+  // Cek apakah pengirim adalah creator/owner
+  const isCreator = Boolean(
+    m?.fromMe ||
+    (global.owner && Array.isArray(global.owner) && global.owner.some(o => String(o).includes(String(sender).split('@')[0])))
+  )
+
+  // 2. Proteksi Duplikat Antrian Per-User
+  // Mencegah 1 user spamming banyak antrian berturut-turut
+  if (!isCreator && activeCommandSenders.has(sender)) {
+    if (m?.reply) {
+      m.reply('⏳ Perintahmu sebelumnya masih diproses / dalam antrian. Harap sabar menunggu ya!').catch(() => {})
+    }
+    return { ok: false, release: () => {} }
+  }
+
+  // 3. Batas Maksimal Kedalaman Antrian Global
+  ensureQueue('cmdq:global')
+  const currentQueueLength = queueMap.get('cmdq:global')?.length || 0
+  if (!isCreator && currentQueueLength >= MAX_GLOBAL_COMMAND_QUEUE) {
+    if (m?.reply) {
+      m.reply('⏳ Antrian bot sedang penuh demi keamanan akun. Mohon coba beberapa saat lagi ya!').catch(() => {})
+    }
+    return { ok: false, release: () => {} }
+  }
+
+  activeCommandSenders.add(sender)
+  const key = 'cmdq:global'
   await enqueue(key)
 
   let released = false
-  const release = () => {
+  const release = async () => {
     if (released) return // anti double-release
     released = true
     clearTimeout(safeguard)
+    activeCommandSenders.delete(sender)
+
+    // Jeda acak 3 - 5 detik (Pacing Jitter) sebelum melepas slot ke user berikutnya
+    const jitterMs = 3000 + Math.floor(Math.random() * 2000)
+    await new Promise(r => setTimeout(r, jitterMs))
+
     dequeue(key)
   }
 
-  // Safeguard: cegah antrian menggantung selamanya kalau caller lupa release
+  // Safeguard: cegah antrian menggantung selamanya kalau proses command macet
   const safeguard = setTimeout(release, CMD_QUEUE_SAFEGUARD_MS)
 
-  return { release }
+  return { ok: true, release }
 }
 
 // ============================================================
@@ -448,6 +500,7 @@ let _cleanTimer = null
 const startCleanup = () => {
   if (_cleanTimer) return
   _cleanTimer = setInterval(runCleanup, CLEAN_INT)
+  if (_cleanTimer?.unref) _cleanTimer.unref()
   console.log('🛡️ [ABSOLUTE GUARD] Auto cleanup aktif (interval 2 menit)')
 }
 
