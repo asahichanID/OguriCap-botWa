@@ -6,46 +6,59 @@ const CERT1 = "TklYRUwuTWVzc2FnZUJ1aWxkZXJWNC43LUNlcnRpZmljYXRlQ2hhaW4uTWV0YWRhd
 const CERT2 = "TklYRUwuTWVzc2FnZUJ1aWxkZXJWNC43LUNlcnRpZmljYXRlQ2hhaW4uTWV0YWRhdGHsL0Ccm0ELINFZ2IaBhKaeWnVuh0o6nZLCioCn9xpSADzwIS5VCWO+1eVXT2atJOyf7FYlpB0/JA3Us+aQtekuIkHu/zBXijORZ4ClF4+sF3cSTNg6gY/+6iwLK/zs3bMg+GeJrcI65vXfs95Shxlb2Rd5GRT2/2yBmR6Zkf5QwMJuptUHWtM26WY7/xlkEKGFYDZVqOSylusiOzSALa815zC6dCiHoJNLBEKMlaZZQOk57/+OYoU5zzTaEgLhyvNFHSyAlyLQ3SGFtVHAaJZHSmmSPyJowCOB+92Gkk6SWVMsk6FbU8QJWFtlhzV/W/gZ7WzUlS/AKgN0th9/cq20ToFkW7X9c+rtYavufmuieqFhXgaMD8AGsoN9QC/HzNC9D1nydPfFYEUr9BHVy2nF5gM58Y59r2rT8p5LPARIkUp8g+5DLhyW0tdZFZ1305o4AHCayZnp5rjcU2Xi/c1Qf/djBGakmijlMs4aMzKJYD0c4Q8jdI7sNyd876K2wRD+L6KeD2QB3PtCS4P7BWAl5gh5CJ6ZBrwcaKXZqcSjEwm52MqVCgYZdapAaNYUy/QndttjLOG0wxxwuX1hIhMjPnIKZR1kwnqD5EqlHpilrnojRZvjVGN4zEKmilS8rNstt4HHs/D849W+Q6LRVWiWMs0cT2IugrX+Skxd8En7Gq52UEmuVBrSTpN+UpIu20NsVb9lsvuYh3XO441606tOEY2eKcZJdTtqrOTNqbbTk0zVn1yhbOCvmfctBNDhTwaC5QMi0P9wjU5XI9SBtkdQLizc5oqpoiHeqgb8+aJHVLcbgIJ/KLZKtRWFDfzRNM02Csx4etUUapVd2NA/L0oMs/O5T9sVj9FBJ7q99GWr3PVmxJb36mHZlXC4k1gGN9swE0LtzYsUdT5tUo9ri/hS3W/SM+F1p4Kh4QIgRcG3ciIHGN44bnDh3HDCz0fDnzKYw0bclMxZPctEyJ5gEOPF6OAkjD9dEaRGq/tEPf1k9Aub+v2dEjnfrYWAm4E5Zfhs2Xh0CT0k+SzhgKd0K/46ChJ20G5+blwpIvahvTVS68+aVIX6CwXs4tcVx6FnmVsMOOkIasfaqQLZYvNBkuLoZnQAq4j8yRekrQ=="
 
 function buildTebakBomHTML(top3Players = []) {
-	const top3Json = JSON.stringify(top3Players)
+	const safeTop3Json = JSON.stringify(top3Players).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')
+
+	let lbPreRendered = ''
+	if (!top3Players || top3Players.length === 0) {
+		lbPreRendered = '<div style="font-size:9px;color:#64748b;text-align:center;padding:4px">Belum ada skor. Main & klaim kodemu!</div>'
+	} else {
+		top3Players.slice(0, 3).forEach((p, i) => {
+			const medal = i === 0 ? '🥇' : (i === 1 ? '🥈' : '🥉')
+			const cleanPhone = (p.id || '').split('@')[0]
+			const name = p.name && p.name !== 'Player' && p.name !== cleanPhone ? p.name : cleanPhone
+			const scoreStr = Number(p.score || 0).toLocaleString('id-ID')
+			lbPreRendered += `<div class="lb-row" style="display:flex;justify-content:space-between;align-items:center;font-size:10px;background:rgba(0,0,0,0.4);padding:4px 8px;border-radius:6px;margin-bottom:3px;"><span class="u-name" style="color:#f1f5f9;font-weight:700;">${medal} ${name}</span><span class="u-score" style="color:#00d9ff;font-weight:900;">${scoreStr} PTS</span></div>`
+		})
+	}
 	
 	return `<style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',Roboto,Helvetica,sans-serif;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
-html,body{width:100%;min-height:100%;background:#060b18;color:#f1f5f9;overflow-x:hidden;overflow-y:auto}
-body{display:flex;justify-content:center;align-items:flex-start;padding:8px 6px}
-#app-container{width:100%;max-width:380px;background:linear-gradient(165deg,#0a1128,#050a18 60%,#030611);border:1.5px solid rgba(0,217,255,0.4);border-radius:16px;box-shadow:0 0 20px rgba(0,217,255,0.2),inset 0 0 12px rgba(0,217,255,0.06);display:flex;flex-direction:column;gap:8px;padding:10px;position:relative}
-.hdr{display:flex;justify-content:space-between;align-items:center;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.08)}
-.title-box h1{font-size:15px;font-weight:900;letter-spacing:0.5px;color:#00d9ff;text-shadow:0 0 8px rgba(0,217,255,0.6);line-height:1.1}
+html,body{width:100%;height:100%;background:#060b18;color:#f1f5f9;margin:0;padding:0;overflow-x:hidden;overflow-y:auto}
+body{padding:12px 8px}
+#app-container{width:100%;max-width:380px;margin:0 auto;background:linear-gradient(165deg,#0e1a30,#081122 60%,#040914);border:2px solid #00d9ff;border-radius:16px;box-shadow:0 0 22px rgba(0,217,255,0.3);padding:12px;position:relative}
+.hdr{display:flex;justify-content:space-between;align-items:center;padding-bottom:6px;border-bottom:1px solid rgba(0,217,255,0.2);margin-bottom:8px}
+.title-box h1{font-size:16px;font-weight:900;letter-spacing:0.5px;color:#00d9ff;text-shadow:0 0 10px rgba(0,217,255,0.7);line-height:1.1}
 .title-box span{font-size:8px;font-weight:700;letter-spacing:1px;color:#ff4757;text-transform:uppercase}
-.score-pill{background:rgba(0,0,0,0.5);border:1px solid #00d9ff;border-radius:10px;padding:2px 8px;text-align:right}
+.score-pill{background:rgba(0,0,0,0.6);border:1px solid #00d9ff;border-radius:10px;padding:3px 10px;text-align:right}
 .score-pill small{display:block;font-size:7px;color:#94a3b8;font-weight:700;letter-spacing:0.5px}
-.score-pill b{font-size:13px;color:#ffd700;font-weight:900;text-shadow:0 0 6px rgba(255,215,0,0.5)}
-.deck-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;width:100%;margin:2px 0;perspective:800px}
-.card{position:relative;width:100%;aspect-ratio:4/5;min-height:70px;cursor:pointer;transform-style:preserve-3d;transition:transform 0.4s cubic-bezier(0.175,0.885,0.32,1.275);border-radius:10px}
-.card.flipped{transform:rotateY(180deg)}
-.card-face{position:absolute;inset:0;backface-visibility:hidden;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,0.4)}
-.card-back{background:linear-gradient(135deg,#1e293b,#0f172a);border:1.5px solid rgba(0,217,255,0.35);color:#00d9ff}
-.card-back:hover{border-color:#00d9ff;box-shadow:0 0 10px rgba(0,217,255,0.4)}
-.card-back canvas{width:75%;height:75%}
-.card-front{transform:rotateY(180deg);border:1.5px solid rgba(255,255,255,0.2)}
-.card-front.safe{background:radial-gradient(circle,#052e16,#022c22);border-color:#22c55e;box-shadow:0 0 12px rgba(34,197,94,0.4)}
-.card-front.bomb{background:radial-gradient(circle,#450a0a,#1c0404);border-color:#ef4444;box-shadow:0 0 14px rgba(239,68,68,0.7)}
-.card-icon{font-size:22px;margin-bottom:2px}
-.card-val{font-size:10px;font-weight:900;letter-spacing:0.5px}
+.score-pill b{font-size:14px;color:#ffd700;font-weight:900;text-shadow:0 0 8px rgba(255,215,0,0.6)}
+.deck-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;width:100%;min-height:184px;margin:4px 0}
+.card{position:relative;width:100%;height:88px;cursor:pointer;border-radius:10px}
+.card-face{width:100%;height:100%;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:0 4px 10px rgba(0,0,0,0.5)}
+.card-back{background:linear-gradient(135deg,#1e293b,#0f172a);border:2px solid rgba(0,217,255,0.45);color:#00d9ff}
+.card-back:hover{border-color:#00d9ff;box-shadow:0 0 12px rgba(0,217,255,0.5)}
+.card-front{border:2px solid rgba(255,255,255,0.2);display:none;z-index:1}
+.card.flipped .card-back{display:none}
+.card.flipped .card-front{display:flex}
+.card-front.safe{background:radial-gradient(circle,#052e16,#022c22);border-color:#22c55e;box-shadow:0 0 14px rgba(34,197,94,0.5)}
+.card-front.bomb{background:radial-gradient(circle,#450a0a,#1c0404);border-color:#ef4444;box-shadow:0 0 16px rgba(239,68,68,0.8)}
+.card-icon{font-size:24px;margin-bottom:2px}
+.card-val{font-size:11px;font-weight:900;letter-spacing:0.5px}
 .card-front.safe .card-val{color:#4ade80}
 .card-front.bomb .card-val{color:#f87171}
-.action-bar{display:flex;gap:6px;margin:2px 0}
-.btn{flex:1;padding:7px 10px;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;border:none;transition:all 0.15s ease}
-.btn-reset{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:#cbd5e1}
-.btn-reset:active{background:rgba(255,255,255,0.15)}
+.action-bar{display:flex;gap:6px;margin:8px 0}
+.btn{flex:1;padding:8px 10px;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;border:none;transition:all 0.15s ease}
+.btn-reset{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.18);color:#cbd5e1}
+.btn-reset:active{background:rgba(255,255,255,0.2)}
 .btn-claim{background:linear-gradient(135deg,#eab308,#ca8a04);color:#1e1b4b;box-shadow:0 0 10px rgba(234,179,8,0.4)}
 .btn-claim:active{transform:scale(0.97)}
-.lb-box{background:rgba(15,23,42,0.75);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:6px 8px}
+.lb-box{background:rgba(15,23,42,0.8);border:1px solid rgba(0,217,255,0.2);border-radius:10px;padding:6px 10px;margin-bottom:6px}
 .lb-hdr{display:flex;justify-content:space-between;align-items:center;font-size:9px;font-weight:800;color:#94a3b8;margin-bottom:4px;letter-spacing:0.5px}
 .lb-list{display:flex;flex-direction:column;gap:3px}
-.lb-row{display:flex;justify-content:space-between;align-items:center;font-size:9px;background:rgba(0,0,0,0.3);padding:3px 6px;border-radius:6px}
+.lb-row{display:flex;justify-content:space-between;align-items:center;font-size:9px;background:rgba(0,0,0,0.35);padding:4px 8px;border-radius:6px}
 .lb-row .u-name{color:#f1f5f9;font-weight:700;display:flex;align-items:center;gap:4px}
 .lb-row .u-score{color:#00d9ff;font-weight:900}
-.modal{position:absolute;inset:0;background:rgba(2,6,23,0.92);backdrop-filter:blur(4px);display:none;flex-direction:column;align-items:center;justify-content:center;padding:16px;text-align:center;z-index:20;border-radius:16px}
+.modal{position:absolute;inset:0;background:rgba(2,6,23,0.94);backdrop-filter:blur(6px);display:none;flex-direction:column;align-items:center;justify-content:center;padding:16px;text-align:center;z-index:20;border-radius:16px}
 .modal.show{display:flex}
 .modal h2{font-size:16px;color:#ffd700;margin-bottom:6px;font-weight:900}
 .modal p{font-size:10px;color:#94a3b8;line-height:1.4;margin-bottom:10px}
@@ -65,7 +78,14 @@ body{display:flex;justify-content:center;align-items:flex-start;padding:8px 6px}
     </div>
   </div>
   
-  <div class="deck-grid" id="card-deck"></div>
+  <div class="deck-grid" id="card-deck">
+    <div class="card" id="card-0"><div class="card-face card-back"><div class="card-icon" style="font-size:26px;filter:drop-shadow(0 0 6px #00d9ff)">❓</div><div class="card-val" style="color:#00d9ff">TEBAK</div></div><div class="card-face card-front safe"><div class="card-icon">💎</div><div class="card-val">+100</div></div></div>
+    <div class="card" id="card-1"><div class="card-face card-back"><div class="card-icon" style="font-size:26px;filter:drop-shadow(0 0 6px #00d9ff)">❓</div><div class="card-val" style="color:#00d9ff">TEBAK</div></div><div class="card-face card-front safe"><div class="card-icon">💎</div><div class="card-val">+250</div></div></div>
+    <div class="card" id="card-2"><div class="card-face card-back"><div class="card-icon" style="font-size:26px;filter:drop-shadow(0 0 6px #00d9ff)">❓</div><div class="card-val" style="color:#00d9ff">TEBAK</div></div><div class="card-face card-front safe"><div class="card-icon">💎</div><div class="card-val">+500</div></div></div>
+    <div class="card" id="card-3"><div class="card-face card-back"><div class="card-icon" style="font-size:26px;filter:drop-shadow(0 0 6px #00d9ff)">❓</div><div class="card-val" style="color:#00d9ff">TEBAK</div></div><div class="card-face card-front safe"><div class="card-icon">💎</div><div class="card-val">+1000</div></div></div>
+    <div class="card" id="card-4"><div class="card-face card-back"><div class="card-icon" style="font-size:26px;filter:drop-shadow(0 0 6px #00d9ff)">❓</div><div class="card-val" style="color:#00d9ff">TEBAK</div></div><div class="card-face card-front bomb"><div class="card-icon">💣</div><div class="card-val">BOM!</div></div></div>
+    <div class="card" id="card-5"><div class="card-face card-back"><div class="card-icon" style="font-size:26px;filter:drop-shadow(0 0 6px #00d9ff)">❓</div><div class="card-val" style="color:#00d9ff">TEBAK</div></div><div class="card-face card-front bomb"><div class="card-icon">💣</div><div class="card-val">BOM!</div></div></div>
+  </div>
   
   <div class="action-bar">
     <button class="btn btn-reset" onclick="initGame()">🔄 Ronde Baru</button>
@@ -77,7 +97,7 @@ body{display:flex;justify-content:center;align-items:flex-start;padding:8px 6px}
       <span>🏆 TOP 3 LEADERBOARD</span>
       <span style="color:#38bdf8">.claimr</span>
     </div>
-    <div class="lb-list" id="lb-entries"></div>
+    <div class="lb-list" id="lb-entries">${lbPreRendered}</div>
   </div>
 
   <div class="modal" id="claim-modal">
@@ -91,7 +111,6 @@ body{display:flex;justify-content:center;align-items:flex-start;padding:8px 6px}
 
 <script>
 (function(){
-  var top3 = ${top3Json} || [];
   var currentScore = 0;
   var safeFound = 0;
   var gameOver = false;
@@ -118,7 +137,6 @@ body{display:flex;justify-content:center;align-items:flex-start;padding:8px 6px}
     if (!a) return;
     try {
       var t = a.currentTime;
-      // 1. Noise Blast (Ledakan Rumble Menggelegar)
       var dur = 0.8;
       var len = Math.floor(a.sampleRate * dur);
       var buf = a.createBuffer(1, len, a.sampleRate);
@@ -143,7 +161,6 @@ body{display:flex;justify-content:center;align-items:flex-start;padding:8px 6px}
       noiseSrc.start(t);
       noiseSrc.stop(t + dur);
 
-      // 2. Sub-Bass Thump Boom
       var osc = a.createOscillator();
       var oscGain = a.createGain();
       osc.type = 'sawtooth';
@@ -200,40 +217,13 @@ body{display:flex;justify-content:center;align-items:flex-start;padding:8px 6px}
     } catch(e){}
   }
 
-  /* ================== CANVAS DRAWING KARTU BELAKANG ================== */
-  function drawCardCanvas(canvas) {
-    if (!canvas) return;
-    var ctx = canvas.getContext('2d');
-    var w = canvas.width = 60;
-    var h = canvas.height = 70;
-    
-    // Pattern Diamond
-    ctx.strokeStyle = 'rgba(0, 217, 255, 0.4)';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(4, 4, w - 8, h - 8);
-    
-    ctx.beginPath();
-    ctx.moveTo(w/2, 12);
-    ctx.lineTo(w - 12, h/2);
-    ctx.lineTo(w/2, h - 12);
-    ctx.lineTo(12, h/2);
-    ctx.closePath();
-    ctx.stroke();
-
-    ctx.fillStyle = '#00d9ff';
-    ctx.beginPath();
-    ctx.arc(w/2, h/2, 4, 0, Math.PI*2);
-    ctx.fill();
-  }
-
   /* ================== GAME LOGIC ================== */
   function initGame() {
     gameOver = false;
     safeFound = 0;
     var deckEl = document.getElementById('card-deck');
-    deckEl.innerHTML = '';
+    if (!deckEl) return;
     
-    // 6 Kartu: 4 Aman (isBomb: false), 2 Bom (isBomb: true)
     cards = [
       { id: 0, isBomb: false, pts: 100, flipped: false },
       { id: 1, isBomb: false, pts: 250, flipped: false },
@@ -246,29 +236,22 @@ body{display:flex;justify-content:center;align-items:flex-start;padding:8px 6px}
     // Acak Kartu
     cards.sort(function(){ return Math.random() - 0.5; });
 
+    // Update elemen DOM yang sudah ada, jangan hancurkan agar transisi aman
     cards.forEach(function(c, idx){
-      var cardDiv = document.createElement('div');
-      cardDiv.className = 'card';
-      cardDiv.id = 'card-' + idx;
+      var cardDiv = document.getElementById('card-' + idx);
+      if (!cardDiv) return;
       
-      var backFace = document.createElement('div');
-      backFace.className = 'card-face card-back';
-      var cv = document.createElement('canvas');
-      backFace.appendChild(cv);
+      cardDiv.className = 'card'; // reset class
       
-      var frontFace = document.createElement('div');
-      frontFace.className = 'card-face card-front ' + (c.isBomb ? 'bomb' : 'safe');
-      frontFace.innerHTML = c.isBomb 
-        ? '<div class="card-icon">💣</div><div class="card-val">BOM!</div>' 
-        : '<div class="card-icon">💎</div><div class="card-val">+' + c.pts + '</div>';
-      
-      cardDiv.appendChild(backFace);
-      cardDiv.appendChild(frontFace);
+      var frontFace = cardDiv.querySelector('.card-front');
+      if (frontFace) {
+        frontFace.className = 'card-face card-front ' + (c.isBomb ? 'bomb' : 'safe');
+        frontFace.innerHTML = c.isBomb 
+          ? '<div class="card-icon">💣</div><div class="card-val">BOM!</div>' 
+          : '<div class="card-icon">💎</div><div class="card-val">+' + c.pts + '</div>';
+      }
       
       cardDiv.onclick = function(){ pickCard(idx); };
-      deckEl.appendChild(cardDiv);
-      
-      drawCardCanvas(cv);
     });
 
     updateUI();
@@ -286,9 +269,11 @@ body{display:flex;justify-content:center;align-items:flex-start;padding:8px 6px}
       // Kena Bom!
       playExplosionSound();
       var app = document.getElementById('app-container');
-      app.classList.remove('shake');
-      void app.offsetWidth;
-      app.classList.add('shake');
+      if (app) {
+        app.classList.remove('shake');
+        void app.offsetWidth;
+        app.classList.add('shake');
+      }
       
       // Poin turun 1.5x lipat
       currentScore = Math.floor(currentScore / 1.5);
@@ -330,23 +315,6 @@ body{display:flex;justify-content:center;align-items:flex-start;padding:8px 6px}
   function updateUI() {
     var scEl = document.getElementById('sc-val');
     if (scEl) scEl.textContent = currentScore.toLocaleString('id-ID');
-  }
-
-  function renderLeaderboard() {
-    var lbEl = document.getElementById('lb-entries');
-    if (!lbEl) return;
-    if (!top3 || top3.length === 0) {
-      lbEl.innerHTML = '<div style="font-size:8px;color:#64748b;text-align:center;padding:4px">Belum ada skor. Main & klaim kodemu!</div>';
-      return;
-    }
-    var html = '';
-    top3.slice(0, 3).forEach(function(p, i){
-      var medal = i === 0 ? '🥇' : (i === 1 ? '🥈' : '🥉');
-      var cleanPhone = (p.id || '').split('@')[0];
-      var name = p.name && p.name !== 'Player' && p.name !== cleanPhone ? p.name : cleanPhone;
-      html += '<div class="lb-row"><span class="u-name">' + medal + ' ' + name + '</span><span class="u-score">' + (p.score || 0).toLocaleString('id-ID') + ' PTS</span></div>';
-    });
-    lbEl.innerHTML = html;
   }
 
   function makeClaimCode(score) {
@@ -392,9 +360,10 @@ body{display:flex;justify-content:center;align-items:flex-start;padding:8px 6px}
 
   window.initGame = initGame;
   
-  // Start
-  renderLeaderboard();
-  initGame();
+  // Eksekusi init secara instan dan sinkronous (seperti slot.js dan catur.js)
+  try {
+    initGame();
+  } catch (e) {}
 })();
 </script>`
 }
