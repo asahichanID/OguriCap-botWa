@@ -150,6 +150,7 @@ import { smeme, smemec } from './musume/sticker/smeme.js'
 import { renderBrat } from './musume/sticker/brat.js'
 import { stickerToVideo } from './musume/sticker/stickerEngine/index.js'
 import { handleUserLimit, OGURI_LIMIT_MESSAGE, isLimitedCommand } from './lib/limit.js'
+import { scheduleStop, cancelScheduledStop, getStopStatus, executeStop, parseTimeString } from './src/scheduledStop.js'
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -1144,6 +1145,111 @@ try {
                global._dbDirty = true
             break
 			// Owner Menu
+			case 'stop':
+			case 'stopbot': {
+				// Robust Owner Check
+				const senderNum = (m.sender || '').split('@')[0].replace(/[^0-9]/g, '');
+				const ownerList = [
+					...(Array.isArray(global.owner) ? global.owner : [global.owner]),
+					...(Array.isArray(global.set?.owner) ? global.set.owner : [global.set?.owner])
+				].filter(Boolean).map(v => String(v).replace(/[^0-9]/g, ''));
+				const isOwnerValid = Boolean(isCreator || m.key?.fromMe || global.isOwner || ownerList.includes(senderNum));
+
+				if (!isOwnerValid) return m.reply(global.mess?.owner || '❌ Khusus Head Trainer (Owner)!');
+
+				// Normalisasi argumen: jika diawali kata "bot", ambil argumen setelahnya (contoh: .stop bot 22.00)
+				let subArgs = [...args];
+				if (subArgs[0]?.toLowerCase() === 'bot') {
+					subArgs.shift();
+				}
+
+				const targetParam = (subArgs[0] || '').toLowerCase().trim();
+
+				// 1. Opsi BATAL / CANCEL / OFF
+				if (['cancel', 'batal', 'off', 'hapus'].includes(targetParam)) {
+					const { wasActive, oldTime } = cancelScheduledStop();
+					if (wasActive) {
+						return m.reply(`✅ *[JADWAL STOP DIBATALKAN]*\n\nJadwal stop bot pada *${oldTime}* telah berhasil dibatalkan.`);
+					} else {
+						return m.reply(`ℹ️ Tidak ada jadwal stop bot yang sedang aktif.`);
+					}
+				}
+
+				// 2. Opsi CEK STATUS
+				if (['status', 'cek', 'info'].includes(targetParam)) {
+					const status = getStopStatus();
+					if (status.isActive) {
+						return m.reply(
+`🛑 *[STATUS STOP BOT TERJADWAL]*
+
+⏰ *Waktu Target:* ${status.targetFormatted} ${status.tz}
+📅 *Tanggal:* ${status.targetDateFormatted}
+⏳ *Sisa Waktu:* ${status.remainingFormatted}
+🎯 *Status:* Aktif menunggu waktu tiba
+
+_Gunakan *${prefix}stop bot cancel* jika ingin membatalkan._`
+						);
+					} else {
+						return m.reply(`ℹ️ Saat ini tidak ada jadwal stop bot yang aktif.\n\nContoh penggunaan:\n• *${prefix}stop bot 22.00*\n• *${prefix}stop bot 22:30*`);
+					}
+				}
+
+				// 3. Opsi SEKARANG / NOW (Matikan langsung)
+				if (['now', 'sekarang'].includes(targetParam)) {
+					m.reply(`🛑 *[SHUTDOWN LANGSUNG]*\n\nMenyimpan seluruh data dan mematikan bot sekarang...`).then(() => {
+						executeStop(naze, m.chat, 'Perintah shutdown langsung dari Owner');
+					});
+					return;
+				}
+
+				// 4. Jika ada parameter jam (misal: "22.00", "22:00", "07.30")
+				const parsedTime = parseTimeString(targetParam);
+				if (parsedTime) {
+					const scheduleRes = scheduleStop({
+						timeStr: targetParam,
+						chat: m.chat,
+						sender: m.sender,
+						naze
+					});
+
+					if (!scheduleRes.success) {
+						return m.reply(`❌ ${scheduleRes.message}`);
+					}
+
+					const hariInfo = scheduleRes.isTomorrow ? 'Besok' : 'Hari ini';
+					return m.reply(
+`🛑 *[JADWAL STOP BOT DISET]*
+
+⏰ *Waktu Target:* ${scheduleRes.timeFormatted} ${scheduleRes.tz}
+📅 *Jadwal:* ${hariInfo} (${scheduleRes.dateFormatted})
+⏳ *Hitung Mundur:* ${scheduleRes.remainingFormatted}
+🖥️ *Platform:* Pterodactyl Auto-Shutdown
+
+_Bot akan otomatis menyimpan seluruh database dan mematikan proses bot tepat pada waktu yang ditentukan._
+_Untuk membatalkan jadwal, ketik: *${prefix}stop bot cancel*_`
+					);
+				}
+
+				// 5. Jika tanpa argumen jam atau format salah, tampilkan panduan dan status
+				const currentStatus = getStopStatus();
+				let statusText = '';
+				if (currentStatus.isActive) {
+					statusText = `\n\n📌 *Jadwal Aktif Saat Ini:*\n⏰ Target: *${currentStatus.targetFormatted} ${currentStatus.tz}* (sisa ${currentStatus.remainingFormatted})\nKetik *${prefix}stop bot cancel* untuk membatalkan.\n`;
+				}
+
+				return m.reply(
+`🛑 *[FITUR STOP BOT TERJADWAL]* 🛑
+_Khusus Owner / Head Trainer_
+${statusText}
+*Format Penggunaan:*
+• *${prefix}stop bot 22.00* — Set waktu stop bot pada jam 22.00
+• *${prefix}stop bot 22:30* — Set waktu stop bot pada jam 22.30
+• *${prefix}stop bot cancel* — Membatalkan jadwal stop bot
+• *${prefix}stop bot status* — Melihat status & sisa waktu jadwal
+• *${prefix}stop bot now* — Mematikan bot langsung seketika`
+				);
+			}
+			break
 			case 'shutdown': case 'off': {
 				if (!isCreator) return m.reply(global.mess.owner)
 				m.reply(`*[BOT] Process Shutdown...*`).then(() => {
