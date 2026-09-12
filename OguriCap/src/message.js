@@ -86,7 +86,7 @@ async function GroupUpdate(naze, m, store) {
 			return parse;
 		}
 	}
-	if (!m.messageStubType || !m.isGroup) return
+	if (!m.messageStubType || !m.isGroup || isLocked(m.chat)) return
 	if (global.db?.groups?.[m.chat] && store?.groupMetadata?.[m.chat]) {
 		const admin = `@${m.sender.split('@')[0]}`
 		const metadata = store.groupMetadata[m.chat];

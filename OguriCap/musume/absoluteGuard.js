@@ -272,7 +272,6 @@ const dequeue = (category) => {
 
 const CMD_QUEUE_SAFEGUARD_MS = 60 * 1000 // Safeguard 60 detik (anti-deadlock)
 const MAX_GLOBAL_COMMAND_QUEUE = 8 // Maksimal 8 antrian menunggu
-const activeCommandSenders = new Set() // Sender ID yang sedang dieksekusi atau mengantri
 
 export const acquireCommandSlot = async (sender, chat, m = null) => {
   // 1. Deteksi apakah pesan merupakan sebuah command aktif
@@ -295,26 +294,14 @@ export const acquireCommandSlot = async (sender, chat, m = null) => {
     (global.owner && Array.isArray(global.owner) && global.owner.some(o => String(o).includes(String(sender).split('@')[0])))
   )
 
-  // 2. Proteksi Duplikat Antrian Per-User
-  // Mencegah 1 user spamming banyak antrian berturut-turut
-  if (!isCreator && activeCommandSenders.has(sender)) {
-    if (m?.reply) {
-      m.reply('⏳ Perintahmu sebelumnya masih diproses / dalam antrian. Harap sabar menunggu ya!').catch(() => {})
-    }
-    return { ok: false, release: () => {} }
-  }
-
-  // 3. Batas Maksimal Kedalaman Antrian Global
+  // 2. Masuk ke Antrian Global Sequential di Latar Belakang (Tanpa Pesan Spam)
   ensureQueue('cmdq:global')
   const currentQueueLength = queueMap.get('cmdq:global')?.length || 0
   if (!isCreator && currentQueueLength >= MAX_GLOBAL_COMMAND_QUEUE) {
-    if (m?.reply) {
-      m.reply('⏳ Antrian bot sedang penuh demi keamanan akun. Mohon coba beberapa saat lagi ya!').catch(() => {})
-    }
+    // Drop silently jika antrian sudah melampaui batas maksimum agar tidak spamming pesan
     return { ok: false, release: () => {} }
   }
 
-  activeCommandSenders.add(sender)
   const key = 'cmdq:global'
   await enqueue(key)
 
@@ -323,7 +310,6 @@ export const acquireCommandSlot = async (sender, chat, m = null) => {
     if (released) return // anti double-release
     released = true
     clearTimeout(safeguard)
-    activeCommandSenders.delete(sender)
 
     // Jeda acak 3 - 5 detik (Pacing Jitter) sebelum melepas slot ke user berikutnya
     const jitterMs = 3000 + Math.floor(Math.random() * 2000)

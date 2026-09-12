@@ -4,6 +4,7 @@ import moment from 'moment-timezone';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { toPTT } from './converter.js';
+import { isLocked } from '../group/kunci.js';
 import {
   generateWAMessageContent as generateWAMessageContentSairi,
   generateWAMessageFromContent as generateWAMessageFromContentSairi,
@@ -543,6 +544,9 @@ export async function sendPrayerAudioVN(naze, groupId, prayerName, options = {})
  */
 export async function sendPrayerNotification(naze, groupId, prayerName, prayerTime, config, options = {}) {
   try {
+    if (isLocked(groupId) && !options.isTest) {
+      return false;
+    }
     const tz = config?.timezone || 'Asia/Jakarta';
     const schedule = config?.schedule || (await getRealtimePrayerSchedule(config?.regionId || 'jakarta'));
     const finalPrayerTime = prayerTime || schedule[prayerName] || '18:10';

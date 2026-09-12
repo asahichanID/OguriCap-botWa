@@ -81,8 +81,10 @@ loadLockStorage()
 export const cleanJid = (jid) => {
   if (!jid || typeof jid !== "string") return ""
   let clean = jid.trim().toLowerCase()
-  if (clean.includes(":")) {
-    clean = clean.replace(/:\d+@/, "@")
+  if (clean.includes("@")) {
+    const [user, domain] = clean.split("@")
+    const cleanUser = user.split(":")[0]
+    return `${cleanUser}@${domain}`
   }
   return clean
 }
@@ -132,28 +134,31 @@ export const removeGroup = (id) => {
 
 /**
  * Memeriksa apakah suatu grup sedang dikunci
- * Prioritas utama: jika grup secara eksplisit dibuka (locked === false), SELALU izinkan respon
+ * 1. Jika mode allLocked aktif: SEMUA grup terkunci (100% kedap), kecuali yang secara eksplisit dibuka via .buka <id>
+ * 2. Jika mode allLocked tidak aktif: hanya grup yang status locked === true yang terkunci
  */
 export const isLocked = (chat) => {
   if (!chat) return false
   const cleanId = cleanJid(chat)
+  if (!cleanId.endsWith('@g.us')) return false // Kunci hanya berlaku untuk grup
 
-  // 1. Jika grup ini tercatat secara eksplisit telah dibuka (locked === false), PASTI TIDAK TERKUNCI!
-  if (botLock.groups[cleanId] && botLock.groups[cleanId].locked === false) {
-    return false
+  // 1. Jika mode allLocked aktif
+  if (botLock.allLocked) {
+    if (botLock.groups[cleanId]?.explicitlyUnlocked === true || botLock.groups[chat]?.explicitlyUnlocked === true) {
+      return false
+    }
+    return true
   }
-  if (botLock.groups[chat] && botLock.groups[chat].locked === false) {
-    return false
-  }
 
-  // 2. Jika mode allLocked aktif dan grup ini tidak secara eksplisit dibuka
-  if (botLock.allLocked) return true
-
-  // 3. Cek status individual grup
+  // 2. Jika mode per-grup biasa
   if (botLock.groups[cleanId]) {
     return Boolean(botLock.groups[cleanId].locked)
   }
-  return Boolean(botLock.groups[chat]?.locked)
+  if (botLock.groups[chat]) {
+    return Boolean(botLock.groups[chat].locked)
+  }
+
+  return false
 }
 
 /**
@@ -161,12 +166,15 @@ export const isLocked = (chat) => {
  */
 export const lockGroup = (chat, name) => {
   const cleanId = cleanJid(chat)
+  if (!cleanId) return null
   const group = ensureGroup(cleanId, name)
   group.locked = true
+  delete group.explicitlyUnlocked
   group.lockedAt = Date.now()
   group.updatedAt = Date.now()
   if (botLock.groups[chat] && chat !== cleanId) {
     botLock.groups[chat].locked = true
+    delete botLock.groups[chat].explicitlyUnlocked
   }
   botLock.aktif = true
   saveLockStorage()
@@ -175,16 +183,26 @@ export const lockGroup = (chat, name) => {
 
 /**
  * Buka kunci satu grup tertentu
- * Jika allLocked aktif, grup ini secara eksplisit dibuka (locked = false)
- * sementara grup lain tetap dalam kondisi terkunci
+ * Jika allLocked aktif, grup ini ditandai explicitlyUnlocked = true
  */
 export const unlockGroup = (chat) => {
   const cleanId = cleanJid(chat)
+  if (!cleanId) return null
   const group = ensureGroup(cleanId)
   group.locked = false
+  if (botLock.allLocked) {
+    group.explicitlyUnlocked = true
+  } else {
+    delete group.explicitlyUnlocked
+  }
   group.updatedAt = Date.now()
   if (botLock.groups[chat] && chat !== cleanId) {
     botLock.groups[chat].locked = false
+    if (botLock.allLocked) {
+      botLock.groups[chat].explicitlyUnlocked = true
+    } else {
+      delete botLock.groups[chat].explicitlyUnlocked
+    }
   }
   botLock.aktif = botLock.allLocked || Object.values(botLock.groups).some(g => g.locked)
   saveLockStorage()
@@ -202,6 +220,7 @@ export const lockAllGroups = () => {
 
   for (const id in botLock.groups) {
     botLock.groups[id].locked = true
+    delete botLock.groups[id].explicitlyUnlocked
     botLock.groups[id].lockedAt = Date.now()
     botLock.groups[id].updatedAt = Date.now()
   }
@@ -220,6 +239,7 @@ export const unlockAllGroups = () => {
 
   for (const id in botLock.groups) {
     botLock.groups[id].locked = false
+    delete botLock.groups[id].explicitlyUnlocked
     botLock.groups[id].updatedAt = Date.now()
   }
 
@@ -232,7 +252,7 @@ export const getAllGroups = () => Object.values(botLock.groups)
 export const getLockedGroups = () => {
   const all = Object.values(botLock.groups)
   if (botLock.allLocked) {
-    return all.filter(v => v.locked !== false)
+    return all.filter(v => !v.explicitlyUnlocked)
   }
   return all.filter(v => v.locked === true)
 }
@@ -240,7 +260,7 @@ export const getLockedGroups = () => {
 export const getUnlockedGroups = () => {
   const all = Object.values(botLock.groups)
   if (botLock.allLocked) {
-    return all.filter(v => v.locked === false)
+    return all.filter(v => v.explicitlyUnlocked === true)
   }
   return all.filter(v => !v.locked)
 }
@@ -251,11 +271,13 @@ export const getUnlockedGroups = () => {
  */
 export const syncGroups = async (conn) => {
   try {
+    if (!conn?.groupFetchAllParticipating) return getAllGroups()
     const groups = await conn.groupFetchAllParticipating()
     let hasChanges = false
 
     for (const rawId in groups) {
       const id = cleanJid(rawId)
+      if (!id || !id.endsWith('@g.us')) continue
       const subject = groups[rawId]?.subject || "Unknown Group"
       if (!botLock.groups[id]) {
         botLock.groups[id] = {
@@ -271,8 +293,7 @@ export const syncGroups = async (conn) => {
           botLock.groups[id].name = subject
           hasChanges = true
         }
-        // Jangan timpa kunci jika grup ini secara eksplisit dibuka (locked === false)
-        if (botLock.allLocked && botLock.groups[id].locked !== false && !botLock.groups[id].locked) {
+        if (botLock.allLocked && !botLock.groups[id].explicitlyUnlocked && !botLock.groups[id].locked) {
           botLock.groups[id].locked = true
           hasChanges = true
         }
