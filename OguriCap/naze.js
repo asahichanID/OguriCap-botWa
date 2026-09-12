@@ -43,6 +43,7 @@ import { generateWAMessageContent, jidNormalizedUser, getContentType } from 'bai
 import 'moment/min/locales.js';
 import TicTacToe from './lib/tictactoe.js';
 import { antiSpam } from './src/antispam.js';
+import { allowAutoResponse, allowModAlert } from './src/botGuard.js';
 import { ytMp4, ytMp3 } from './lib/scraper.js';
 import setTemplateMenu from './lib/template_menu.js';
 import { toAudio, toPTT, toVideo } from './lib/converter.js';
@@ -373,9 +374,11 @@ const naze = async (naze, m, msg, store) => {
 		}
 		
 			// Anti Hidetag
-			if (m.isGroup && !m.key.fromMe && m.mentionedJid?.length === m.metadata.participants?.length && db.groups[m.chat]?.antihidetag && !isCreator && m.isBotAdmin && !m.isAdmin) {
+			if (m.isGroup && !m.key.fromMe && !m.isBot && m.mentionedJid?.length === m.metadata.participants?.length && db.groups[m.chat]?.antihidetag && !isCreator && m.isBotAdmin && !m.isAdmin) {
 				await naze.sendMessage(m.chat, { delete: { remoteJid: m.chat, fromMe: false, id: m.id, participant: m.sender }})
-				await m.reply('*Anti Hidetag Sedang Aktif❗*')
+				if (allowModAlert(m.chat, 'antihidetag')) {
+					await m.reply('*Anti Hidetag Sedang Aktif❗*')
+				}
 			}
 			
 			// Anti Tag Sw
@@ -396,10 +399,12 @@ const naze = async (naze, m, msg, store) => {
 			}
 			
 			// Anti Toxic
-			if (m.isGroup && !m.key.fromMe && db.groups[m.chat]?.antitoxic && !isCreator && m.isBotAdmin && !m.isAdmin) {
+			if (m.isGroup && !m.key.fromMe && !m.isBot && db.groups[m.chat]?.antitoxic && !isCreator && m.isBotAdmin && !m.isAdmin) {
 				if (budy.toLowerCase().split(/\s+/).some(word => badWordsLower.includes(word))) {
 					await naze.sendMessage(m.chat, { delete: { remoteJid: m.chat, fromMe: false, id: m.id, participant: m.sender }})
-					await naze.relayMessage(m.chat, { extendedTextMessage: { text: `Terdeteksi @${m.sender.split('@')[0]} Berkata Toxic\nMohon gunakan bahasa yang sopan.`, contextInfo: { mentionedJid: [m.key.participantAlt || m.sender], isForwarded: true, forwardingScore: 1, quotedMessage: { conversation: '*Anti Toxic❗*'}, ...m.key }}}, {})
+					if (allowModAlert(m.chat, 'antitoxic')) {
+						await naze.relayMessage(m.chat, { extendedTextMessage: { text: `Terdeteksi @${m.sender.split('@')[0]} Berkata Toxic\nMohon gunakan bahasa yang sopan.`, contextInfo: { mentionedJid: [m.key.participantAlt || m.sender], isForwarded: true, forwardingScore: 1, quotedMessage: { conversation: '*Anti Toxic❗*'}, ...m.key }}}, {})
+					}
 				}
 			}
 			
@@ -426,12 +431,16 @@ const naze = async (naze, m, msg, store) => {
                     m.isGroup &&
                     db.groups[m.chat]?.antilink &&
                     !isCreator &&
+                    !m.isBot &&
+                    !m.key.fromMe &&
                     m.isBotAdmin &&
                     !m.isAdmin
                 ) {
 				if (budy.match('chat.whatsapp.com/')) {
 					await naze.sendMessage(m.chat, { delete: { remoteJid: m.chat, fromMe: false, id: m.id, participant: m.sender }})
-					await naze.relayMessage(m.chat, { extendedTextMessage: { text: `Terdeteksi @${m.sender.split('@')[0]} Mengirim Link Group\nMaaf Link Harus Di Hapus..`, contextInfo: { mentionedJid: [m.key.participantAlt || m.sender], isForwarded: true, forwardingScore: 1, quotedMessage: { conversation: '*Anti Link❗*'}, ...m.key }}}, {})
+					if (allowModAlert(m.chat, 'antilink')) {
+						await naze.relayMessage(m.chat, { extendedTextMessage: { text: `Terdeteksi @${m.sender.split('@')[0]} Mengirim Link Group\nMaaf Link Harus Di Hapus..`, contextInfo: { mentionedJid: [m.key.participantAlt || m.sender], isForwarded: true, forwardingScore: 1, quotedMessage: { conversation: '*Anti Link❗*'}, ...m.key }}}, {})
+					}
 				}
 			}
 			
@@ -480,9 +489,15 @@ const naze = async (naze, m, msg, store) => {
 				cmdAdd(db.hit);
 				cmdAddHit(db.hit, command);
 			}
-			if (set.antispam && antiSpam.isFiltered(m.sender)) {
-				console.log(chalk.bgRed('[ SPAM ] : '), chalk.black(chalk.bgHex('#1CFFF7')(`From -> ${m.sender}`), chalk.bgHex('#E015FF')(` In ${m.isGroup ? m.chat : 'Private Chat'}`)))
-				return m.reply('「 ❗ 」Beri Jeda 5 Detik Per Command Kak')
+			// 🛡️ BOT-GUARD: Smart Anti-Spam & Auto-Freeze (selalu aktif untuk mencegah ban WA saat bot berjalan lama)
+			const spamCheck = antiSpam.check(m.sender, isCreator);
+			if (!spamCheck.allowed) {
+				console.log(chalk.bgRed('[ SPAM BLOCKED ] : '), chalk.black(chalk.bgHex('#1CFFF7')(`From -> ${m.sender}`), chalk.bgHex('#E015FF')(` In ${m.isGroup ? m.chat : 'Private Chat'}`)));
+				if (spamCheck.shouldWarn && spamCheck.warnMsg) {
+					return m.reply(spamCheck.warnMsg);
+				}
+				// Silent drop jika spam berulang agar bot tidak membalas terus dan terhindar dari ban WA
+				return;
 			}
 		}
 		
@@ -495,10 +510,12 @@ const naze = async (naze, m, msg, store) => {
 			fileSha256 = hash.text
 		}
 		
-		// Salam
-		if (/^a(s|ss)alamu('|)alaikum(| )(wr|)( |)(wb|)$/.test(budy?.toLowerCase())) {
-			const jwb_salam = ['Wa\'alaikumusalam','Wa\'alaikumusalam wr wb','Wa\'alaikumusalam Warohmatulahi Wabarokatuh']
-			m.reply(pickRandom(jwb_salam))
+		// Salam (dengan throttling dan anti-loop)
+		if (!m.isBot && !m.key.fromMe && /^a(s|ss)alamu('|)alaikum(| )(wr|)( |)(wb|)$/.test(budy?.toLowerCase())) {
+			if (allowAutoResponse(`salam:${m.chat}`, 25000)) {
+				const jwb_salam = ['Wa\'alaikumusalam','Wa\'alaikumusalam wr wb','Wa\'alaikumusalam Warohmatulahi Wabarokatuh'];
+				m.reply(pickRandom(jwb_salam));
+			}
 		}
 		
 		// Cek Expired

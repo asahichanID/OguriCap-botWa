@@ -1,13 +1,18 @@
-const usedCommandRecently = new Set()
+import { checkIncomingSpam } from './botGuard.js';
 
-const isFiltered = (from) => !!usedCommandRecently.has(from)
+const usedCommandRecently = new Set();
+
+const isFiltered = (from) => !!usedCommandRecently.has(from);
 
 const addFilter = (from) => {
-	usedCommandRecently.add(from)
-	setTimeout(() => usedCommandRecently.delete(from), 5000)
-}
+	usedCommandRecently.add(from);
+	setTimeout(() => usedCommandRecently.delete(from), 3000);
+};
 
 export const antiSpam = {
 	isFiltered,
-	addFilter
-}
+	addFilter,
+	check: checkIncomingSpam
+};
+
+export { checkIncomingSpam };

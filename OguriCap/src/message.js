@@ -21,6 +21,7 @@ const FileType = fileTypePkg.default || {
 import { checkStatus } from './database.js';
 import { isLocked } from '../group/kunci.js';
 import { acquireCommandSlot } from '../musume/absoluteGuard.js';
+import { installOutgoingGuard } from './botGuard.js';
 import { createSticker } from '../musume/sticker/sticker.js';
 import { imageToWebp, videoToWebp, writeExif, gifToWebp } from '../lib/exif.js';
 import { getBuffer, getSizeMedia, fetchJson, sleep, axiosss, fixBytes } from '../lib/function.js';
@@ -385,7 +386,7 @@ if (!Array.isArray(bank.aktivitas))
 			readsw: false,
 			autobio: false,
 			autoread: false,
-			antispam: false,
+			antispam: true,
 			autotyping: false,
 			grouponly: false,
 			multiprefix: false,
@@ -820,6 +821,7 @@ const sendInteractiveCore = async (naze, jid, content = {}, options = {}, store)
 
 
 async function Solving(naze, store) {
+	installOutgoingGuard(naze);
 	naze.serializeM = (m) => MessagesUpsert(naze, m, store)
 	
 	naze.decodeJid = (jid) => {
