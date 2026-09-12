@@ -1305,9 +1305,10 @@ try {
 			}
 			break
 			case 'audit': {
-	              await audit(naze,m,db,args,isCreator)
-            }
-            break
+				await audit(naze, m, db, args, isCreator, m.metadata?.participants);
+				global._dbDirty = true;
+			}
+			break;
             
             case 'bansos': {
                   await bansos(naze,m,db,args,isCreator,botNumber)
