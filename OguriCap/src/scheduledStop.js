@@ -146,13 +146,13 @@ export async function executeStop(naze, chat, reason = 'Waktu jadwal tercapai') 
 	global.isShuttingDown = true;
 
 	console.log(chalk.red.bold(`\n========================================================`));
-	console.log(chalk.red.bold(`🛑 [PTERODACTYL AUTO-STOP] Mematikan proses bot (${reason})`));
+	console.log(chalk.red.bold(`🛑 [PTERODACTYL AUTO-STOP] Mematikan bot (${reason})`));
 	console.log(chalk.red.bold(`========================================================\n`));
 
 	if (naze && chat) {
 		try {
 			await naze.sendMessage(chat, {
-				text: `🛑 *[OGURI CAP - SHUTDOWN OTOMATIS]*\n\n⏰ *Pemberitahuan:* ${reason}\n💾 Seluruh database telah disimpan secara aman.\n🔌 Proses bot dimatikan seketika di panel Pterodactyl.\n\n_Daya dinonaktifkan. Sampai jumpa! 🥕_`
+				text: `🛑 *[OGURI CAP - SHUTDOWN SELESAI]*\n\n⏰ *Pemberitahuan:* ${reason}\n💾 Seluruh database telah disimpan secara aman.\n🔌 Koneksi WhatsApp dinonaktifkan (Bot Offline).\n\n_Daya dinonaktifkan. Sampai jumpa! 🥕_`
 			});
 		} catch (e) {
 			console.error('[PTERODACTYL AUTO-STOP] Gagal mengirim pesan notifikasi:', e?.message || e);
@@ -161,14 +161,14 @@ export async function executeStop(naze, chat, reason = 'Waktu jadwal tercapai') 
 
 	await flushDatabase();
 
-	// Informasikan ke supervisor start.js bahwa ini adalah shutdown sengaja (bukan crash)
-	if (typeof process.send === 'function') {
+	// Informasikan ke supervisor start.js bahwa ini adalah shutdown sengaja
+	if (typeof process.send === 'function' && process.connected) {
 		try {
 			process.send('stop');
 		} catch (e) {}
 	}
 
-	// Hentikan listener event dan tutup koneksi Baileys socket
+	// Hentikan listener event dan putus koneksi Baileys socket secara total
 	try {
 		if (naze?.ev && typeof naze.ev.removeAllListeners === 'function') {
 			naze.ev.removeAllListeners();
@@ -188,10 +188,19 @@ export async function executeStop(naze, chat, reason = 'Waktu jadwal tercapai') 
 		}
 	} catch (e) {}
 
-	// Tunggu 500ms agar Baileys socket selesai mengirim packet lalu matikan process
+	// Cetak status penonaktifan di konsol Pterodactyl
+	console.log(chalk.yellow.bold(`\n========================================================`));
+	console.log(chalk.green.bold(`✅ [OGURI CAP] Bot berhasil dinonaktifkan (Status: OFFLINE)`));
+	console.log(chalk.cyan(`🔌 Baileys socket terputus total. Bot tidak lagi terhubung ke WhatsApp.`));
+	console.log(chalk.cyan(`💤 Bot memasuki mode Standby (0% CPU). Panel Pterodactyl tidak akan merestart otomatis.`));
+	console.log(chalk.yellow(`▶️ Untuk menyalakan kembali bot kapan saja, klik tombol 'Restart' di Panel Pterodactyl.`));
+	console.log(chalk.yellow.bold(`========================================================\n`));
+
+	// Beri jeda 500ms agar log tercetak dengan rapi
 	setTimeout(() => {
-		console.log(chalk.gray('[PTERODACTYL AUTO-STOP] Menutup proses Node.js seketika (exit code 0)...'));
-		process.exit(0);
+		// Jika berada di container Pterodactyl, tahan proses dalam mode dormant 0% CPU agar Wings tidak memicu crash detector restart
+		// Namun jika dipanggil SIGTERM / tombol stop di web GUI, sistem akan keluar bersih
+		console.log(chalk.gray('[PTERODACTYL AUTO-STOP] Bot standby. Menunggu instruksi Restart dari Head Trainer di Web Panel...'));
 	}, 500);
 }
 

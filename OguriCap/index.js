@@ -566,7 +566,7 @@ const cleanup = async (signal) => {
 		if (global.store) await storeDB.write(global.store);
 	} catch (e) {}
 
-	if (typeof process.send === 'function') {
+	if (typeof process.send === 'function' && process.connected) {
 		try {
 			process.send('stop');
 		} catch (e) {}
