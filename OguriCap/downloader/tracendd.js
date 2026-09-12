@@ -1,5 +1,5 @@
-import { pickRandom, getUmaQuote } from '../helperquotes.js'
-import { getYtmp4Thumb } from '../umaimage.js'
+import { pickRandom, getUmaQuote } from '../musume/helperquotes.js'
+import { getYtmp4Thumb } from '../musume/umaimage.js'
 
 import {
   apiYoutubeDownload,
@@ -7,7 +7,7 @@ import {
   apiSpotifySearch,
   apiSpotifyDownload,
   apiInstagramDownload
-} from '../../apiGlobal/index.js'
+} from '../apiGlobal/index.js'
 // ==============================================
 // YTMP3 - Unduh Audio YouTube
 // ==============================================

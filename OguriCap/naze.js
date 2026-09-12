@@ -51,9 +51,11 @@ import { getSholatConfig, updateSholatGroupState, generateRamadanPrayerCanvas, g
 import { JadiBot, StopJadiBot, ListJadiBot } from './src/jadibot.js';
 import { cmdAdd, cmdAddHit, addExpired, getPosition, getExpired, getStatus, checkStatus, getAllExpired, checkExpired } from './src/database.js';
 import { rdGame, iGame, tGame, gameSlot, gameCasinoSolo, gameSamgongSolo, gameMerampok, gameBegal, daily, buy, setLimit, addLimit, addMoney, setMoney, transfer, Blackjack, SnakeLadder } from './lib/game.js';
-import { kirimCatur } from './catur.js';
-import { kirimSlot } from './slot.js';
-import { kirimSonic } from './sonic.js';
+import { kirimCatur } from './game/catur.js';
+import { kirimSlot } from './game/slot.js';
+import { kirimSonic } from './game/sonic.js';
+import { kirimTebakBom } from './game/tebakbom.js';
+import { verifyAndClaimCode, renderLeaderboardCanvas, getTopLeaderboard } from './game/tebakbomData.js';
 import { getRandom, getBuffer, fetchJson, runtime, clockString, sleep, isUrl, formatDate, formatp, generateProfilePicture, errorCache, normalize, normalizeAnswer, runUpdate, updateSettings, parseMention, fixBytes, similarity, pickRandom, encodeToLetters, tarBackup } from './lib/function.js';
 import {
 	apiInstagramDownload,
@@ -119,30 +121,30 @@ import { race } from './musume/umarace.js'
 import { training } from './musume/umatraining.js'
 import { feed } from './musume/umafeed.js'
 import { getUmaQuote } from './musume/helperquotes.js'
-import { profile } from './musume/upgrade/profile.js'
-import { leaderboard } from './musume/upgrade/leaderboard.js'
-import { afk } from './musume/upgrade/afk.js'
-import { play } from './musume/upgrade/play.js'
-import { play2 } from './musume/upgrade/play2.js'
-import { ytmp3, ytmp4, tiktok, ttmp3, cariSpotify, unduhSpotify, instagram } from './musume/upgrade/tracendd.js'
+import { profile } from './musume/profile/profile.js'
+import { leaderboard } from './musume/profile/leaderboard.js'
+import { afk } from './group/afk.js'
+import { play } from './downloader/play.js'
+import { play2 } from './downloader/play2.js'
+import { ytmp3, ytmp4, tiktok, ttmp3, cariSpotify, unduhSpotify, instagram } from './downloader/tracendd.js'
 import { audit, bansos } from './musume/economy/academy.js'
 import { banktracen, cekbank } from './musume/economy/banktracen.js'
 import { addxpuma, setxpuma, delxpuma } from './musume/xpuma/addxpowner.js'
 import { umalb } from './musume/profile/umalb.js'
 import { umainfo } from './musume/profile/umainfo.js'
-import { autoSound } from './sounds.js'
+import { autoSound } from './downloader/sounds.js'
 //import ww from './game/werewolf/ww.js'
 import { race5, join5, inforoom5, batalroom5, start5 } from './musume/race5.js'
-import { oguriAI, clearMemory as clearOguriMemory } from './musume/Oguriai/oguriAI.js'
+import { oguriAI, clearMemory as clearOguriMemory } from './ai/oguriAI.js'
 import { umachar } from './musume/shop/umachar.js'
 import { getMonsterStats } from './musume/shop/limitedEvent/absoluteMonster.js'
-import { tampilkanKunciGrup, prosesTombolKunci } from "./kuncigrup.js"
-import { tampilkanBukaGrup, prosesTombolBuka } from "./bukagrup.js"
-import { isLocked } from './kunci.js';
+import { tampilkanKunciGrup, prosesTombolKunci } from "./group/kuncigrup.js"
+import { tampilkanBukaGrup, prosesTombolBuka } from "./group/bukagrup.js"
+import { isLocked } from './group/kunci.js';
 import { absoluteGuard, GUARD_CONFIG } from './musume/absoluteGuard.js'
-import { getKhodam, buildKhodamText } from './musume/khodamData.js'
-import { smeme, smemec } from './musume/sticker/smeme.js'
-import { stickerToVideo } from './musume/sticker/stickerEngine/index.js'
+import { getKhodam, buildKhodamText } from './game/khodamData.js'
+import { smeme, smemec } from './sticker/smeme.js'
+import { stickerToVideo } from './sticker/stickerEngine/index.js'
 import { handleUserLimit, OGURI_LIMIT_MESSAGE } from './lib/limit.js'
 
 const require = createRequire(import.meta.url);
@@ -601,38 +603,45 @@ const naze = async (naze, m, msg, store) => {
 			}
 		}
 		
-		// Tebak Bomb
-		let pilih = '🌀', bomb = '💣';
-		if (m.sender in tebakbom) {
-			if (!/^[1-9]|10$/i.test(body) && !isCmd && !isCreator) return !0;
-			let index = parseInt(body) - 1;
-			if (tebakbom[m.sender].petak[index] === 1 || tebakbom[m.sender].petak[index] === 3) return !0;
-			if (tebakbom[m.sender].petak[index] === 2) {
-				tebakbom[m.sender].petak[index] = 3;
-				tebakbom[m.sender].board[index] = bomb;
-				tebakbom[m.sender].pick++;
-				m.react('❌')
-				tebakbom[m.sender].bomb--;
-				tebakbom[m.sender].nyawa.pop();
-				let brd = tebakbom[m.sender].board;
-				if (tebakbom[m.sender].nyawa.length < 1) {
-					await m.reply(`*GAME TELAH BERAKHIR*\nKamu terkena bomb\n\n ${brd.join('')}\n\n*Terpilih :* ${tebakbom[m.sender].pick}\n_Pengurangan Limit : 1_`);
-					m.react('😂')
-					delete tebakbom[m.sender];
-				} else m.reply(`*PILIH ANGKA*\n\nKamu terkena bomb\n ${brd.join('')}\n\nTerpilih: ${tebakbom[m.sender].pick}\nSisa nyawa: ${tebakbom[m.sender].nyawa.join('')}`);
-				return !0;
+		// Deteksi fleksibel claim reward (dengan atau tanpa prefix/spasi)
+		const cleanBodyLower = body.trim().toLowerCase();
+		if (cleanBodyLower.startsWith('claim reward') || cleanBodyLower.startsWith('.claim reward') || cleanBodyLower.startsWith('claimreward') || cleanBodyLower.startsWith('claimr')) {
+			let rawCode = '';
+			if (cleanBodyLower.startsWith('.claim reward')) {
+				rawCode = body.trim().slice(13).trim();
+			} else if (cleanBodyLower.startsWith('claim reward')) {
+				rawCode = body.trim().slice(12).trim();
+			} else if (cleanBodyLower.startsWith('claimreward')) {
+				rawCode = body.trim().slice(11).trim();
+			} else if (cleanBodyLower.startsWith('claimr')) {
+				rawCode = body.trim().slice(6).trim();
 			}
-			if (tebakbom[m.sender].petak[index] === 0) {
-				tebakbom[m.sender].petak[index] = 1;
-				tebakbom[m.sender].board[index] = pilih;
-				tebakbom[m.sender].pick++;
-				tebakbom[m.sender].lolos--;
-				let brd = tebakbom[m.sender].board;
-				if (tebakbom[m.sender].lolos < 1) {
-					db.users[m.sender].money += 6000
-					await m.reply(`*KAMU HEBAT ಠ⁠ᴥ⁠ಠ*\n\n${brd.join('')}\n\n*Terpilih :* ${tebakbom[m.sender].pick}\n*Sisa nyawa :* ${tebakbom[m.sender].nyawa.join('')}\n*Bomb :* ${tebakbom[m.sender].bomb}\nBonus Money 💰 *+6000*`);
-					delete tebakbom[m.sender];
-				} else m.reply(`*PILIH ANGKA*\n\n${brd.join('')}\n\nTerpilih : ${tebakbom[m.sender].pick}\nSisa nyawa : ${tebakbom[m.sender].nyawa.join('')}\nBomb : ${tebakbom[m.sender].bomb}`)
+			if (rawCode) {
+				const claimRes = verifyAndClaimCode(rawCode, m.sender, m.pushName || 'Player');
+				if (!claimRes.success) {
+					return m.reply(`❌ *KLAIM GAGAL*\n\n${claimRes.message}`);
+				}
+				const moneyReward = claimRes.score * 15;
+				const expReward = Math.floor(claimRes.score * 2);
+				if (db.users[m.sender]) {
+					db.users[m.sender].money = (db.users[m.sender].money || 0) + moneyReward;
+					db.users[m.sender].exp = (db.users[m.sender].exp || 0) + expReward;
+				}
+				const teksClaim = `╭─❖「 🎁 𝐂𝐋𝐀𝐈𝐌 𝐑𝐄𝐖𝐀𝐑𝐃 𝐒𝐔𝐊𝐒𝐄𝐒 🎁 」
+│
+│ 💣 *Game:* Tebak Bom Minesweeper
+│ 🔑 *Kode:* ${claimRes.code}
+│ 👤 *Penerima:* @${m.sender.split('@')[0]}
+│ 🏆 *Skor Ditambahkan:* +${claimRes.score.toLocaleString('id-ID')} PTS
+│ 💰 *Hadiah Uang:* +${moneyReward.toLocaleString('id-ID')} Money
+│ ✨ *Bonus EXP:* +${expReward.toLocaleString('id-ID')} EXP
+│ 📊 *Total Skor Tebak Bom:* ${claimRes.totalScore.toLocaleString('id-ID')} PTS
+│ 🎖️ *Peringkat Saat Ini:* #${claimRes.rank} di Leaderboard Nyata!
+│
+│ 📈 Cek papan peringkat lengkap:
+│ *${prefix}leaderboard game*
+╰───────────────────────────❖`;
+				return naze.sendMessage(m.chat, { text: teksClaim, mentions: [m.sender] }, { quoted: m });
 			}
 		}
 		
@@ -2805,8 +2814,35 @@ ${sisaLimit <= 0 ? '❌ Energimu (limit) habis untuk hari ini.\nLimit akan otoma
             }
             break
 			case 'leaderboard':
-            case 'lb': {
-               leaderboard(naze,m,db,owner)
+            case 'lb':
+			case 'leaderboardgame':
+			case 'lbgame': {
+				const isGameLb = command === 'leaderboardgame' || command === 'lbgame' || (args[0] && ['game', 'bom', 'tebakbom', 'bomb'].includes(args[0].toLowerCase()));
+				if (isGameLb) {
+					try {
+						const canvasBuffer = await renderLeaderboardCanvas();
+						const topList = getTopLeaderboard(10);
+						let caption = `╭─❖「 🏆 𝐓𝐄𝐁𝐀𝐊 𝐁𝐎𝐌 𝐋𝐄𝐀𝐃𝐄𝐑𝐁𝐎𝐀𝐑𝐃 🏆 」\n│\n│ 📊 *Top Players & Survivors Tebak Bom:*\n│\n`;
+						if (topList.length === 0) {
+							caption += `│ _Belum ada pemain yang tercatat._\n│ Mainkan *${prefix}tebakbom* sekarang!\n│\n`;
+						} else {
+							topList.forEach((p, idx) => {
+								const medal = idx === 0 ? '🥇' : (idx === 1 ? '🥈' : (idx === 2 ? '🥉' : '🎖️'));
+								const cleanPhone = (p.id || '').split('@')[0];
+								const name = p.name && p.name !== 'Player' && p.name !== cleanPhone ? p.name : `@${cleanPhone}`;
+								caption += `│ ${medal} *#${idx + 1}* ${name} — *${(p.score || 0).toLocaleString('id-ID')} PTS*\n`;
+							});
+							caption += `│\n`;
+						}
+						caption += `│ 🎮 Mainkan: *${prefix}tebakbom*\n│ 🎁 Klaim Kode: *${prefix}claimr <kode>*\n╰───────────────────────────❖`;
+						await naze.sendMessage(m.chat, { image: canvasBuffer, caption: caption }, { quoted: m });
+					} catch (err) {
+						console.error('[LB-GAME]', err);
+						m.reply('❌ Gagal memuat leaderboard game: ' + (err?.message || err));
+					}
+				} else {
+					leaderboard(naze, m, db, owner);
+				}
             }
             break
 			case 'req': case 'request': {
@@ -5093,22 +5129,49 @@ break
 			}
 			break
 			case 'tebakbom': {
-				if (tebakbom[m.sender]) return m.reply('Masih Ada Sesi Yang Belum Diselesaikan!')
-				tebakbom[m.sender] = {
-					petak: [0, 0, 0, 2, 0, 2, 0, 2, 0, 0].sort(() => Math.random() - 0.5),
-					board: ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'],
-					bomb: 3,
-					lolos: 7,
-					pick: 0,
-					nyawa: ['❤️', '❤️', '❤️'],
+				try {
+					await kirimTebakBom(naze, m.chat, m.sender);
+				} catch (e) {
+					console.error('[TEBAKBOM]', e);
+					m.reply('❌ Gagal membuka game tebak bom: ' + (e?.message || e));
 				}
-				await m.reply(`*TEBAK BOM*\n\n${tebakbom[m.sender].board.join("")}\n\nPilih lah nomor tersebut! dan jangan sampai terkena Bom!\nBomb : ${tebakbom[m.sender].bomb}\nNyawa : ${tebakbom[m.sender].nyawa.join("")}`);
-				setTimeout(() => {
-				if (tebakbom[m.sender]) {
-					m.reply(`_Waktu ${command} habis_`)
-					delete tebakbom[m.sender];
+			}
+			break
+			case 'claimr':
+			case 'claimreward':
+			case 'claim': {
+				let kodeToClaim = text;
+				if (command === 'claim' && args[0]?.toLowerCase() === 'reward') {
+					kodeToClaim = args.slice(1).join(' ');
 				}
-				}, 120000)
+				if (!kodeToClaim) {
+					return m.reply(`*PENGGUNAAN KLAIM REWARD:*\n\nContoh: *${prefix}claimr TB-850-XXXX*\nAtau: *${prefix}claimreward TB-850-XXXX*\n\n_Dapatkan kode dari menyelesaikan atau cashout di ${prefix}tebakbom!_`);
+				}
+				const claimRes = verifyAndClaimCode(kodeToClaim, m.sender, m.pushName || 'Player');
+				if (!claimRes.success) {
+					return m.reply(`❌ *KLAIM GAGAL*\n\n${claimRes.message}`);
+				}
+				const moneyReward = claimRes.score * 15;
+				const expReward = Math.floor(claimRes.score * 2);
+				if (db.users[m.sender]) {
+					db.users[m.sender].money = (db.users[m.sender].money || 0) + moneyReward;
+					db.users[m.sender].exp = (db.users[m.sender].exp || 0) + expReward;
+				}
+				const teksClaim = `╭─❖「 🎁 𝐂𝐋𝐀𝐈𝐌 𝐑𝐄𝐖𝐀𝐑𝐃 𝐒𝐔𝐊𝐒𝐄𝐒 🎁 」
+│
+│ 💣 *Game:* Tebak Bom Minesweeper
+│ 🔑 *Kode:* ${claimRes.code}
+│ 👤 *Penerima:* @${m.sender.split('@')[0]}
+│ 🏆 *Skor Ditambahkan:* +${claimRes.score.toLocaleString('id-ID')} PTS
+│ 💰 *Hadiah Uang:* +${moneyReward.toLocaleString('id-ID')} Money
+│ ✨ *Bonus EXP:* +${expReward.toLocaleString('id-ID')} EXP
+│ 📊 *Total Skor Tebak Bom:* ${claimRes.totalScore.toLocaleString('id-ID')} PTS
+│ 🎖️ *Peringkat Saat Ini:* #${claimRes.rank} di Leaderboard Nyata!
+│
+│ 📈 Cek papan peringkat lengkap:
+│ *${prefix}leaderboard game*
+╰───────────────────────────❖`;
+				await naze.sendMessage(m.chat, { text: teksClaim, mentions: [m.sender] }, { quoted: m });
 			}
 			break
 			case 'tekateki': {
@@ -5852,6 +5915,8 @@ break
 │${setv} ${prefix}tebaklirik
 │${setv} ${prefix}tebakkata
 │${setv} ${prefix}tebakbom
+│${setv} ${prefix}claimr (kode)
+│${setv} ${prefix}leaderboard game
 │${setv} ${prefix}susunkata
 │${setv} ${prefix}colorblind
 │${setv} ${prefix}tebakkimia
@@ -6252,6 +6317,8 @@ await naze.sendMessage(
 │${setv} ${prefix}tebaklirik
 │${setv} ${prefix}tebakkata
 │${setv} ${prefix}tebakbom
+│${setv} ${prefix}claimr (kode)
+│${setv} ${prefix}leaderboard game
 │${setv} ${prefix}susunkata
 │${setv} ${prefix}colorblind
 │${setv} ${prefix}tebakkimia

@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { Buffer } from 'buffer'
-import { getBuffer } from '../../lib/function.js'
-import { getPlayThumb } from '../umaimage.js'
+import { getBuffer } from '../lib/function.js'
+import { getPlayThumb } from '../musume/umaimage.js'
 
 export async function getBestThumbnail(
   hasil,

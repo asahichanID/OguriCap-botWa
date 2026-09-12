@@ -5,8 +5,8 @@ import {
   apiYoutubeAudio,
   apiYoutubeDownload,
   apiYoutubeSearch
-} from '../../apiGlobal/index.js';
-import { cekSpam } from '../umahelper.js';
+} from '../apiGlobal/index.js';
+import { cekSpam } from '../musume/umahelper.js';
 
 // Cache Pterodactyl untuk hasil play2 YouTube (Bertahan 1 Jam Pas)
 const ytPlayerCache = new Map();

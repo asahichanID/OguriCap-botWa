@@ -1,7 +1,11 @@
 import fs from 'fs'
-import { getUmaQuote, pickRandom } from '../helperquotes.js'
+import path from 'path'
+import { fileURLToPath } from 'url'
+import { getUmaQuote, pickRandom } from '../musume/helperquotes.js'
 
-const afkThumb = fs.readFileSync('./src/media/oguriafk.jpeg')
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const afkThumbPath = path.join(__dirname, '../src/media/oguriafk.jpeg')
+const afkThumb = fs.existsSync(afkThumbPath) ? fs.readFileSync(afkThumbPath) : Buffer.from('')
 export const afk = async (
 	naze,
 	m,

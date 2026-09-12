@@ -9,12 +9,12 @@ import './musume/umarace.js'
 import './musume/rank.js'
 import './musume/bankaktivitas.js'
 
-// Upgrade
-import './musume/upgrade/profile.js'
-import './musume/upgrade/leaderboard.js'
-import './musume/upgrade/afk.js'
-//import './musume/upgrade/play.js'
-import './musume/upgrade/tracendd.js'
+// Profile & Leaderboard
+import './musume/profile/profile.js'
+import './musume/profile/leaderboard.js'
+import './group/afk.js'
+//import './downloader/play.js'
+import './downloader/tracendd.js'
 
 // Economy
 import './musume/economy/academy.js'

@@ -1,12 +1,12 @@
 import axios from 'axios'
 import { Buffer } from 'buffer'
-import { pickRandom } from '../helperquotes.js'
-import { getBuffer } from '../../lib/function.js'
-import { cekSpam, setSpam } from '../umahelper.js'
-import { getPlayThumb } from '../umaimage.js'
-import { playQuote } from '../umaquotes.js'
-import { convertToMp3 } from '../convertManager.js'
-import { apiYoutubeAudio, apiYoutubeSearch } from '../../apiGlobal/index.js'
+import { pickRandom } from '../musume/helperquotes.js'
+import { getBuffer } from '../lib/function.js'
+import { cekSpam, setSpam } from '../musume/umahelper.js'
+import { getPlayThumb } from '../musume/umaimage.js'
+import { playQuote } from '../musume/umaquotes.js'
+import { convertToMp3 } from './convertManager.js'
+import { apiYoutubeAudio, apiYoutubeSearch } from '../apiGlobal/index.js'
 
 
 export const play = async (naze, m, text, prefix, command, db) => {
