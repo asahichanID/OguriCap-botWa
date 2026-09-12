@@ -21,7 +21,7 @@ const FileType = fileTypePkg.default || {
 import { checkStatus } from './database.js';
 import { isLocked } from '../group/kunci.js';
 import { acquireCommandSlot } from '../musume/absoluteGuard.js';
-import { createSticker } from '../sticker/sticker.js';
+import { createSticker } from '../musume/sticker/sticker.js';
 import { imageToWebp, videoToWebp, writeExif, gifToWebp } from '../lib/exif.js';
 import { getBuffer, getSizeMedia, fetchJson, sleep, axiosss, fixBytes } from '../lib/function.js';
 import { jidNormalizedUser, proto, getBinaryNodeChildren, getBinaryNodeChildString, getBinaryNodeChild, generateMessageIDV2, jidEncode, encodeSignedDeviceIdentity, generateWAMessageContent, generateForwardMessageContent, prepareWAMessageMedia, delay, areJidsSameUser, extractMessageContent, generateMessageID, downloadContentFromMessage, generateWAMessageFromContent, jidDecode, generateWAMessage, toBuffer, getContentType, getDevice } from 'baileys';

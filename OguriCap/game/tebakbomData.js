@@ -173,13 +173,12 @@ export function getTopLeaderboard(limit = 10) {
  */
 export async function renderLeaderboardCanvas() {
 	const players = getTopLeaderboard(10)
-	const count = Math.max(players.length, 1)
 
-	// Hitung tinggi canvas dinamis (agar rapi jika 1, 3, atau 10 pemain)
+	// Hitung tinggi canvas dinamis (agar rapi jika 0, 1, 3, atau 10 pemain)
 	const rowHeight = 72
 	const headerHeight = 180
 	const footerHeight = 60
-	const totalHeight = headerHeight + (count * rowHeight) + footerHeight
+	const totalHeight = players.length === 0 ? 300 : headerHeight + (players.length * rowHeight) + footerHeight
 	const width = 800
 
 	const canvas = createCanvas(width, totalHeight)

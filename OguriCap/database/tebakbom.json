@@ -1,44 +1,5 @@
 {
-  "leaderboard": {
-    "6281234567890@s.whatsapp.net": {
-      "id": "6281234567890@s.whatsapp.net",
-      "name": "Trainer Oguri",
-      "score": 850,
-      "gamesCount": 1,
-      "lastUpdated": 1789172062700
-    },
-    "628999999999@s.whatsapp.net": {
-      "id": "628999999999@s.whatsapp.net",
-      "name": "TestUser",
-      "score": 1200,
-      "gamesCount": 1,
-      "lastUpdated": 1789172173836
-    }
-  },
-  "claimedCodes": {
-    "TB-850-624202487D": {
-      "jid": "6281234567890@s.whatsapp.net",
-      "score": 850,
-      "claimedAt": 1789172062700
-    },
-    "TB-1200-D2B1CA7799": {
-      "jid": "628999999999@s.whatsapp.net",
-      "score": 1200,
-      "claimedAt": 1789172173836
-    }
-  },
-  "activeCodes": {
-    "TB-850-624202487D": {
-      "score": 850,
-      "createdAt": 1789172062699,
-      "expiresAt": 1789258462699,
-      "used": true
-    },
-    "TB-1200-D2B1CA7799": {
-      "score": 1200,
-      "createdAt": 1789172173835,
-      "expiresAt": 1789258573835,
-      "used": true
-    }
-  }
+  "leaderboard": {},
+  "claimedCodes": {},
+  "activeCodes": {}
 }

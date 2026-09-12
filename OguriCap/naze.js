@@ -135,7 +135,7 @@ import { umainfo } from './musume/profile/umainfo.js'
 import { autoSound } from './downloader/sounds.js'
 //import ww from './game/werewolf/ww.js'
 import { race5, join5, inforoom5, batalroom5, start5 } from './musume/race5.js'
-import { oguriAI, clearMemory as clearOguriMemory } from './ai/oguriAI.js'
+import { oguriAI, clearMemory as clearOguriMemory } from './musume/Oguriai/oguriAI.js'
 import { umachar } from './musume/shop/umachar.js'
 import { getMonsterStats } from './musume/shop/limitedEvent/absoluteMonster.js'
 import { tampilkanKunciGrup, prosesTombolKunci } from "./group/kuncigrup.js"
@@ -143,8 +143,8 @@ import { tampilkanBukaGrup, prosesTombolBuka } from "./group/bukagrup.js"
 import { isLocked } from './group/kunci.js';
 import { absoluteGuard, GUARD_CONFIG } from './musume/absoluteGuard.js'
 import { getKhodam, buildKhodamText } from './game/khodamData.js'
-import { smeme, smemec } from './sticker/smeme.js'
-import { stickerToVideo } from './sticker/stickerEngine/index.js'
+import { smeme, smemec } from './musume/sticker/smeme.js'
+import { stickerToVideo } from './musume/sticker/stickerEngine/index.js'
 import { handleUserLimit, OGURI_LIMIT_MESSAGE } from './lib/limit.js'
 
 const require = createRequire(import.meta.url);

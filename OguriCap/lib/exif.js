@@ -26,8 +26,8 @@
  */
 
 import fsp from 'fs/promises'
-import { createSticker } from '../sticker/sticker.js'
-import { tempEngine } from '../sticker/stickerEngine/index.js'
+import { createSticker } from '../musume/sticker/sticker.js'
+import { tempEngine } from '../musume/sticker/stickerEngine/index.js'
 
 /**
  * Jalankan Sticker Engine V2 penuh (Media->Metadata->Image/Video-FFmpeg->
