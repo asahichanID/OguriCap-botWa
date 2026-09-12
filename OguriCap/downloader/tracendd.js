@@ -283,140 +283,75 @@ const photoList = Array.isArray(images)
 
 const title =
   result.desc ||
-  'Tanpa Caption'
+  'Tanpa Judul'
 
-const channel =
-  result.author?.nickname ||
-  result.author?.uniqueId ||
-  '-'
-
-const username =
-  result.author?.uniqueId
-    ? `@${result.author.uniqueId}`
-    : '-'
+const authorNickname = result.author?.nickname || ''
+const authorUniqueId = result.author?.uniqueId ? `@${result.author.uniqueId}` : ''
+const authorName = (authorNickname && authorUniqueId && authorUniqueId !== `@${authorNickname}`)
+  ? `${authorNickname} (${authorUniqueId})`
+  : (authorNickname || authorUniqueId || '-')
 
 const stats =
+  result.stats ??
   result.statistics ??
   result.statistic ??
+  result.statsV2 ??
   {}
 
-const music =
-  result.musicInfo ??
-  result.music ??
-  {}
+const views = Number(
+  stats.playCount ??
+  stats.play_count ??
+  stats.views ??
+  stats.plays ??
+  0
+)
 
-const musicTitle =
-  music.title ??
-  music.name ??
-  '-'
+const likes = Number(
+  stats.diggCount ??
+  stats.digg_count ??
+  stats.likes ??
+  stats.heart ??
+  stats.hearts ??
+  0
+)
 
-const musicAuthor =
-  music.author ??
-  music.artist ??
-  music.owner ??
-  '-'
+const comments = Number(
+  stats.commentCount ??
+  stats.comment_count ??
+  stats.comments ??
+  0
+)
 
-const likes =
-  Number(stats.likes || 0)
+const shares = Number(
+  stats.shareCount ??
+  stats.share_count ??
+  stats.shares ??
+  0
+)
 
-const comments =
-  Number(stats.comments || 0)
-
-const shares =
-  Number(stats.shares || 0)
-
-const views =
-  Number(stats.views || 0)
-
-const saved =
-  Number(stats.saved || 0)
+const saved = Number(
+  stats.collectCount ??
+  stats.collect_count ??
+  stats.saved ??
+  stats.favorites ??
+  stats.downloads ??
+  stats.downloadCount ??
+  0
+)
 
 const formatNumber = value => {
-
-  if (!value)
-    return '0'
-
-  if (value >= 1000000000)
-    return (
-      (value / 1000000000)
-        .toFixed(1)
-        .replace(/\.0$/, '') +
-      'B'
-    )
-
-  if (value >= 1000000)
-    return (
-      (value / 1000000)
-        .toFixed(1)
-        .replace(/\.0$/, '') +
-      'M'
-    )
-
-  if (value >= 1000)
-    return (
-      (value / 1000)
-        .toFixed(1)
-        .replace(/\.0$/, '') +
-      'K'
-    )
-
-  return String(value)
-
-}
-
-const musicSecond =
-  Number(
-    music.duration ??
-    music.durationSec ??
-    Math.floor((music.duration_ms || 0) / 1000)
-  )
-
-const musicDuration =
-  musicSecond > 0
-    ? (() => {
-
-        const menit =
-          Math.floor(
-            musicSecond / 60
-          )
-        
-        const detik =
-          String(
-            musicSecond % 60
-          ).padStart(2, '0')
-
-        return `${menit}:${detik}`
-
-      })()
-    : '-'
-
-let released = '-'
-
-try {
-
-  const timestamp =
-    Number(
-      result.create_time ??
-      result.createTime ??
-      result.published
-    )
-
-  if (timestamp > 0) {
-
-    released = new Date(
-      timestamp * 1000
-    ).toLocaleDateString(
-      'id-ID',
-      {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric'
-      }
-    )
-
+  if (!value) return '0'
+  if (value >= 1000000000) {
+    return (value / 1000000000).toFixed(1).replace(/\.0$/, '') + 'B'
   }
-
-} catch {}
+  if (value >= 1000000) {
+    return (value / 1000000).toFixed(1).replace(/\.0$/, '') + 'M'
+  }
+  if (value >= 1000) {
+    return (value / 1000).toFixed(1).replace(/\.0$/, '') + 'K'
+  }
+  return String(value)
+}
 
 const videoUrl =
   result.download?.video?.nowm_hd ||
@@ -432,144 +367,129 @@ if (!isPhoto && !videoUrl)
   )
 
 const caption =
-`🎭 𝗧𝗜𝗞𝗧𝗢𝗞 𝗗𝗢𝗪𝗡𝗟𝗢𝗔𝗗
+`🎬 *${title}*
+👤 *Author:* ${authorName}
 
-╭─〔 📄 𝗜𝗡𝗙𝗢 〕
-│ 🎬 ${title}
-│
-│ 👤 ${channel}
-│ 🏷️ ${username}
-│ 📅 ${released}
-╰────────────
-
-╭─〔 📊 𝗦𝗧𝗔𝗧𝗜𝗦𝗧𝗜𝗖 〕
-│ 👁️ Views: ${formatNumber(views)}
-│ ❤️ Likes: ${formatNumber(likes)}
-│ 💬 Comments: ${formatNumber(comments)}
-│ 🔄 Shares: ${formatNumber(shares)}
-│ ⭐ Saved: ${formatNumber(saved)}
-╰────────────
-
-╭─〔 🎵 𝗠𝗨𝗦𝗜𝗖 〕
-│ 🎼 ${musicTitle}
-│ 🎤 ${musicAuthor}
-│ ⏱️ ${musicDuration}
-╰────────────
-
-💬 *${uma.name}*
-"${uma.quote}"`
+📊 *Statistik:*
+• 👁️ Views: ${formatNumber(views)}
+• ❤️ Likes: ${formatNumber(likes)}
+• 💬 Comments: ${formatNumber(comments)}
+• 🔄 Shares: ${formatNumber(shares)}
+• ⭐ Saved: ${formatNumber(saved)}`
 
     if (isPhoto) {
-
-  if (photoList.length === 1) {
-
-    await naze.sendListMsg(
-      m.chat,
-      {
-        text: caption,
-        footer: `🛡️ Tiktok Sistem • ${global.botname}`,
-        image: {
-          url: photoList[0]
-        },
-        buttons: [
+      if (photoList.length === 1) {
+        try {
+          await naze.sendListMsg(
+            m.chat,
+            {
+              text: caption,
+              footer: `🛡️ Oguri Cap • ${global.botname}`,
+              image: {
+                url: photoList[0]
+              },
+              buttons: [
+                {
+                  name: 'quick_reply',
+                  buttonParamsJson: JSON.stringify({
+                    display_text: '🎵 Download Audio',
+                    id: `.ttmp3 ${text}`
+                  })
+                }
+              ]
+            },
+            {
+              quoted: m
+            }
+          )
+        } catch (e) {
+          await naze.sendMessage(
+            m.chat,
+            {
+              image: { url: photoList[0] },
+              caption: `${caption}\n\n_Ketik *.ttmp3 ${text}* untuk unduh audio._`
+            },
+            { quoted: m }
+          )
+        }
+      } else {
+        await naze.sendCarouselMsg(
+          m.chat,
+          caption,
+          `🛡️ Oguri Cap • ${global.botname}`,
+          photoList.map((url, i) => ({
+            url,
+            body: `📸 Foto ${i + 1} / ${photoList.length}\n\n🎬 ${title}`,
+            footer: global.botname,
+            buttons: [
+              {
+                name: 'quick_reply',
+                buttonParamsJson: JSON.stringify({
+                  display_text: '🎵 Download Audio',
+                  id: `.ttmp3 ${text}`
+                })
+              }
+            ]
+          })),
           {
-            name: 'quick_reply',
-            buttonParamsJson: JSON.stringify({
-              display_text: '🎵 Download Audio',
-              id: `.ttmp3 ${text}`
-            })
+            quoted: m
+          }
+        )
+      }
+    } else {
+      try {
+        await naze.sendListMsg(
+          m.chat,
+          {
+            text: caption,
+            footer: `🛡️ Oguri Cap • ${global.botname}`,
+            video: {
+              url: videoUrl
+            },
+            fileName: `${result.author?.nickname || 'tiktok'}.mp4`,
+            mimetype: 'video/mp4',
+            buttons: [
+              {
+                name: 'quick_reply',
+                buttonParamsJson: JSON.stringify({
+                  display_text: '🎵 Download Audio',
+                  id: `.ttmp3 ${text}`
+                })
+              }
+            ]
           },
           {
-            name: 'quick_reply',
-            buttonParamsJson: JSON.stringify({
-              display_text: '🎬 Download Video',
-              id: `.tt ${text}`
-            })
+            quoted: m
           }
-        ]
-      },
-      {
-        quoted: m
-      }
-    )
-
-  } else {
-
-    await naze.sendCarouselMsg(
-      m.chat,
-      caption,
-      `🛡️ Tiktok Sistem • ${global.botname}`,
-      photoList.map((url, i) => ({
-        url,
-        body:
-`📸 Foto ${i + 1} / ${photoList.length}
-
-🎬 ${title}`,
-        footer: global.botname,
-        buttons: [
+        )
+      } catch (e) {
+        await naze.sendMessage(
+          m.chat,
           {
-            name: 'quick_reply',
-            buttonParamsJson: JSON.stringify({
-              display_text: '🎵 Download Audio',
-              id: `.ttmp3 ${text}`
-            })
-          }
-        ]
-      })),
-      {
-        quoted: m
+            video: { url: videoUrl },
+            caption: `${caption}\n\n_Ketik *.ttmp3 ${text}* untuk unduh audio._`,
+            mimetype: 'video/mp4'
+          },
+          { quoted: m }
+        )
       }
-    )
-
-  }
-
-
-
- } else {
-
-  await naze.sendListMsg(
-    m.chat,
-    {
-      text: caption,
-      footer: `🛡️ Oguri Cap • ${global.botname}`,
-      video: {
-        url: videoUrl
-      },
-      fileName: `${channel}.mp4`,
-      mimetype: 'video/mp4',
-      buttons: [
-        {
-          name: 'quick_reply',
-          buttonParamsJson: JSON.stringify({
-            display_text: '🎵 Download Audio',
-            id: `.ttmp3 ${text}`
-          })
-        },       
-      ]
-    },
-    {
-      quoted: m
     }
-  )
 
-}
+    await m.react('✅')
 
-await m.react('✅')
+    console.log({
+      provider: 'TikTok',
+      creator: authorName,
+      photo: photoList.length,
+      video: !!videoUrl,
+      likes,
+      comments,
+      shares,
+      views,
+      saved
+    })
 
-console.log({
-  provider: 'TikTok',
-  creator: channel,
-  username,
-  photo: photoList.length,
-  video: !!videoUrl,
-  music: musicTitle,
-  likes,
-  comments,
-  shares,
-  views
-})
-
-console.log('🎭 TikTok Success')
+    console.log('🎭 TikTok Success')
 
   } catch (err) {
     console.error('❌ TT →', err)
@@ -595,15 +515,16 @@ export const ttmp3 = async (naze, m, text) => {
 
   try {
     const { result } = await apiTiktokDownload(text, { withMetadata: false })
+    const audioUrl = result?.download?.music || result?.download?.audio || result?.music?.playUrl || result?.audio
 
-    if (!result?.download?.music) {
+    if (!audioUrl) {
       return m.reply('❌ Audio tidak ditemukan')
     }
 
     await naze.sendMessage(m.chat, {
-      audio: { url: result.download.music },
+      audio: { url: audioUrl },
       mimetype: 'audio/mpeg',
-      fileName: `${result.download.music_info?.title || 'TikTok Audio'}.mp3`
+      fileName: `${result?.download?.music_info?.title || result?.music?.title || 'TikTok Audio'}.mp3`
     }, { quoted: m })
 
     console.log('🎵 TTMP3')

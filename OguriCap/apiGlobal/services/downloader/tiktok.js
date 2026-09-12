@@ -60,7 +60,33 @@ function normalizeNeoxr(data) {
     shareCount: data.statistic?.shares ?? 0,
     commentCount: data.statistic?.comments ?? 0,
     playCount: data.statistic?.views ?? 0,
+    collectCount: data.statistic?.saved ?? 0,
+    likes: data.statistic?.likes ?? 0,
+    views: data.statistic?.views ?? 0,
+    comments: data.statistic?.comments ?? 0,
+    shares: data.statistic?.shares ?? 0,
+    saved: data.statistic?.saved ?? 0
+  },
+
+  statistics: {
+    likes: data.statistic?.likes ?? 0,
+    views: data.statistic?.views ?? 0,
+    comments: data.statistic?.comments ?? 0,
+    shares: data.statistic?.shares ?? 0,
+    saved: data.statistic?.saved ?? 0,
+    diggCount: data.statistic?.likes ?? 0,
+    playCount: data.statistic?.views ?? 0,
+    commentCount: data.statistic?.comments ?? 0,
+    shareCount: data.statistic?.shares ?? 0,
     collectCount: data.statistic?.saved ?? 0
+  },
+
+  statistic: {
+    likes: data.statistic?.likes ?? 0,
+    views: data.statistic?.views ?? 0,
+    comments: data.statistic?.comments ?? 0,
+    shares: data.statistic?.shares ?? 0,
+    saved: data.statistic?.saved ?? 0
   },
 
   statsV2: {
@@ -297,12 +323,45 @@ export async function apiTiktokDownload(
           meta.published ??
           result.createTime
         
+        const mStatistic = meta.statistic || meta.stats || {}
+        const likes = mStatistic.likes ?? mStatistic.diggCount ?? 0
+        const shares = mStatistic.shares ?? mStatistic.shareCount ?? 0
+        const comments = mStatistic.comments ?? mStatistic.commentCount ?? 0
+        const views = mStatistic.views ?? mStatistic.playCount ?? 0
+        const saved = mStatistic.saved ?? mStatistic.collectCount ?? 0
+
         result.stats = {
-          diggCount: meta.statistic?.likes ?? 0,
-          shareCount: meta.statistic?.shares ?? 0,
-          commentCount: meta.statistic?.comments ?? 0,
-          playCount: meta.statistic?.views ?? 0,
-          collectCount: meta.statistic?.saved ?? 0
+          diggCount: likes,
+          shareCount: shares,
+          commentCount: comments,
+          playCount: views,
+          collectCount: saved,
+          likes,
+          views,
+          comments,
+          shares,
+          saved
+        }
+
+        result.statistics = {
+          likes,
+          views,
+          comments,
+          shares,
+          saved,
+          diggCount: likes,
+          playCount: views,
+          commentCount: comments,
+          shareCount: shares,
+          collectCount: saved
+        }
+
+        result.statistic = {
+          likes,
+          views,
+          comments,
+          shares,
+          saved
         }
         
         result.statsV2 = {
