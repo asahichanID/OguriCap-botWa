@@ -25,9 +25,16 @@ function ensureDependencies() {
 	if ((!hasAxiosInOguri || !hasBaileysInOguri) && hasAxiosInRoot) {
 		console.log(chalk.cyan('[BOT-INIT] Menyinkronkan node_modules dari root ke OguriCap/node_modules...'));
 		try {
-			if (!fs.existsSync(oguriModules)) fs.mkdirSync(oguriModules, { recursive: true });
-			fs.cpSync(rootModules, oguriModules, { recursive: true, force: false });
-			console.log(chalk.green('[BOT-INIT] Sinkronisasi dependensi ke OguriCap selesai.'));
+			if (!fs.existsSync(oguriModules)) {
+				try {
+					fs.symlinkSync(rootModules, oguriModules, 'junction');
+					console.log(chalk.green('[BOT-INIT] Symlink dependensi ke OguriCap selesai secara instan.'));
+				} catch (symErr) {
+					fs.mkdirSync(oguriModules, { recursive: true });
+					fs.cpSync(rootModules, oguriModules, { recursive: true, force: false });
+					console.log(chalk.green('[BOT-INIT] Sinkronisasi dependensi ke OguriCap selesai.'));
+				}
+			}
 		} catch (err) {
 			console.warn(chalk.yellow('[BOT-INIT] Salin modul root gagal, melanjutkan instalasi mandiri:'), err.message);
 		}

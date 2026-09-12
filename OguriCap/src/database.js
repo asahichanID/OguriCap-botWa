@@ -161,16 +161,17 @@ class JsonDB {
 		this.isWriting = true;
 		try {
 			let dirname = path.dirname(this.file)
-			if (!fs.existsSync(dirname)) fs.mkdirSync(dirname, { recursive: true })
-			if (fs.existsSync(this.file)) await fs.promises.copyFile(this.file, this.file + '.bak')
+			if (!fs.existsSync(dirname)) await fs.promises.mkdir(dirname, { recursive: true })
 			if (Object.keys(this.data).length > 0) {
 				const safeData = JSON.stringify(this.data, (key, value) => {
 					if (typeof value === 'bigint') {
 						return value.toString();
 					}
 					return value;
-				}, 2);
-				await fs.promises.writeFile(this.file, safeData);
+				});
+				const tmpFile = this.file + '.tmp';
+				await fs.promises.writeFile(tmpFile, safeData, 'utf8');
+				await fs.promises.rename(tmpFile, this.file);
 			}
 		} catch (e) {
 			console.error('❌ Write Database failed: ', e);
@@ -231,18 +232,36 @@ const checkStatus = (id, _dir) => _dir.some(a => a.id === id || a.url === id);
 
 const getAllExpired = (_dir) => _dir.map(a => a.id);
 
+const _activeExpiredIntervals = new WeakSet();
 const checkExpired = (_dir, conn) => {
-	setInterval(() => {
+	if (!_dir || !Array.isArray(_dir) || _dir.length === 0) return;
+	// 1. Eksekusi pembersihan seketika tanpa timer overhead
+	const now = Date.now();
+	for (let i = _dir.length - 1; i >= 0; i--) {
+		if (_dir[i]?.expired && now >= _dir[i].expired) {
+			if (conn && _dir[i].id) {
+				conn.groupLeave(_dir[i].id).catch(() => {});
+			}
+			console.log(`[EXPIRED] Pruned: ${_dir[i].id}`);
+			_dir.splice(i, 1);
+		}
+	}
+	// 2. Daftarkan background interval MAKSIMAL 1x per array (cegah interval leak)
+	if (_activeExpiredIntervals.has(_dir)) return;
+	_activeExpiredIntervals.add(_dir);
+	const timer = setInterval(() => {
+		const currentTime = Date.now();
 		for (let i = _dir.length - 1; i >= 0; i--) {
-			if (Date.now() >= _dir[i].expired) {
-				if (conn) {
-					conn.groupLeave(_dir[i].id).catch(e => {});
+			if (_dir[i]?.expired && currentTime >= _dir[i].expired) {
+				if (conn && _dir[i].id) {
+					conn.groupLeave(_dir[i].id).catch(() => {});
 				}
-				console.log(`Expired: ${_dir[i].id}`);
+				console.log(`[EXPIRED] Pruned background: ${_dir[i].id}`);
 				_dir.splice(i, 1);
 			}
 		}
 	}, 5 * 60 * 1000);
+	if (timer.unref) timer.unref();
 };
 
 export {

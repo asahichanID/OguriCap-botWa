@@ -97,10 +97,15 @@ async function ensureOguriDependencies() {
     console.log(`${YELLOW}[OGURI-SETUP] Menyinkronkan node_modules dari root ke OguriCap/node_modules...${RESET}`);
     try {
       if (!fs.existsSync(oguriModules)) {
-        fs.mkdirSync(oguriModules, { recursive: true });
+        try {
+          fs.symlinkSync(rootModules, oguriModules, 'junction');
+          console.log(`${GREEN}[OGURI-SETUP] Symlink node_modules berhasil dibuat secara instan!${RESET}`);
+        } catch (symErr) {
+          fs.mkdirSync(oguriModules, { recursive: true });
+          fs.cpSync(rootModules, oguriModules, { recursive: true, force: false });
+          console.log(`${GREEN}[OGURI-SETUP] Berhasil menyalin dependensi ke dalam OguriCap/!${RESET}`);
+        }
       }
-      fs.cpSync(rootModules, oguriModules, { recursive: true, force: false });
-      console.log(`${GREEN}[OGURI-SETUP] Berhasil menyalin dependensi ke dalam OguriCap/!${RESET}`);
     } catch (copyErr) {
       console.warn(`${YELLOW}[OGURI-SETUP] Sinkronisasi salin gagal (${copyErr.message}), beralih ke instalasi langsung...${RESET}`);
     }

@@ -618,6 +618,11 @@ export function startSholatScheduler(naze, globalDb) {
       // Selalu dapatkan jadwal realtime untuk tanggal hari ini
       const schedule = await getRealtimePrayerSchedule(config.regionId || 'jakarta', now.toDate());
 
+      // Prune old tracker keys from previous days
+      for (const k of Object.keys(lastSentPrayer)) {
+        if (!k.includes(todayDate)) delete lastSentPrayer[k];
+      }
+
       // Perbarui schedule di config jika belum disinkronkan hari ini
       if (!config.schedule || config.lastSyncedDate !== todayDate) {
         config.schedule = schedule;
@@ -670,4 +675,7 @@ export function startSholatScheduler(naze, globalDb) {
       console.error('[SHOLAT ERROR in scheduler]:', err.message);
     }
   }, 30000); // Cek setiap 30 detik
+  if (global.sholatIntervalInstance?.unref) {
+    global.sholatIntervalInstance.unref();
+  }
 }

@@ -27,8 +27,12 @@ export class GameLoop {
 	}
 
 	tick() {
-		const now = Date.now();
 		const activePlayers = this.players.activePlayers;
+		if (!activePlayers || activePlayers.size === 0) {
+			return; // Skip tick to consume 0% CPU when no players are active in the RPG world
+		}
+
+		const now = Date.now();
 
 		// 1. Tick Players (natural HP/MP regeneration & movement)
 		for (const p of activePlayers.values()) {

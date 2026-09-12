@@ -41,7 +41,7 @@ const recentMessageHashes = new Map();     // jid -> Array<{ hash: string, time:
 // Outgoing Queue State
 let outgoingQueuePromise = Promise.resolve();
 let pendingOutgoingCount = 0;
-const MAX_PENDING_OUTGOING = 15;
+const MAX_PENDING_OUTGOING = 50;
 
 // Incoming User Spam & Freeze State
 // sender -> { lastTime: number, warnCount: number, freezeUntil: number }
@@ -125,21 +125,21 @@ export function checkOutgoingSafety(jid, content) {
 		return { allowed: false, reason: 'GLOBAL_EMERGENCY_PAUSE' };
 	}
 
-	// 2. Cek Global Circuit Breaker (>20 pesan dlm 10 detik di seluruh chat)
+	// 2. Cek Global Circuit Breaker (>60 pesan dlm 10 detik di seluruh chat)
 	globalOutgoingTimestamps = globalOutgoingTimestamps.filter(t => now - t < 10000);
-	if (globalOutgoingTimestamps.length >= 20) {
-		emergencyPauseUntil = now + 15000; // Aktifkan rem darurat 15 detik
+	if (globalOutgoingTimestamps.length >= 60) {
+		emergencyPauseUntil = now + 8000; // Aktifkan rem darurat 8 detik
 		console.error(chalk.bgRed.white.bold('\n[🚨 BOT-GUARD CRITICAL] Global Outgoing Circuit Breaker TRIPPED!'));
-		console.error(chalk.redBright(`Terdeteksi anomali runaway loop / spam masif (>20 msg dlm 10s). Outgoing dihentikan sementara selama 15 detik untuk melindungi akun bot dari ban WhatsApp.\n`));
+		console.error(chalk.redBright(`Terdeteksi anomali runaway loop (>60 msg dlm 10s). Outgoing dijeda sejenak selama 8 detik untuk melindungi akun bot.\n`));
 		return { allowed: false, reason: 'GLOBAL_CIRCUIT_BREAKER_TRIPPED' };
 	}
 
-	// 3. Cek Per-Chat Rate Limit (>4 pesan dlm 4 detik ke tujuan yang sama)
+	// 3. Cek Per-Chat Rate Limit (>8 pesan dlm 4 detik ke tujuan yang sama)
 	let chatTimes = chatOutgoingTimestamps.get(jid) || [];
 	chatTimes = chatTimes.filter(t => now - t < 4000);
-	if (chatTimes.length >= 4) {
+	if (chatTimes.length >= 8) {
 		chatOutgoingTimestamps.set(jid, chatTimes);
-		console.warn(chalk.yellowBright(`[BOT-GUARD] ⚠️ Outgoing diblokir: Melebihi batas per-chat (maks 4 msg/4s) ke ${jid}`));
+		console.warn(chalk.yellowBright(`[BOT-GUARD] ⚠️ Outgoing diblokir: Melebihi batas per-chat (maks 8 msg/4s) ke ${jid}`));
 		return { allowed: false, reason: 'CHAT_BURST_EXCEEDED' };
 	}
 
@@ -202,8 +202,8 @@ export function installOutgoingGuard(naze) {
 
 		const execPromise = outgoingQueuePromise.then(async () => {
 			try {
-				// Jeda alami 250-350ms antar pesan keluar agar tidak terdeteksi mesin spam oleh WA
-				await sleep(250 + Math.floor(Math.random() * 100));
+				// Jeda alami 50-100ms antar pesan keluar agar efisien dan tetap aman
+				await sleep(50 + Math.floor(Math.random() * 50));
 				return await task();
 			} finally {
 				pendingOutgoingCount = Math.max(0, pendingOutgoingCount - 1);
@@ -253,8 +253,8 @@ export function checkIncomingSpam(sender, isCreator = false) {
 	const elapsed = now - user.lastTime;
 	user.lastTime = now;
 
-	// Cooldown batas aman antar command: 2.5 detik
-	if (elapsed < 2500) {
+	// Cooldown batas aman antar command: 1.2 detik (responsif namun anti-flood)
+	if (elapsed < 1200) {
 		user.warnCount = (user.warnCount || 0) + 1;
 
 		// 4x pelanggaran berturut-turut -> FREEZE 60 detik!

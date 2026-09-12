@@ -300,6 +300,7 @@ async function startNazeBot() {
             global._storeDirty = false
           }
         }, 30 * 1000)
+			if (global._dbInterval?.unref) global._dbInterval.unref()
 		}
 	} catch (e) {
 		console.log(e)
@@ -500,37 +501,39 @@ async function startNazeBot() {
 		Object.assign(global.store.presences[id], presences);
 	});
 	
-	// Reset Limit & Backup
-	cron.schedule('00 00 * * *', async () => {
-		cmdDel(global.db.hit);
-		console.log(chalk.cyan('[INFO] Reseted Limit Users'));
-		let user = Object.keys(global.db.users)
-		let botNumber = naze.decodeJid(naze.user.id);
-		for (let jid of user) {
-			const limitUser = global.db.users[jid].vip ? global.limit.vip : checkStatus(jid, global.db.premium) ? global.limit.premium : global.limit.free
-			global.db.users[jid].limit = limitUser
-			global.db.users[jid].limitNotified = false
-		}
-		global._dbDirty = true
-		if (global.db?.set[botNumber].autobackup) {
-			let datanya = './database/' + global.tempatDB;
-			if (global.tempatDB.startsWith('mongodb')) {
-				datanya = './database/backup_database.json';
-				fs.writeFileSync(datanya, JSON.stringify(global.db, null, 2), 'utf-8');
+	// Reset Limit & Backup (Sekali dijadwalkan, tahan rekoneksi)
+	if (!global._midnightCronTask) {
+		global._midnightCronTask = cron.schedule('00 00 * * *', async () => {
+			cmdDel(global.db.hit);
+			console.log(chalk.cyan('[INFO] Reseted Limit Users'));
+			let user = Object.keys(global.db.users)
+			let botNumber = naze.decodeJid(naze.user.id);
+			for (let jid of user) {
+				const limitUser = global.db.users[jid].vip ? global.limit.vip : checkStatus(jid, global.db.premium) ? global.limit.premium : global.limit.free
+				global.db.users[jid].limit = limitUser
+				global.db.users[jid].limitNotified = false
 			}
-			for (let o of ownerNumber) {
-				try {
-					await naze.sendMessage(o, { document: fs.readFileSync(datanya), mimetype: 'application/json', fileName: new Date().toISOString().replace(/[:.]/g, '-') + '_database.json' })
-					console.log(chalk.cyanBright(`[AUTO BACKUP] Backup success send to ${o}`));
-				} catch (e) {
-					console.error(chalk.cyanBright(`[AUTO BACKUP] Failed to Sending Backup ${o}:`, e));
+			global._dbDirty = true
+			if (global.db?.set[botNumber]?.autobackup) {
+				let datanya = './database/' + global.tempatDB;
+				if (global.tempatDB.startsWith('mongodb')) {
+					datanya = './database/backup_database.json';
+					fs.writeFileSync(datanya, JSON.stringify(global.db, null, 2), 'utf-8');
+				}
+				for (let o of ownerNumber) {
+					try {
+						await naze.sendMessage(o, { document: fs.readFileSync(datanya), mimetype: 'application/json', fileName: new Date().toISOString().replace(/[:.]/g, '-') + '_database.json' })
+						console.log(chalk.cyanBright(`[AUTO BACKUP] Backup success send to ${o}`));
+					} catch (e) {
+						console.error(chalk.cyanBright(`[AUTO BACKUP] Failed to Sending Backup ${o}:`, e));
+					}
 				}
 			}
-		}
-	}, {
-		scheduled: true,
-		timezone: global.timezone
-	});
+		}, {
+			scheduled: true,
+			timezone: global.timezone
+		});
+	}
 	
 	// Waktu Sholat Realtime (Ramadan Canvas Edition)
 	startSholatScheduler(naze, global.db);
@@ -539,6 +542,7 @@ async function startNazeBot() {
 		global._dbPresence = setInterval(async () => {
 			if (naze?.user?.id) await naze.sendPresenceUpdate('available', naze.decodeJid(naze.user.id)).catch(e => {})
 		}, 10 * 60 * 1000);
+		if (global._dbPresence?.unref) global._dbPresence.unref();
 	}
 
 	return naze

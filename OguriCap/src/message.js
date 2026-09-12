@@ -547,6 +547,10 @@ async function MessagesUpsert(naze, message, store) {
 		if (store.messages[remoteJid].keyId.has(msg.key.id)) return;
 		store.messages[remoteJid].array.push(msg);
 		store.messages[remoteJid].keyId.add(msg.key.id);
+		if (store.messages[remoteJid].array.length > 50) {
+			const old = store.messages[remoteJid].array.shift();
+			if (old?.key?.id) store.messages[remoteJid].keyId.delete(old.key.id);
+		}
 		if (!store.groupMetadata || Object.keys(store.groupMetadata).length === 0) store.groupMetadata ??= await naze.groupFetchAllParticipating().catch(e => ({}));
 		const type = msg.message ? (getContentType(msg.message) || Object.keys(msg.message)[0]) : '';
 		const m = await Serialize(naze, msg, store);
@@ -1534,9 +1538,11 @@ export {
 const watcher = chokidar.watch(nazePath, {
 	ignored: /^\./,
 	persistent: true,
+	ignoreInitial: true,
+	usePolling: false,
 	awaitWriteFinish: {
-		stabilityThreshold: 100,
-		pollInterval: 100
+		stabilityThreshold: 300,
+		pollInterval: 500
 	}
 });
 

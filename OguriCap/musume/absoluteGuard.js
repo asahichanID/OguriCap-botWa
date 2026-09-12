@@ -227,6 +227,14 @@ const tryNext = (category) => {
 const dequeue = (category) => {
   activeSlot.set(category, false)
   tryNext(category)
+  // Prune empty dynamic queues to prevent memory accumulation
+  if (!activeSlot.get(category)) {
+    const q = queueMap.get(category)
+    if (!q || q.length === 0) {
+      queueMap.delete(category)
+      activeSlot.delete(category)
+    }
+  }
 }
 
 // ============================================================
@@ -259,19 +267,18 @@ const dequeue = (category) => {
 //   }
 
 // ============================================================
-// 🧵 STRICT GLOBAL COMMAND QUEUE & PACING JITTER (3 - 5 DETIK)
+// 🧵 ULTRA-FAST CONCURRENT COMMAND QUEUE (PER-USER & PER-CHAT)
 // ============================================================
-// Sesuai mandat perlindungan nomor utama WhatsApp (anti-ban & anti-spam):
-// 1. Eksekusi command diproses secara antrian global sequential (cmdq:global).
-//    Jika User A sedang menjalankan perintah (cth. stiker, downloader, ai),
-//    pengguna lain di grup manapun wajib mengantri dan tidak bisa dieksekusi bersamaan.
-// 2. Wajib jeda acak 3 - 5 detik (human pacing) setelah command selesai:
-//    Bot beristirahat sejenak sebelum melayani perintah antrian berikutnya agar
-//    aktivitas tidak terlihat "gragas" atau mesin otomatis beruntun.
-// 3. Obrolan biasa (non-command) bebas antrian agar percakapan grup tidak lag.
+// Optimalisasi performa secepat kilat:
+// 1. Antrian independen per (sender + chat). Setiap user/grup berjalan
+//    secara konkuren tanpa saling mengunci (zero global bottleneck).
+// 2. Tidak ada jeda buatan (zero artificial sleep jitter). Command dieksekusi
+//    dan di-release secara instan sehingga bot merespons secepat kilat.
+// 3. Mencegah race condition spam dari user yang sama (maksimal 3 antrian per user).
+// 4. Obrolan biasa langsung tembus tanpa antrian.
 
-const CMD_QUEUE_SAFEGUARD_MS = 60 * 1000 // Safeguard 60 detik (anti-deadlock)
-const MAX_GLOBAL_COMMAND_QUEUE = 8 // Maksimal 8 antrian menunggu
+const CMD_QUEUE_SAFEGUARD_MS = 25 * 1000 // Safeguard 25 detik (anti-deadlock)
+const MAX_USER_COMMAND_QUEUE = 3 // Maksimal 3 antrian menunggu per user
 
 export const acquireCommandSlot = async (sender, chat, m = null) => {
   // 1. Deteksi apakah pesan merupakan sebuah command aktif
@@ -283,7 +290,7 @@ export const acquireCommandSlot = async (sender, chat, m = null) => {
   )
 
   // Jika bukan command (obrolan santai grup / media tanpa teks),
-  // langsung izinkan lewat tanpa menyentuh antrian global
+  // langsung izinkan lewat tanpa menyentuh antrian
   if (!isCommand) {
     return { ok: true, release: () => {} }
   }
@@ -294,27 +301,25 @@ export const acquireCommandSlot = async (sender, chat, m = null) => {
     (global.owner && Array.isArray(global.owner) && global.owner.some(o => String(o).includes(String(sender).split('@')[0])))
   )
 
-  // 2. Masuk ke Antrian Global Sequential di Latar Belakang (Tanpa Pesan Spam)
-  ensureQueue('cmdq:global')
-  const currentQueueLength = queueMap.get('cmdq:global')?.length || 0
-  if (!isCreator && currentQueueLength >= MAX_GLOBAL_COMMAND_QUEUE) {
-    // Drop silently jika antrian sudah melampaui batas maksimum agar tidak spamming pesan
+  // 2. Kunci antrian per user + chat (konkurensi penuh antar user berbeda)
+  const cleanSender = String(sender || 'user').split('@')[0]
+  const cleanChat = String(chat || 'chat').split('@')[0]
+  const key = `cmdq:${cleanSender}:${cleanChat}`
+
+  ensureQueue(key)
+  const currentQueueLength = queueMap.get(key)?.length || 0
+  if (!isCreator && currentQueueLength >= MAX_USER_COMMAND_QUEUE) {
+    // Drop silently jika user yang sama mengirim spam beruntun
     return { ok: false, release: () => {} }
   }
 
-  const key = 'cmdq:global'
   await enqueue(key)
 
   let released = false
-  const release = async () => {
+  const release = () => {
     if (released) return // anti double-release
     released = true
     clearTimeout(safeguard)
-
-    // Jeda acak 3 - 5 detik (Pacing Jitter) sebelum melepas slot ke user berikutnya
-    const jitterMs = 3000 + Math.floor(Math.random() * 2000)
-    await new Promise(r => setTimeout(r, jitterMs))
-
     dequeue(key)
   }
 
@@ -463,15 +468,25 @@ const runCleanup = () => {
     }
   }
 
-  // Bersihkan queue entry yang sudah terlalu lama menunggu (> 2 menit)
+  // Bersihkan queue entry yang sudah terlalu lama menunggu (> 2 menit) atau kosong
   for (const [cat, queue] of queueMap.entries()) {
+    if ((!queue || queue.length === 0) && !activeSlot.get(cat)) {
+      queueMap.delete(cat)
+      activeSlot.delete(cat)
+      continue
+    }
     const before = queue.length
     const fresh  = queue.filter(entry => now - entry.ts < 120000)
     // Reject entry yang timeout
     queue.slice(fresh.length).forEach(entry => {
       try { entry.reject(new Error('Queue timeout')) } catch {}
     })
-    queueMap.set(cat, fresh)
+    if (fresh.length === 0 && !activeSlot.get(cat)) {
+      queueMap.delete(cat)
+      activeSlot.delete(cat)
+    } else {
+      queueMap.set(cat, fresh)
+    }
     cleaned += before - fresh.length
   }
 
