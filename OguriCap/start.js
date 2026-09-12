@@ -72,6 +72,8 @@ function start() {
 	const nodePaths = [oguriModules, rootModules].filter(fs.existsSync).join(path.delimiter);
 
 	let args = [path.join(__dirname, 'index.js'), ...process.argv.slice(2)];
+	let isIntentionalStop = false;
+
 	let p = spawn(process.argv[0], args, {
 		stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
 		env: {
@@ -85,10 +87,22 @@ function start() {
 			setTimeout(() => {
 				start()
 			}, 1000);
+		} else if (data === 'stop' || data === 'shutdown') {
+			console.log(chalk.red.bold('[BOT] Intentional shutdown requested. Terminating supervisor process immediately...'));
+			isIntentionalStop = true;
+			try {
+				p.kill('SIGTERM');
+			} catch (e) {}
+			process.exit(0);
 		} else if (data === 'uptime') {
 			p.send(process.uptime())
 		}
 	}).on('exit', code => {
+		if (isIntentionalStop) {
+			console.log(chalk.green.bold('[BOT] Supervisor exited cleanly after stop command. Goodbye!'));
+			process.exit(0);
+			return;
+		}
 		if (code !== 0) {
 			console.error(chalk.red.bold(`[BOT] Exited with code: ${code}`));
 			ensureDependencies();

@@ -410,6 +410,10 @@ async function startNazeBot() {
 			}, 3000)
 		}
 		if (connection === 'close') {
+			if (global.isShuttingDown) {
+				console.log(chalk.red('[SYSTEM] Connection closed during intentional shutdown. Aborting reconnect.'));
+				return;
+			}
 			const reason = new Boom(lastDisconnect?.error)?.output.statusCode
 			if (reason === DisconnectReason.connectionLost) {
 				console.log('Connection to Server Lost, Attempting to Reconnect...');
@@ -551,19 +555,40 @@ async function startNazeBot() {
 startNazeBot()
 
 // Process Exit
+let isCleaningUp = false;
 const cleanup = async (signal) => {
+	if (isCleaningUp) return;
+	isCleaningUp = true;
+	global.isShuttingDown = true;
 	console.log(chalk.greenBright(`[SYSTEM] Received ${signal}. Menyimpan database...`));
-	if (global.db) await database.write(global.db)
-	if (global.store) await storeDB.write(global.store)
-	server.close(() => {
-		console.log('Server closed. Exiting...')
-		process.exit(0)
-	})
-}
+	try {
+		if (global.db) await database.write(global.db);
+		if (global.store) await storeDB.write(global.store);
+	} catch (e) {}
 
-process.on('SIGINT', () => cleanup('SIGINT'))
-process.on('SIGTERM', () => cleanup('SIGTERM'))
-process.on('exit', () => cleanup('exit'))
+	if (typeof process.send === 'function') {
+		try {
+			process.send('stop');
+		} catch (e) {}
+	}
+
+	try {
+		server.close(() => {
+			console.log('Server closed. Exiting...');
+			process.exit(0);
+		});
+	} catch (e) {
+		process.exit(0);
+	}
+
+	// Fallback jika server.close callback tidak terpanggil dalam 1 detik
+	setTimeout(() => {
+		process.exit(0);
+	}, 1000);
+};
+
+process.on('SIGINT', () => cleanup('SIGINT'));
+process.on('SIGTERM', () => cleanup('SIGTERM'));
 
 server.on('error', (error) => {
 	if (error.code === 'EADDRINUSE') {

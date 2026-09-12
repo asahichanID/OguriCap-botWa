@@ -143,6 +143,7 @@ async function flushDatabase() {
  */
 export async function executeStop(naze, chat, reason = 'Waktu jadwal tercapai') {
 	cancelScheduledStop();
+	global.isShuttingDown = true;
 
 	console.log(chalk.red.bold(`\n========================================================`));
 	console.log(chalk.red.bold(`🛑 [PTERODACTYL AUTO-STOP] Mematikan proses bot (${reason})`));
@@ -151,7 +152,7 @@ export async function executeStop(naze, chat, reason = 'Waktu jadwal tercapai') 
 	if (naze && chat) {
 		try {
 			await naze.sendMessage(chat, {
-				text: `🛑 *[OGURI CAP - SHUTDOWN OTOMATIS]*\n\n⏰ *Pemberitahuan:* ${reason}\n💾 Seluruh database telah disimpan secara aman.\n🔌 Proses bot dimatikan di panel Pterodactyl.\n\n_Daya dinonaktifkan. Sampai jumpa! 🥕_`
+				text: `🛑 *[OGURI CAP - SHUTDOWN OTOMATIS]*\n\n⏰ *Pemberitahuan:* ${reason}\n💾 Seluruh database telah disimpan secara aman.\n🔌 Proses bot dimatikan seketika di panel Pterodactyl.\n\n_Daya dinonaktifkan. Sampai jumpa! 🥕_`
 			});
 		} catch (e) {
 			console.error('[PTERODACTYL AUTO-STOP] Gagal mengirim pesan notifikasi:', e?.message || e);
@@ -160,11 +161,38 @@ export async function executeStop(naze, chat, reason = 'Waktu jadwal tercapai') 
 
 	await flushDatabase();
 
-	// Tunggu 800ms agar Baileys socket selesai mengirim pesan sebelum node process mati
+	// Informasikan ke supervisor start.js bahwa ini adalah shutdown sengaja (bukan crash)
+	if (typeof process.send === 'function') {
+		try {
+			process.send('stop');
+		} catch (e) {}
+	}
+
+	// Hentikan listener event dan tutup koneksi Baileys socket
+	try {
+		if (naze?.ev && typeof naze.ev.removeAllListeners === 'function') {
+			naze.ev.removeAllListeners();
+		}
+		if (naze?.ws && typeof naze.ws.close === 'function') {
+			naze.ws.close();
+		}
+		if (typeof naze?.end === 'function') {
+			naze.end();
+		}
+	} catch (e) {}
+
+	// Tutup express HTTP server jika ada
+	try {
+		if (global.server && typeof global.server.close === 'function') {
+			global.server.close();
+		}
+	} catch (e) {}
+
+	// Tunggu 500ms agar Baileys socket selesai mengirim packet lalu matikan process
 	setTimeout(() => {
-		console.log(chalk.gray('[PTERODACTYL AUTO-STOP] Menutup proses Node.js (exit code 0)...'));
+		console.log(chalk.gray('[PTERODACTYL AUTO-STOP] Menutup proses Node.js seketika (exit code 0)...'));
 		process.exit(0);
-	}, 800);
+	}, 500);
 }
 
 /**
