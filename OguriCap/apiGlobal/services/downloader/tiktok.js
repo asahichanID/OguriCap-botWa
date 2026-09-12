@@ -218,20 +218,48 @@ export async function apiTiktokDownload(
     retry: DEFAULT_RETRY,
 
     async run() {
-      const aioProvider = neoxrRequest('/aio', { url }, { timeout })
       const infoProvider = neoxrRequest('/tiktok', { url }, { timeout })
+      const aioProvider = neoxrRequest('/aio', { url }, { timeout })
 
-      const aio = await aioProvider.run()
+      let info = null
+      let aio = null
 
-        let info = null
-        
-        if (withMetadata) {
-          await new Promise(r => setTimeout(r, 300))
-          info = await infoProvider.run().catch(() => null)
+      try {
+        const infoRes = await infoProvider.run()
+        if (infoRes?.data) {
+          info = infoRes
         }
+      } catch (e) {
+        // Fallback jika /tiktok gagal
+      }
 
-      const result = normalizeNeoxr(aio?.data)
-      const meta = info?.data
+      if (!info?.data?.video && !info?.data?.photo) {
+        try {
+          const aioRes = await aioProvider.run()
+          if (aioRes?.data) {
+            aio = aioRes
+          }
+        } catch (e) {
+          // Fallback jika /aio gagal
+        }
+      }
+
+      const primaryData = info?.data || aio?.data
+      if (!primaryData) {
+        throw new Error('NeoXR mengembalikan data kosong')
+      }
+
+      const result = normalizeNeoxr(primaryData)
+      const meta = info?.data || primaryData
+
+      if (aio?.data && result) {
+        if (!result.download?.video?.nowm && aio.data.video) {
+          result.download.video.nowm = aio.data.video
+        }
+        if (!result.download?.video?.nowm_hd && aio.data.videoHD) {
+          result.download.video.nowm_hd = aio.data.videoHD
+        }
+      }
 
       if (meta && result) {
         result.desc =
@@ -323,7 +351,7 @@ export async function apiTiktokDownload(
           meta.published ??
           result.createTime
         
-        const mStatistic = meta.statistic || meta.stats || {}
+        const mStatistic = meta.statistic || meta.stats || meta.statistics || {}
         const likes = mStatistic.likes ?? mStatistic.diggCount ?? 0
         const shares = mStatistic.shares ?? mStatistic.shareCount ?? 0
         const comments = mStatistic.comments ?? mStatistic.commentCount ?? 0
@@ -365,11 +393,11 @@ export async function apiTiktokDownload(
         }
         
         result.statsV2 = {
-          diggCount: String(meta.statistic?.likes ?? 0),
-          shareCount: String(meta.statistic?.shares ?? 0),
-          commentCount: String(meta.statistic?.comments ?? 0),
-          playCount: String(meta.statistic?.views ?? 0),
-          collectCount: String(meta.statistic?.saved ?? 0),
+          diggCount: String(likes),
+          shareCount: String(shares),
+          commentCount: String(comments),
+          playCount: String(views),
+          collectCount: String(saved),
           repostCount: '0'
         }
         

@@ -281,92 +281,140 @@ const photoList = Array.isArray(images)
       .filter(Boolean)
   : []
 
-const title =
-  result.desc ||
-  'Tanpa Judul'
+    const title =
+      result.desc ||
+      result.title ||
+      result.caption ||
+      'Tanpa Judul'
 
-const authorNickname = result.author?.nickname || ''
-const authorUniqueId = result.author?.uniqueId ? `@${result.author.uniqueId}` : ''
-const authorName = (authorNickname && authorUniqueId && authorUniqueId !== `@${authorNickname}`)
-  ? `${authorNickname} (${authorUniqueId})`
-  : (authorNickname || authorUniqueId || '-')
+    const authorNickname = (result.author?.nickname || result.author?.name || '').trim()
+    const authorUniqueId = (result.author?.uniqueId || result.author?.unique_id || '').replace(/^@/, '').trim()
+    let authorName = '-'
+    if (authorNickname && authorUniqueId) {
+      if (authorNickname.toLowerCase() === authorUniqueId.toLowerCase()) {
+        authorName = `@${authorUniqueId}`
+      } else {
+        authorName = `${authorNickname} (@${authorUniqueId})`
+      }
+    } else if (authorNickname) {
+      authorName = authorNickname
+    } else if (authorUniqueId) {
+      authorName = `@${authorUniqueId}`
+    }
 
-const stats =
-  result.stats ??
-  result.statistics ??
-  result.statistic ??
-  result.statsV2 ??
-  {}
+    const parseStat = (val) => {
+      if (val === undefined || val === null || val === '') return 0
+      if (typeof val === 'number') return isNaN(val) ? 0 : val
+      const str = String(val).trim()
+      if (/^\d+$/.test(str)) return parseInt(str, 10)
+      const match = str.match(/^([\d.,]+)\s*([kKmMbB])?$/)
+      if (match) {
+        let num = parseFloat(match[1].replace(/,/g, '.'))
+        const unit = (match[2] || '').toUpperCase()
+        if (unit === 'K') num *= 1000
+        else if (unit === 'M') num *= 1000000
+        else if (unit === 'B') num *= 1000000000
+        return Math.round(num)
+      }
+      const parsed = parseFloat(str)
+      return isNaN(parsed) ? 0 : parsed
+    }
 
-const views = Number(
-  stats.playCount ??
-  stats.play_count ??
-  stats.views ??
-  stats.plays ??
-  0
-)
+    const stats =
+      result.stats ??
+      result.statistics ??
+      result.statistic ??
+      result.statsV2 ??
+      result.authorStats ??
+      result ??
+      {}
 
-const likes = Number(
-  stats.diggCount ??
-  stats.digg_count ??
-  stats.likes ??
-  stats.heart ??
-  stats.hearts ??
-  0
-)
+    const views = parseStat(
+      stats.playCount ??
+      stats.play_count ??
+      stats.views ??
+      stats.plays ??
+      stats.play ??
+      result.playCount ??
+      result.views ??
+      0
+    )
 
-const comments = Number(
-  stats.commentCount ??
-  stats.comment_count ??
-  stats.comments ??
-  0
-)
+    const likes = parseStat(
+      stats.diggCount ??
+      stats.digg_count ??
+      stats.likes ??
+      stats.like ??
+      stats.heart ??
+      stats.hearts ??
+      result.diggCount ??
+      result.likes ??
+      0
+    )
 
-const shares = Number(
-  stats.shareCount ??
-  stats.share_count ??
-  stats.shares ??
-  0
-)
+    const comments = parseStat(
+      stats.commentCount ??
+      stats.comment_count ??
+      stats.comments ??
+      stats.comment ??
+      result.commentCount ??
+      result.comments ??
+      0
+    )
 
-const saved = Number(
-  stats.collectCount ??
-  stats.collect_count ??
-  stats.saved ??
-  stats.favorites ??
-  stats.downloads ??
-  stats.downloadCount ??
-  0
-)
+    const shares = parseStat(
+      stats.shareCount ??
+      stats.share_count ??
+      stats.shares ??
+      stats.share ??
+      result.shareCount ??
+      result.shares ??
+      0
+    )
 
-const formatNumber = value => {
-  if (!value) return '0'
-  if (value >= 1000000000) {
-    return (value / 1000000000).toFixed(1).replace(/\.0$/, '') + 'B'
-  }
-  if (value >= 1000000) {
-    return (value / 1000000).toFixed(1).replace(/\.0$/, '') + 'M'
-  }
-  if (value >= 1000) {
-    return (value / 1000).toFixed(1).replace(/\.0$/, '') + 'K'
-  }
-  return String(value)
-}
+    const saved = parseStat(
+      stats.collectCount ??
+      stats.collect_count ??
+      stats.saved ??
+      stats.save ??
+      stats.favorites ??
+      stats.favorite ??
+      stats.downloads ??
+      stats.downloadCount ??
+      result.collectCount ??
+      result.saved ??
+      0
+    )
 
-const videoUrl =
-  result.download?.video?.nowm_hd ||
-  result.download?.video?.nowm ||
-  result.download?.video?.wm
+    const formatNumber = value => {
+      const num = typeof value === 'number' ? value : parseStat(value)
+      if (num <= 0) return '0'
+      if (num >= 1000000000) {
+        return (num / 1000000000).toFixed(1).replace(/\.0$/, '') + 'B'
+      }
+      if (num >= 1000000) {
+        return (num / 1000000).toFixed(1).replace(/\.0$/, '') + 'M'
+      }
+      if (num >= 1000) {
+        return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'K'
+      }
+      return Number(num).toLocaleString('id-ID')
+    }
 
-const isPhoto =
-  photoList.length > 0
+    const videoUrl =
+      result.download?.video?.nowm_hd ||
+      result.download?.video?.nowm ||
+      result.download?.video?.wm
 
-if (!isPhoto && !videoUrl)
-  return m.reply(
-    '❌ Video tidak ditemukan'
-  )
+    const isPhoto =
+      photoList.length > 0
 
-const caption =
+    if (!isPhoto && !videoUrl)
+      return m.reply(
+        '❌ Video tidak ditemukan'
+      )
+
+    const caption =
 `🎬 *${title}*
 👤 *Author:* ${authorName}
 
