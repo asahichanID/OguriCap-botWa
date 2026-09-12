@@ -1,11 +1,11 @@
 import React from 'react';
-import { Bot, RefreshCw, Settings, ShieldCheck, Terminal, Smartphone, Moon, Sparkles, Download } from 'lucide-react';
+import { Bot, RefreshCw, Settings, ShieldCheck, Terminal, Smartphone, Moon, Sparkles, Download, Swords } from 'lucide-react';
 import { BotState } from '../types';
 
 interface NavbarProps {
   state: BotState;
-  activeTab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'guide';
-  setActiveTab: (tab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'guide') => void;
+  activeTab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'rpg' | 'guide';
+  setActiveTab: (tab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'rpg' | 'guide') => void;
   onRefresh: () => void;
   isRefreshing: boolean;
   onOpenDownloadZip: () => void;
@@ -173,6 +173,18 @@ export const Navbar: React.FC<NavbarProps> = ({
               Uji HD &amp; Rasio (9:16)
             </button>
             <button
+              id="tab-rpg-btn"
+              onClick={() => setActiveTab('rpg')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                activeTab === 'rpg'
+                  ? 'bg-white text-amber-700 shadow-xs font-semibold'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+              }`}
+            >
+              <Swords className="w-3.5 h-3.5 text-amber-500" />
+              RPG Pixel
+            </button>
+            <button
               id="tab-guide-btn"
               onClick={() => setActiveTab('guide')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
@@ -238,6 +250,14 @@ export const Navbar: React.FC<NavbarProps> = ({
             }`}
           >
             ✨ Uji HD
+          </button>
+          <button
+            onClick={() => setActiveTab('rpg')}
+            className={`px-2 py-1 rounded-md text-xs font-medium shrink-0 ${
+              activeTab === 'rpg' ? 'bg-amber-50 text-amber-700 font-semibold' : 'text-slate-600'
+            }`}
+          >
+            ⚔️ RPG
           </button>
           <button
             onClick={() => setActiveTab('logs')}

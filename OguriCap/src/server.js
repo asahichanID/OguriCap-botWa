@@ -1,6 +1,7 @@
 import express from 'express';
 import { createServer } from 'http';
 import { createRequire } from 'module';
+import { initRpgServer, getRpgHtml } from '../../game/rpg/index.js';
 
 const require = createRequire(import.meta.url);
 const packageInfo = require('../package.json');
@@ -8,6 +9,18 @@ const packageInfo = require('../package.json');
 const app = express();
 const server = createServer(app);
 const PORT = process.env.PORT || process.env.SERVER_PORT || 3000;
+
+// Mount WebSocket RPG Server
+try {
+	initRpgServer(server);
+} catch (e) {
+	console.error('[RPG SERVER INIT]', e?.message || e);
+}
+
+app.get('/rpg', (req, res) => {
+	res.setHeader('Content-Type', 'text/html; charset=utf-8');
+	res.send(getRpgHtml());
+});
 
 app.all('/', (req, res) => {
 	if (process.send) {

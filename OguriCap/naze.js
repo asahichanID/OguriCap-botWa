@@ -55,6 +55,7 @@ import { rdGame, iGame, tGame, gameSlot, gameCasinoSolo, gameSamgongSolo, gameMe
 import { kirimCatur } from './game/catur.js';
 import { kirimSlot } from './game/slot.js';
 import { kirimSonic } from './game/sonic.js';
+import { kirimRPG } from './game/rpg.js';
 import { kirimTebakBom } from './game/tebakbom.js';
 import { verifyAndClaimCode, renderLeaderboardCanvas, getTopLeaderboard } from './game/tebakbomData.js';
 import { getRandom, getBuffer, fetchJson, runtime, clockString, sleep, isUrl, formatDate, formatp, generateProfilePicture, errorCache, normalize, normalizeAnswer, runUpdate, updateSettings, parseMention, fixBytes, similarity, pickRandom, encodeToLetters, tarBackup } from './lib/function.js';
@@ -5059,6 +5060,15 @@ break
 				}
 			}
 			break
+			case 'rpg': case 'pixelrpg': case 'fantasyrpg': case 'mmo': {
+				try {
+					await kirimRPG(naze, m.chat)
+				} catch (e) {
+					console.error('[RPG]', e?.message || e)
+					await m.reply('❌ Gagal mengirim game RPG: ' + (e?.message || e))
+				}
+			}
+			break
 			case 'casino': {
 				await gameCasinoSolo(naze, m, prefix, db)
 			}
@@ -5932,6 +5942,7 @@ break
 │${setv} ${prefix}blackjack
 │${setv} ${prefix}catur
 │${setv} ${prefix}sonic
+│${setv} ${prefix}rpg
 │${setv} ${prefix}casino (nominal)
 │${setv} ${prefix}samgong (nominal)
 │${setv} ${prefix}rampok (@tag)
@@ -6334,6 +6345,7 @@ await naze.sendMessage(
 │${setv} ${prefix}blackjack
 │${setv} ${prefix}catur
 │${setv} ${prefix}sonic
+│${setv} ${prefix}rpg
 │${setv} ${prefix}casino (nominal)
 │${setv} ${prefix}samgong (nominal)
 │${setv} ${prefix}rampok (@tag)

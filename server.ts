@@ -1,9 +1,11 @@
 import express from 'express';
+import http from 'http';
 import path from 'path';
 import fs from 'fs';
 import { spawn, ChildProcess } from 'child_process';
 import { createServer as createViteServer } from 'vite';
 import { sanitizeSairidev } from './scripts/clean-sairidev.js';
+import { initRpgServer, getRpgHtml } from './game/rpg/index.js';
 import {
   getSholatConfig,
   saveSholatConfig,
@@ -1017,7 +1019,16 @@ app.get('/api/system/stats', (req, res) => {
   });
 });
 
+// RPG HTML Web Client endpoint
+app.get('/rpg', (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(getRpgHtml());
+});
+
 async function startServer() {
+  const httpServer = http.createServer(app);
+  initRpgServer(httpServer);
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -1032,7 +1043,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`OguriCap Bot Manager Server running on http://0.0.0.0:${PORT}`);
   });
 }

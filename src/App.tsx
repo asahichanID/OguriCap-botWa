@@ -7,11 +7,12 @@ import { ConfigTab } from './components/ConfigTab';
 import { GuideTab } from './components/GuideTab';
 import { SholatTab } from './components/SholatTab';
 import { HdTestTab } from './components/HdTestTab';
+import { RpgTab } from './components/RpgTab';
 import { DownloadZipModal } from './components/DownloadZipModal';
 import { BotState, LogEntry, SystemStats } from './types';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'guide'>('control');
+  const [activeTab, setActiveTab] = useState<'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'rpg' | 'guide'>('control');
   const [isDownloadZipOpen, setIsDownloadZipOpen] = useState(false);
   const [botState, setBotState] = useState<BotState>({
     status: 'stopped',
@@ -307,6 +308,8 @@ export default function App() {
         {activeTab === 'sholat' && <SholatTab onShowToast={showToast} />}
 
         {activeTab === 'hdTest' && <HdTestTab />}
+
+        {activeTab === 'rpg' && <RpgTab />}
 
         {activeTab === 'guide' && (
           <GuideTab onOpenDownloadZip={() => setIsDownloadZipOpen(true)} />
