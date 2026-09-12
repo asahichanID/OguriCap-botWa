@@ -432,7 +432,7 @@ const photoList = Array.isArray(images)
             m.chat,
             {
               text: caption,
-              footer: `🛡️ Oguri Cap • ${global.botname}`,
+              footer: `🛡️ Tiktok • ${global.botname}`,
               image: {
                 url: photoList[0]
               },
