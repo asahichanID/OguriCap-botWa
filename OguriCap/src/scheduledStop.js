@@ -8,6 +8,7 @@ import chalk from 'chalk';
  */
 let stopTimer = null;
 let precisionTimer = null;
+let warning5MinTimer = null;
 let stopState = {
 	isActive: false,
 	targetMoment: null,
@@ -90,6 +91,10 @@ export function cancelScheduledStop() {
 	if (precisionTimer) {
 		clearTimeout(precisionTimer);
 		precisionTimer = null;
+	}
+	if (warning5MinTimer) {
+		clearTimeout(warning5MinTimer);
+		warning5MinTimer = null;
 	}
 
 	const wasActive = stopState.isActive;
@@ -210,6 +215,26 @@ export function scheduleStop({ timeStr, chat, sender, naze }) {
 	};
 
 	console.log(chalk.cyan(`[PTERODACTYL AUTO-STOP] Jadwal stop diset untuk ${formattedTargetTime} ${tz} (dalam ${formatDuration(delayMs)}).`));
+
+	/**
+	 * Peringatan H-5 Menit Sebelum Shutdown:
+	 * Mengirim notifikasi otomatis ke chat/grup tempat command dijalankan.
+	 */
+	const FIVE_MINUTES_MS = 5 * 60 * 1000;
+	if (delayMs > FIVE_MINUTES_MS) {
+		const warning5MinDelay = delayMs - FIVE_MINUTES_MS;
+		warning5MinTimer = setTimeout(async () => {
+			if (naze && chat) {
+				try {
+					await naze.sendMessage(chat, {
+						text: `⚠️ *[PEMBERITAHUAN SHUTDOWN BOT]* ⚠️\n\n⏰ Perhatian semuanya! Bot akan otomatis dimatikan dalam *5 menit lagi* (pukul *${formattedTargetTime} ${tz}*) sesuai jadwal Head Trainer.\n\n💾 Harap selesaikan game, transaksi Carats, atau aktivitas Anda sekarang agar data tersimpan dengan sempurna! 🥕`
+					});
+				} catch (err) {
+					console.error('[PTERODACTYL AUTO-STOP] Gagal mengirim pesan peringatan 5 menit:', err?.message || err);
+				}
+			}
+		}, warning5MinDelay);
+	}
 
 	/**
 	 * Mekanisme Dua Tahap Presisi Tinggi & 0% Beban CPU:
