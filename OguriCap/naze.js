@@ -81,6 +81,7 @@ import {
 	apiIqcCreate,
 	apiQuoteCreate,
 	apiBratSticker,
+	apiBratVideo,
 	apiBratVideoFrame,
 	apiWastedImage,
 	apiTriggeredImage,
@@ -4048,17 +4049,14 @@ Select Bot Settings:
 				let queryText = text ? text : m.quoted.text;
 				if (queryText.length >= 200) return m.reply('Max 200 Length!')
 				try {
-					let res = await renderBrat(queryText);
-					await naze.sendAsSticker(m.chat, res, m, { packname, author })
-				} catch (e) {
-					console.log('Local brat failed, falling back to apiBratSticker:', e)
-					try {
-						let { result: res } = await apiBratSticker(queryText);
-						await naze.sendAsSticker(m.chat, res, m, { packname, author })
-					} catch (err) {
-						console.log(err)
-						m.reply(global.mess.fail)
+					let { result: res } = await apiBratSticker(queryText);
+					await naze.sendAsSticker(m.chat, res, m, { packname, author });
+					if (typeof res === 'string' && fs.existsSync(res)) {
+						fs.unlinkSync(res);
 					}
+				} catch (err) {
+					console.log('[brat] Error:', err);
+					m.reply(global.mess.fail);
 				}
 			}
 			break
@@ -4066,39 +4064,62 @@ Select Bot Settings:
 				if (!isLimit) return m.reply(global.mess.limit)
 				if (!text && (!m.quoted || !m.quoted.text)) return m.reply(`Kirim/reply pesan *${prefix + command}* Teksnya`)
 				m.react('⏳')
-				const teks = (m.quoted ? m.quoted.text : text).split(' ');
-				if (teks.length >= 200) return m.reply('Max 200 Length!')
+				const queryText = m.quoted ? m.quoted.text : text;
 				const tempDir = path.join(process.cwd(), 'database/temp');
+				if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 				const framePaths = []; 
 				const fileListPath = path.join(tempDir, `${time + '-' + m.sender}.txt`);
 				const outputVideoPath = path.join(tempDir, `${time + '-' + m.sender}-output.mp4`);
+				let finalVideoPath = null;
 				try {
-					for (let i = 0; i < teks.length; i++) {
-						const currentText = teks.slice(0, i + 1).join(' ');
-						const framePath = path.join(tempDir, `${time + '-' + m.sender + i}.mp4`);
-						let { result: res } = await apiBratVideoFrame(currentText, framePath);
-						framePaths.push(res);
+					// 1. Coba NeoXR /bratvid terlebih dahulu (menghasilkan 1 video MP4 langsung)
+					try {
+						const { result: neoVideo } = await apiBratVideo(queryText, outputVideoPath);
+						if (neoVideo && fs.existsSync(neoVideo)) {
+							finalVideoPath = neoVideo;
+						}
+					} catch (neoErr) {
+						console.log('[bratvid] NeoXR /bratvid error, falling back to Naze per-frame:', neoErr?.message || neoErr);
 					}
-					let fileListContent = '';
-					for (let i = 0; i < framePaths.length; i++) {
-						fileListContent += `file '${framePaths[i]}'\n`;
-						fileListContent += `duration 0.5\n`;
+
+					// 2. Fallback: Naze /create/brat2 & /create/brat4 per-frame stitching
+					if (!finalVideoPath || !fs.existsSync(finalVideoPath)) {
+						const teks = queryText.split(' ');
+						if (teks.length >= 200) return m.reply('Max 200 Length!')
+						for (let i = 0; i < teks.length; i++) {
+							const currentText = teks.slice(0, i + 1).join(' ');
+							const framePath = path.join(tempDir, `${time + '-' + m.sender + i}.mp4`);
+							let { result: res } = await apiBratVideoFrame(currentText, framePath);
+							framePaths.push(res);
+						}
+						let fileListContent = '';
+						for (let i = 0; i < framePaths.length; i++) {
+							fileListContent += `file '${framePaths[i]}'\n`;
+							fileListContent += `duration 0.5\n`;
+						}
+						fileListContent += `file '${framePaths[framePaths.length - 1]}'\n`;
+						fileListContent += `duration 3\n`;
+						fs.writeFileSync(fileListPath, fileListContent);
+						execSync(`ffmpeg -y -f concat -safe 0 -i "${fileListPath}" -vf 'fps=30' -c:v libx264 -preset veryfast -pix_fmt yuv420p -t 00:00:10 "${outputVideoPath}"`);
+						finalVideoPath = outputVideoPath;
 					}
-					fileListContent += `file '${framePaths[framePaths.length - 1]}'\n`;
-					fileListContent += `duration 3\n`;
-					fs.writeFileSync(fileListPath, fileListContent);
-					execSync(`ffmpeg -y -f concat -safe 0 -i "${fileListPath}" -vf 'fps=30' -c:v libx264 -preset veryfast -pix_fmt yuv420p -t 00:00:10 "${outputVideoPath}"`);
-					await naze.sendAsSticker(m.chat, outputVideoPath, m, { packname, author });
-					setLimit(m, db)
+
+					if (finalVideoPath && fs.existsSync(finalVideoPath)) {
+						await naze.sendAsSticker(m.chat, finalVideoPath, m, { packname, author });
+						setLimit(m, db)
+					} else {
+						m.reply(global.mess.fail)
+					}
 				} catch (e) {
 					console.log(e)
 					m.reply(global.mess.fail)
 				} finally {
 					framePaths.forEach((filePath) => {
-						if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+						if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
 					});
 					if (fs.existsSync(fileListPath)) fs.unlinkSync(fileListPath);
-					if (fs.existsSync(outputVideoPath)) fs.unlinkSync(outputVideoPath);
+					if (finalVideoPath && fs.existsSync(finalVideoPath)) fs.unlinkSync(finalVideoPath);
+					else if (fs.existsSync(outputVideoPath)) fs.unlinkSync(outputVideoPath);
 				}
 			}
 			break

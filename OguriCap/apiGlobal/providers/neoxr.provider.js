@@ -67,10 +67,10 @@ export function neoxrRequest(endpoint, params = {}, options = {}) {
 		timeout,
 
 		async run() {
-			const primaryBase = getBaseUrl('neoxr');
-			const fallbackBase = primaryBase?.includes('neo-api1.asahichanid.deno.net') 
-				? 'https://api.neoxr.eu/api' 
-				: 'https://neo-api1.asahichanid.deno.net/api';
+			const primaryBase = getBaseUrl('neoxr') || 'https://api.neoxr.eu/api';
+			const fallbackBase = primaryBase?.includes('api.neoxr.eu') 
+				? 'https://neo-api1.asahichanid.deno.net/api' 
+				: 'https://api.neoxr.eu/api';
 			const apikey = getApiKey('neoxr');
 			const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
@@ -153,6 +153,11 @@ export function neoxrRequest(endpoint, params = {}, options = {}) {
 				}
 			}
 
+			// Validasi respon jika status false
+			if (response && response.status === false) {
+				throw new Error(response.message || response.msg || 'NeoXR API returned status false');
+			}
+
 			// ===========================
 			// AUTO STREAM / BUFFER
 			// ===========================
@@ -171,7 +176,9 @@ export function neoxrRequest(endpoint, params = {}, options = {}) {
 					response?.url ??
 					response?.result;
 
-				if (!fileUrl) return response;
+				if (!fileUrl) {
+					throw new Error('NeoXR API response tidak memiliki media file URL untuk diunduh');
+				}
 
 				return await request({
 					url: fileUrl,

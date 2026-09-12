@@ -76,31 +76,110 @@ export async function apiQuoteCreate(payload) {
 }
 
 /**
- * Stiker teks gaya "brat" (.brat). Prioritas: NeoXR /brat → Naze /create/brat → Naze /create/brat3.
+ * Stiker teks gaya "brat" (.brat).
+ * Prioritas:
+ * 1. NeoXR `/brat` (auto-download file PNG dari data.url, mime: image/png)
+ * 2. Fallback Lokal (renderBrat)
+ * 3. Fallback Naze (/create/brat & /create/brat3)
  * @param {string} text
- * @returns {Promise<{result: string, provider: string, raw: string}>} `result` = path file gambar sementara.
+ * @returns {Promise<{result: string|Buffer, provider: string, raw: string|Buffer}>}
  */
 export async function apiBratSticker(text) {
 	if (!text) throw new ValidationError('apiBratSticker: parameter "text" wajib diisi.');
+	const timeout = getTimeout(SERVICE_GROUP);
+
+	// 1. Prioritas Utama: NeoXR /brat (JSON response -> auto-download PNG dari data.url)
+	try {
+		const neoxrRunner = validated(
+			neoxrRequest('/brat', { text }, {
+				timeout,
+				responseType: 'stream',
+				extensionHint: 'png'
+			}),
+			isFilePath
+		);
+		const { raw, providerName } = await runProviders('image.brat', [
+			{ ...neoxrRunner, name: 'neoxr:brat' }
+		], { defaultTimeout: timeout, defaultRetry: DEFAULT_RETRY });
+		return envelope(raw, providerName, raw);
+	} catch (neoErr) {
+		console.log('[brat] NeoXR /brat error, falling back to local / naze:', neoErr?.message || neoErr);
+	}
+
+	// 2. Fallback 1: Local engine renderBrat
 	try {
 		const { renderBrat } = await import('../../../musume/sticker/brat.js');
 		const buffer = await renderBrat(text);
-		return envelope(buffer, 'local:brat', buffer);
+		if (buffer && buffer.length > 0) {
+			return envelope(buffer, 'local:brat', buffer);
+		}
 	} catch (localErr) {
-		const timeout = getTimeout(SERVICE_GROUP);
-		const providers = [
-			{ ...validated(neoxrRequest('/brat', { text }, { timeout, responseType: 'stream' }), isFilePath), name: 'neoxr:brat' },
-			{ ...nazeRequest('/create/brat', { text }, { timeout, responseType: 'stream' }), name: 'naze:brat' },
-			{ ...nazeRequest('/create/brat3', { text }, { timeout, responseType: 'stream' }), name: 'naze:brat3' }
-		];
-		const { raw, providerName } = await runProviders('image.brat', providers, { defaultTimeout: timeout, defaultRetry: DEFAULT_RETRY });
-		return envelope(raw, providerName, raw);
+		console.log('[brat] Local renderBrat error, falling back to Naze:', localErr?.message || localErr);
 	}
+
+	// 3. Fallback 2: Naze API /create/brat & /create/brat3
+	const nazeProviders = [
+		{ ...nazeRequest('/create/brat', { text }, { timeout, responseType: 'stream' }), name: 'naze:brat' },
+		{ ...nazeRequest('/create/brat3', { text }, { timeout, responseType: 'stream' }), name: 'naze:brat3' }
+	];
+	const { raw, providerName } = await runProviders('image.brat', nazeProviders, {
+		defaultTimeout: timeout,
+		defaultRetry: DEFAULT_RETRY
+	});
+	return envelope(raw, providerName, raw);
 }
 
 /**
- * Satu frame video teks gaya "brat" (.bratvid/.bratvideo, dipanggil
- * berulang per potongan kalimat). Prioritas: NeoXR /bratvid → Naze /create/brat2 → Naze /create/brat4.
+ * Video animasi teks gaya "brat" (.bratvid/.bratvideo).
+ * Menghubungi API NeoXR `/bratvid` yang mengembalikan respon:
+ * {
+ *   "creator": "@neoxr.js - Wildan Izzudin",
+ *   "status": true,
+ *   "data": {
+ *     "id": "...",
+ *     "filename": "...",
+ *     "original_name": "...",
+ *     "bytes": 21294,
+ *     "size": "20.79 KB",
+ *     "mime": "video/mp4",
+ *     "extension": "mp4",
+ *     "url": "https://..."
+ *   }
+ * }
+ * Auto-download URL video MP4 dari data.url langsung ke path tujuan.
+ * @param {string} text - Teks lengkap yang ingin dianimasikan
+ * @param {string} [outputPath] - Path tujuan penyimpanan file MP4 sementara
+ * @returns {Promise<{result: string, provider: string, raw: string}>}
+ */
+export async function apiBratVideo(text, outputPath) {
+	if (!text) throw new ValidationError('apiBratVideo: parameter "text" wajib diisi.');
+	const timeout = getTimeout(SERVICE_GROUP);
+
+	const providers = [
+		{
+			...validated(
+				neoxrRequest('/bratvid', { text }, {
+					timeout,
+					responseType: 'stream',
+					streamTo: outputPath,
+					extensionHint: 'mp4'
+				}),
+				isFilePath
+			),
+			name: 'neoxr:bratvid'
+		}
+	];
+
+	const { raw, providerName } = await runProviders('image.bratvid', providers, {
+		defaultTimeout: timeout,
+		defaultRetry: DEFAULT_RETRY
+	});
+	return envelope(raw, providerName, raw);
+}
+
+/**
+ * Satu frame video teks gaya "brat" (Naze per-frame fallback).
+ * Dipakai saat NeoXR /bratvid tidak tersedia / offline untuk merangkai video frame demi frame.
  * @param {string} text
  * @param {string} framePath - Path tujuan file frame (video pendek).
  * @returns {Promise<{result: string, provider: string, raw: string}>}
@@ -111,7 +190,6 @@ export async function apiBratVideoFrame(text, framePath) {
 
 	const timeout = getTimeout(SERVICE_GROUP);
 	const providers = [
-		{ ...validated(neoxrRequest('/bratvid', { text }, { timeout, responseType: 'stream', streamTo: framePath }), isFilePath), name: 'neoxr:bratvid' },
 		{ ...nazeRequest('/create/brat2', { text }, { timeout, responseType: 'stream', streamTo: framePath }), name: 'naze:brat2' },
 		{ ...nazeRequest('/create/brat4', { text }, { timeout, responseType: 'stream', streamTo: framePath }), name: 'naze:brat4' }
 	];
@@ -167,6 +245,7 @@ export default {
 	apiIqcCreate,
 	apiQuoteCreate,
 	apiBratSticker,
+	apiBratVideo,
 	apiBratVideoFrame,
 	apiWastedImage,
 	apiTriggeredImage,

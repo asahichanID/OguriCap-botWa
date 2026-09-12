@@ -39,6 +39,7 @@ export {
 	apiIqcCreate,
 	apiQuoteCreate,
 	apiBratSticker,
+	apiBratVideo,
 	apiBratVideoFrame,
 	apiWastedImage,
 	apiTriggeredImage,
