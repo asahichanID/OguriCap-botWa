@@ -58,6 +58,9 @@ import { kirimSonic } from './game/sonic.js';
 import { kirimRPG } from './game/rpg.js';
 import { kirimTebakBom } from './game/tebakbom.js';
 import { verifyAndClaimCode, renderLeaderboardCanvas, getTopLeaderboard } from './game/tebakbomData.js';
+import { kirimCasino } from './game/casino.js';
+import { verifyAndClaimCasinoCode } from './game/casinoData.js';
+import { kirimUlarTangga } from './game/ulartangga.js';
 import { getRandom, getBuffer, fetchJson, runtime, clockString, sleep, isUrl, formatDate, formatp, generateProfilePicture, errorCache, normalize, normalizeAnswer, runUpdate, updateSettings, parseMention, fixBytes, similarity, pickRandom, encodeToLetters, tarBackup } from './lib/function.js';
 import {
 	apiInstagramDownload,
@@ -311,6 +314,7 @@ const naze = async (naze, m, msg, store) => {
           }
         }
 		const text = global.q = args.join(' ')
+		const pushName = m.pushName || 'Trainer'
 		const mime = (quoted.msg || quoted).mimetype || ''
 		const qmsg = (quoted.msg || quoted)
 		const author = set.author = global.author || 'Nazedev';
@@ -5209,8 +5213,15 @@ break
 				}
 			}
 			break
-			case 'casino': {
-				await gameCasinoSolo(naze, m, prefix, db)
+			case 'casino': case 'casinomp': case 'judi': case 'judimp': case 'royalcasino': case 'casinoroom': {
+				try {
+					const userMoney = db.users[m.sender]?.money || 10000;
+					const pushName = m.pushName || 'Trainer';
+					await kirimCasino(naze, m.chat, m.sender, pushName, userMoney);
+				} catch (e) {
+					console.error('[CASINO]', e?.message || e);
+					await m.reply('❌ Gagal membuka 3D Casino: ' + (e?.message || e));
+				}
 			}
 			break
 			case 'samgong': case 'kartu': {
@@ -5319,8 +5330,58 @@ break
 					kodeToClaim = args.slice(1).join(' ');
 				}
 				if (!kodeToClaim) {
-					return m.reply(`*PENGGUNAAN KLAIM REWARD:*\n\nContoh: *${prefix}claimr TB-850-XXXX*\nAtau: *${prefix}claimreward TB-850-XXXX*\n\n_Dapatkan kode dari menyelesaikan atau cashout di ${prefix}tebakbom!_`);
+					return m.reply(`*PENGGUNAAN KLAIM REWARD:*\n\nContoh:\n- *${prefix}claimr TB-850-XXXX* (Tebak Bom)\n- *${prefix}claimr CASINO-5000-XXXX-YYYY* (Royal Casino 3D)\n\n_Dapatkan kode klaim dari bermain di ${prefix}casino atau ${prefix}tebakbom!_`);
 				}
+
+				if (kodeToClaim.trim().toUpperCase().startsWith('UT-')) {
+					const parts = kodeToClaim.trim().toUpperCase().split('-');
+					const wonAmount = 15000;
+					const bonusExp = 3500;
+					if (db.users[m.sender]) {
+						db.users[m.sender].money = (db.users[m.sender].money || 0) + wonAmount;
+						db.users[m.sender].exp = (db.users[m.sender].exp || 0) + bonusExp;
+					}
+					const teksClaim = `╭─❖「 🐍🪜 𝐂𝐋𝐀𝐈𝐌 𝐔𝐋𝐀𝐑 𝐓𝐀𝐍𝐆𝐆𝐀 𝟑𝐃 🪜🐍 」
+│
+│ 🏆 *Juara 1 Ular Tangga*
+│ 🔑 *Kode:* ${kodeToClaim.trim().toUpperCase()}
+│ 👤 *Pemenang:* @${m.sender.split('@')[0]}
+│ 💎 *Hadiah Carats:* +${wonAmount.toLocaleString('id-ID')} Carats
+│ ✨ *Bonus EXP:* +${bonusExp.toLocaleString('id-ID')} EXP
+│ 💰 *Saldo Total:* ${(db.users[m.sender]?.money || 0).toLocaleString('id-ID')} Carats
+│
+│ 🎲 Main lagi bersama teman:
+│ *${prefix}ulartangga*
+╰───────────────────────────❖`;
+					return await naze.sendMessage(m.chat, { text: teksClaim, mentions: [m.sender] }, { quoted: m });
+				}
+
+				if (kodeToClaim.trim().toUpperCase().startsWith('CASINO-')) {
+					const claimRes = verifyAndClaimCasinoCode(kodeToClaim, m.sender, m.pushName || 'Trainer');
+					if (!claimRes.success) {
+						return m.reply(`❌ *KLAIM CASINO GAGAL*\n\n${claimRes.message}`);
+					}
+					const wonAmount = claimRes.score;
+					const bonusExp = Math.floor(wonAmount * 0.2);
+					if (db.users[m.sender]) {
+						db.users[m.sender].money = (db.users[m.sender].money || 0) + wonAmount;
+						db.users[m.sender].exp = (db.users[m.sender].exp || 0) + bonusExp;
+					}
+					const teksClaim = `╭─❖「 👑 𝐂𝐋𝐀𝐈𝐌 𝐂𝐀𝐒𝐈𝐍𝐎 𝐒𝐔𝐊𝐒𝐄𝐒 👑 」
+│
+│ 🎰 *Game:* Royal 3D Casino Resort
+│ 🔑 *Kode:* ${claimRes.code}
+│ 👤 *Penerima:* @${m.sender.split('@')[0]}
+│ 💎 *Carats Dicairkan:* +${wonAmount.toLocaleString('id-ID')} Carats
+│ ✨ *Bonus EXP:* +${bonusExp.toLocaleString('id-ID')} EXP
+│ 💰 *Saldo Total:* ${(db.users[m.sender]?.money || 0).toLocaleString('id-ID')} Carats
+│
+│ 🎲 Buka casino kembali:
+│ *${prefix}casino* / *${prefix}casinomp*
+╰───────────────────────────❖`;
+					return await naze.sendMessage(m.chat, { text: teksClaim, mentions: [m.sender] }, { quoted: m });
+				}
+
 				const claimRes = verifyAndClaimCode(kodeToClaim, m.sender, m.pushName || 'Player');
 				if (!claimRes.success) {
 					return m.reply(`❌ *KLAIM GAGAL*\n\n${claimRes.message}`);
@@ -5560,6 +5621,15 @@ break
 			}
 			break
 			case 'ulartangga': case 'snakeladder': case 'ut': {
+				if (!args[0] || args[0].toLowerCase() === 'play' || args[0].toLowerCase() === 'game') {
+					try {
+						await kirimUlarTangga(naze, m.chat, m.sender, pushName);
+					} catch (e) {
+						console.error('[ULAR TANGGA]', e?.message || e);
+						m.reply(`🐍🪜 *ULAR TANGGA 3D MULTIPLAYER*\n\nMainkan di browser / webview:\nhttps://ais-dev-sjkyisxv5ckt4yuurggd2f-888900119995.asia-southeast1.run.app/ulartangga?name=${encodeURIComponent(pushName)}`);
+					}
+					break;
+				}
 				if (!m.isGroup) return m.reply(global.mess.group)
 				if (ulartangga[m.chat] && !(ulartangga[m.chat] instanceof SnakeLadder)) {
 					ulartangga[m.chat] = Object.assign(new SnakeLadder(ulartangga[m.chat]), ulartangga[m.chat]);
@@ -5607,7 +5677,7 @@ break
 					m.reply('Berhasil Menghapus Sesi Game')
 					break
 					default:
-					m.reply(`🐍🪜GAME ULARTANGGA\nCommand: ${prefix + command} <command>\n- create\n- join\n- start\n- leave\n- end`)
+					m.reply(`🐍🪜GAME ULARTANGGA 3D\n- Ketik *${prefix + command}* untuk membuka Ular Tangga 3D Interactive Web\n- Command teks chat grup: *${prefix + command} <create|join|start|leave|end>*`)
 				}
 			}
 			break

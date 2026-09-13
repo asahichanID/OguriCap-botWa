@@ -6,6 +6,9 @@ import { spawn, ChildProcess } from 'child_process';
 import { createServer as createViteServer } from 'vite';
 import { sanitizeSairidev } from './scripts/clean-sairidev.js';
 import { initRpgServer, getRpgHtml } from './game/rpg/index.js';
+import { getCasinoHtml, createCasinoRoom, joinCasinoRoom, listCasinoRooms, getCasinoRoom, generateCasinoRewardCode } from './OguriCap/game/casino.js';
+import { initUlarTanggaWs, UlarTanggaManager } from './OguriCap/game/ulartanggaWs.js';
+import { getUlarTanggaHtml } from './OguriCap/game/ulartangga.js';
 import {
   getSholatConfig,
   saveSholatConfig,
@@ -1025,9 +1028,91 @@ app.get('/rpg', (req, res) => {
   res.send(getRpgHtml());
 });
 
+// Royal Casino HTML Web Client endpoint
+app.get('/casino', (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  const balance = Number(req.query.balance) || 10000;
+  const name = String(req.query.name || 'Trainer');
+  res.send(getCasinoHtml(balance, name));
+});
+
+// 3D Ular Tangga HTML Web Client endpoint
+app.get(['/ulartangga', '/ut', '/snakeladder'], (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  const name = String(req.query.name || 'Trainer');
+  res.send(getUlarTanggaHtml(name));
+});
+
+// Ular Tangga Multiplayer API fallback endpoints
+app.get('/api/ut/rooms', (req, res) => {
+  res.json({ rooms: UlarTanggaManager.listRooms() });
+});
+
+app.get('/api/ut/rooms/:code', (req, res) => {
+  const room = UlarTanggaManager.getRoom(req.params.code);
+  if (!room) return res.status(404).json({ success: false, message: 'Room tidak ditemukan' });
+  res.json({ success: true, room });
+});
+
+// Casino Multiplayer API endpoints
+app.get('/api/casino/rooms', (req, res) => {
+  res.json({ rooms: listCasinoRooms() });
+});
+
+app.post('/api/casino/rooms/create', (req, res) => {
+  try {
+    const { roomName, hostName, hostJid, minBet, gameType } = req.body;
+    const room = createCasinoRoom({
+      roomName: roomName || 'VIP Lounge',
+      hostName: hostName || 'Host VIP',
+      hostJid: hostJid || 'web@user',
+      minBet: Number(minBet) || 100,
+      gameType: gameType || 'dice_duel',
+    });
+    res.json({ success: true, room });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/casino/rooms/join', (req, res) => {
+  try {
+    const { code, playerName, playerJid, chips } = req.body;
+    const result = joinCasinoRoom(code, {
+      playerName: playerName || 'Player VIP',
+      playerJid: playerJid || 'web@guest',
+      chips: Number(chips) || 1000,
+    });
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.get('/api/casino/rooms/:code', (req, res) => {
+  const room = getCasinoRoom(req.params.code);
+  if (!room) return res.status(404).json({ success: false, message: 'Room tidak ditemukan' });
+  res.json({ success: true, room });
+});
+
+app.post('/api/casino/claim-code', (req, res) => {
+  try {
+    const { amount, jid, roomCode } = req.body;
+    const score = Math.max(10, Math.floor(Number(amount) || 1000));
+    const code = generateCasinoRewardCode(score, jid || '', roomCode || '');
+    res.json({ success: true, code, score });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 async function startServer() {
   const httpServer = http.createServer(app);
   initRpgServer(httpServer);
+  initUlarTanggaWs(httpServer);
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

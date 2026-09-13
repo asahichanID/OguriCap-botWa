@@ -1,11 +1,11 @@
 import React from 'react';
-import { Bot, RefreshCw, Settings, ShieldCheck, Terminal, Smartphone, Moon, Sparkles, Download, Swords } from 'lucide-react';
+import { Bot, RefreshCw, Settings, ShieldCheck, Terminal, Smartphone, Moon, Sparkles, Download, Swords, Dices } from 'lucide-react';
 import { BotState } from '../types';
 
 interface NavbarProps {
   state: BotState;
-  activeTab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'rpg' | 'guide';
-  setActiveTab: (tab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'rpg' | 'guide') => void;
+  activeTab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'rpg' | 'casino' | 'guide';
+  setActiveTab: (tab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'rpg' | 'casino' | 'guide') => void;
   onRefresh: () => void;
   isRefreshing: boolean;
   onOpenDownloadZip: () => void;
@@ -185,6 +185,18 @@ export const Navbar: React.FC<NavbarProps> = ({
               RPG Pixel
             </button>
             <button
+              id="tab-casino-btn"
+              onClick={() => setActiveTab('casino')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                activeTab === 'casino'
+                  ? 'bg-white text-amber-600 shadow-xs font-semibold'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+              }`}
+            >
+              <Dices className="w-3.5 h-3.5 text-yellow-500" />
+              3D Casino
+            </button>
+            <button
               id="tab-guide-btn"
               onClick={() => setActiveTab('guide')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
@@ -258,6 +270,14 @@ export const Navbar: React.FC<NavbarProps> = ({
             }`}
           >
             ⚔️ RPG
+          </button>
+          <button
+            onClick={() => setActiveTab('casino')}
+            className={`px-2 py-1 rounded-md text-xs font-medium shrink-0 ${
+              activeTab === 'casino' ? 'bg-amber-50 text-amber-700 font-semibold' : 'text-slate-600'
+            }`}
+          >
+            🎲 3D Casino
           </button>
           <button
             onClick={() => setActiveTab('logs')}

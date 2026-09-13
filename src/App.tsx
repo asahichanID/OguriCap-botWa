@@ -8,11 +8,12 @@ import { GuideTab } from './components/GuideTab';
 import { SholatTab } from './components/SholatTab';
 import { HdTestTab } from './components/HdTestTab';
 import { RpgTab } from './components/RpgTab';
+import { CasinoTab } from './components/CasinoTab';
 import { DownloadZipModal } from './components/DownloadZipModal';
 import { BotState, LogEntry, SystemStats } from './types';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'rpg' | 'guide'>('control');
+  const [activeTab, setActiveTab] = useState<'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'rpg' | 'casino' | 'guide'>('control');
   const [isDownloadZipOpen, setIsDownloadZipOpen] = useState(false);
   const [botState, setBotState] = useState<BotState>({
     status: 'stopped',
@@ -310,6 +311,8 @@ export default function App() {
         {activeTab === 'hdTest' && <HdTestTab />}
 
         {activeTab === 'rpg' && <RpgTab />}
+
+        {activeTab === 'casino' && <CasinoTab />}
 
         {activeTab === 'guide' && (
           <GuideTab onOpenDownloadZip={() => setIsDownloadZipOpen(true)} />
