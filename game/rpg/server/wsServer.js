@@ -23,13 +23,8 @@ export class RpgServer {
 		// Socket sessions: socket -> { playerId, mapId }
 		this.clients = new Map();
 
-		// Setup WebSocket Server
-		if (httpServer) {
-			this.wss = new WebSocketServer({ server: httpServer, path: '/ws/rpg' });
-		} else {
-			const port = process.env.PORT || 3000;
-			this.wss = new WebSocketServer({ port: Number(port), path: '/ws/rpg' });
-		}
+		// Setup WebSocket Server (noServer mode agar harmonis dengan WS lain)
+		this.wss = new WebSocketServer({ noServer: true });
 
 		this.wss.on('connection', (ws, req) => this.handleConnection(ws, req));
 

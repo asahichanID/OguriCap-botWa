@@ -1,6 +1,6 @@
 {
   "name": "OguriCap WhatsApp Bot Manager",
-  "description": "Web control panel for OguriCap WhatsApp Bot with realtime status, pairing code, live logs, config manager, Ramadan prayer schedule, HD image aspect-ratio tester, Pixel Fantasy RPG, Grand 3D Casino Resort, and 3D Ular Tangga Multiplayer.",
+  "description": "Web control panel for OguriCap WhatsApp Bot with realtime status, pairing code, live logs, config manager, Ramadan prayer schedule, HD image aspect-ratio tester, Pixel Fantasy RPG, Grand 3D Casino Resort, 3D Ular Tangga, and Classic 3D Realtime Chess Multiplayer.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

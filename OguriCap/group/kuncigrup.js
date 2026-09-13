@@ -71,7 +71,7 @@ export async function tampilkanKunciGrup(conn, m, args = []) {
     // =================================================================
     const targetJid = (mode === "ini" || mode === "here")
       ? (m.isGroup ? m.chat : null)
-      : (mode.includes("@g.us") ? mode : null)
+      : (mode.includes("@g.us") || /^\d{10,25}/.test(mode) ? cleanJid(mode) : null)
 
     if (targetJid) {
       await ensureSync(conn)
@@ -193,16 +193,37 @@ export async function prosesTombolKunci(conn, m) {
   try {
     let id = null
 
-    // 1. Ekstrak dari interactiveResponseMessage
-    const res = m?.message?.interactiveResponseMessage?.nativeFlowResponseMessage
-    if (res?.paramsJson) {
-      try {
-        const parsed = JSON.parse(res.paramsJson)
-        id = parsed.id
-      } catch {}
+    // 1. Ekstrak dari property m.interactiveId (dari Serialize)
+    if (m?.interactiveId) {
+      id = m.interactiveId
     }
 
-    // 2. Ekstrak fallback dari m.body atau m.text
+    // 2. Ekstrak dari interactiveResponseMessage native flow di berbagai layer
+    if (!id) {
+      const native = m?.message?.interactiveResponseMessage?.nativeFlowResponseMessage
+        || m?.msg?.nativeFlowResponseMessage
+        || m?.msg?.interactiveResponseMessage?.nativeFlowResponseMessage
+        || m?.message?.viewOnceMessage?.message?.interactiveResponseMessage?.nativeFlowResponseMessage
+        || m?.message?.ephemeralMessage?.message?.interactiveResponseMessage?.nativeFlowResponseMessage
+      if (native?.paramsJson) {
+        try {
+          const parsed = typeof native.paramsJson === 'string' ? JSON.parse(native.paramsJson) : native.paramsJson
+          id = parsed?.id || parsed?.selectedId || parsed?.selectedRowId
+        } catch {}
+      }
+    }
+
+    // 3. Ekstrak dari singleSelect / button response
+    if (!id) {
+      id = m?.message?.listResponseMessage?.singleSelectReply?.selectedRowId
+        || m?.msg?.singleSelectReply?.selectedRowId
+        || m?.message?.buttonsResponseMessage?.selectedButtonId
+        || m?.msg?.selectedButtonId
+        || m?.message?.templateButtonReplyMessage?.selectedId
+        || m?.msg?.selectedId
+    }
+
+    // 4. Ekstrak fallback dari m.body atau m.text
     if (!id) {
       const rawText = (m.body || m.text || "").trim()
       if (rawText.startsWith("lock_") || rawText.startsWith("unlock_")) {
@@ -212,23 +233,27 @@ export async function prosesTombolKunci(conn, m) {
 
     if (!id || id === "none") return false
 
-    await ensureSync(conn)
-
     // Aksi Mengunci Grup (lock_JID)
     if (id.startsWith("lock_")) {
       const rawJid = id.slice(5)
       const jid = cleanJid(rawJid)
-      lockGroup(jid)
-      const g = botLock.groups?.[jid]
-      await m.reply(
-`🔒 *SUKSES DIKUNCI*
-━━━━━━━━━━━━━━━━━━━━━━
-📛 *Nama Grup* : ${g?.name || "Grup WhatsApp"}
-🆔 *ID Grup*   : ${jid}
-✅ Bot sekarang membisukan diri di grup ini sampai dibuka kembali oleh Owner.
-💾 Status tersimpan permanen di database.`
-      )
-      console.log(`🔒 [KUNCI] Grup dikunci → ${g?.name || jid}`)
+      const g = lockGroup(jid)
+      const namaGrup = g?.name || botLock.groups?.[jid]?.name || "Grup WhatsApp"
+      const pesan = [
+        "🔒 *SUKSES DIKUNCI*",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        `📛 *Nama Grup* : ${namaGrup}`,
+        `🆔 *ID Grup*   : ${jid}`,
+        "✅ Bot sekarang membisukan diri di grup ini sampai dibuka kembali oleh Owner.",
+        "💾 Status tersimpan permanen di database."
+      ].join("\n")
+
+      try {
+        await m.reply(pesan)
+      } catch {
+        await conn.sendMessage(m.chat, { text: pesan }).catch(() => {})
+      }
+      console.log(`🔒 [KUNCI] Grup dikunci → ${namaGrup} (${jid})`)
 
       if (m.chat !== jid && jid.endsWith('@g.us')) {
         await conn.sendMessage(jid, {
@@ -242,17 +267,23 @@ export async function prosesTombolKunci(conn, m) {
     if (id.startsWith("unlock_")) {
       const rawJid = id.slice(7)
       const jid = cleanJid(rawJid)
-      unlockGroup(jid)
-      const g = botLock.groups?.[jid]
-      await m.reply(
-`🔓 *SUKSES DIBUKA*
-━━━━━━━━━━━━━━━━━━━━━━
-📛 *Nama Grup* : ${g?.name || "Grup WhatsApp"}
-🆔 *ID Grup*   : ${jid}
-✅ Bot sudah aktif kembali merespon di grup ini.
-💾 Status tersimpan permanen di database.`
-      )
-      console.log(`🔓 [KUNCI] Grup dibuka → ${g?.name || jid}`)
+      const g = unlockGroup(jid)
+      const namaGrup = g?.name || botLock.groups?.[jid]?.name || "Grup WhatsApp"
+      const pesan = [
+        "🔓 *SUKSES DIBUKA*",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        `📛 *Nama Grup* : ${namaGrup}`,
+        `🆔 *ID Grup*   : ${jid}`,
+        "✅ Bot sudah aktif kembali merespon di grup ini.",
+        "💾 Status tersimpan permanen di database."
+      ].join("\n")
+
+      try {
+        await m.reply(pesan)
+      } catch {
+        await conn.sendMessage(m.chat, { text: pesan }).catch(() => {})
+      }
+      console.log(`🔓 [KUNCI] Grup dibuka → ${namaGrup} (${jid})`)
 
       if (m.chat !== jid && jid.endsWith('@g.us')) {
         await conn.sendMessage(jid, {

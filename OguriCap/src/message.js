@@ -68,7 +68,13 @@ async function dispatchNazeHandler(naze, m, msg, store) {
 	// 🛡️ ANTI SELF-REPLY: Jangan pernah memproses pesan yang dikirim oleh bot ini sendiri
 	if (isBotSentMessage(m.id || msg?.key?.id)) return;
 	if (m.isBot && m.fromMe) return;
-	if (m.fromMe && !m.isCmd) return;
+	const isButtonAction = Boolean(
+		m.interactiveId?.startsWith('lock_') ||
+		m.interactiveId?.startsWith('unlock_') ||
+		m.body?.startsWith('lock_') ||
+		m.body?.startsWith('unlock_')
+	);
+	if (m.fromMe && !m.isCmd && !isButtonAction) return;
 
 	const slot = await acquireCommandSlot(m.sender, m.chat, m);
 	if (!slot || slot.ok === false) return;
@@ -1424,9 +1430,31 @@ async function Serialize(naze, msg, store) {
 	if (m.message) {
 		m.type = getContentType(m.message) || Object.keys(m.message)[0]
 		m.msg = (/viewOnceMessage|viewOnceMessageV2Extension|editedMessage|ephemeralMessage/i.test(m.type) ? m.message[m.type].message[getContentType(m.message[m.type].message)] : (extractMessageContent(m.message[m.type]) || m.message[m.type]))
-		m.body = m.message?.conversation || m.msg?.text || m.msg?.conversation || m.msg?.caption || m.msg?.selectedButtonId || m.msg?.singleSelectReply?.selectedRowId || m.msg?.selectedId || m.msg?.contentText || m.msg?.selectedDisplayText || m.msg?.title || m.msg?.name || ''
+		let interactiveId = ''
+		try {
+			const nativeRes = m.msg?.interactiveResponseMessage?.nativeFlowResponseMessage
+				|| m.msg?.nativeFlowResponseMessage
+				|| m.message?.interactiveResponseMessage?.nativeFlowResponseMessage
+				|| m.message?.viewOnceMessage?.message?.interactiveResponseMessage?.nativeFlowResponseMessage
+				|| m.message?.ephemeralMessage?.message?.interactiveResponseMessage?.nativeFlowResponseMessage;
+			if (nativeRes?.paramsJson) {
+				const parsed = typeof nativeRes.paramsJson === 'string' ? JSON.parse(nativeRes.paramsJson) : nativeRes.paramsJson;
+				interactiveId = parsed?.id || parsed?.selectedId || parsed?.selectedRowId || '';
+			}
+			if (!interactiveId) {
+				interactiveId = m.msg?.singleSelectReply?.selectedRowId
+					|| m.message?.listResponseMessage?.singleSelectReply?.selectedRowId
+					|| m.msg?.selectedButtonId
+					|| m.message?.buttonsResponseMessage?.selectedButtonId
+					|| m.msg?.selectedId
+					|| m.message?.templateButtonReplyMessage?.selectedId
+					|| '';
+			}
+		} catch {}
+		m.interactiveId = interactiveId || '';
+		m.body = m.message?.conversation || m.msg?.text || m.msg?.conversation || m.msg?.caption || m.interactiveId || m.msg?.selectedButtonId || m.msg?.singleSelectReply?.selectedRowId || m.msg?.selectedId || m.msg?.contentText || m.msg?.selectedDisplayText || m.msg?.title || m.msg?.name || ''
 		m.mentionedJid = m.msg?.contextInfo?.mentionedJid?.map(a => naze.findJidByLid(a, store, true)) || []
-		m.text = m.msg?.text || m.msg?.caption || m.message?.conversation || m.msg?.contentText || m.msg?.selectedDisplayText || m.msg?.title || '';
+		m.text = m.msg?.text || m.msg?.caption || m.message?.conversation || m.interactiveId || m.msg?.contentText || m.msg?.selectedDisplayText || m.msg?.title || '';
 		// Hapus regex surrogate pair emoji: emoji dekoratif (seperti 💰) tidak boleh dianggap sebagai command prefix!
 		m.prefix = /^[°•π÷×¶∆£¢€¥®™+✓_=|~!?@#$%^&.©^]/gi.test(m.body) ? m.body.match(/^[°•π÷×¶∆£¢€¥®™+✓_=|~!?@#$%^&.©^]/gi)[0] : '';
 		m.isCmd = Boolean(m.prefix && m.body?.startsWith(m.prefix));

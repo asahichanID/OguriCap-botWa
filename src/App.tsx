@@ -9,11 +9,13 @@ import { SholatTab } from './components/SholatTab';
 import { HdTestTab } from './components/HdTestTab';
 import { RpgTab } from './components/RpgTab';
 import { CasinoTab } from './components/CasinoTab';
+import { CaturTab } from './components/CaturTab';
 import { DownloadZipModal } from './components/DownloadZipModal';
 import { BotState, LogEntry, SystemStats } from './types';
+import { safeFetchJson, safeJsonParse } from './lib/safeJson';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'rpg' | 'casino' | 'guide'>('control');
+  const [activeTab, setActiveTab] = useState<'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'rpg' | 'casino' | 'catur' | 'guide'>('control');
   const [isDownloadZipOpen, setIsDownloadZipOpen] = useState(false);
   const [botState, setBotState] = useState<BotState>({
     status: 'stopped',
@@ -38,13 +40,21 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+  // Auto-switch ke tab catur jika ada param tab=catur atau room=XXXX
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('tab') === 'catur' || params.has('room')) {
+      setActiveTab('catur');
+    }
+  }, []);
+
   // Fetch status
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/bot/status');
       if (res.ok) {
-        const data = await res.json();
-        setBotState(data);
+        const data = await safeFetchJson<BotState | null>(res, null);
+        if (data) setBotState(data);
       }
     } catch {
       // Dev server might be reloading
@@ -56,8 +66,8 @@ export default function App() {
     try {
       const res = await fetch('/api/system/stats');
       if (res.ok) {
-        const data = await res.json();
-        setSystemStats(data);
+        const data = await safeFetchJson<SystemStats | null>(res, null);
+        if (data) setSystemStats(data);
       }
     } catch {
       // Ignore
@@ -81,7 +91,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ botNumber, customCode }),
       });
-      const data = await res.json();
+      const data = await safeFetchJson<{ success?: boolean; message?: string }>(res, {});
       if (!res.ok || data.success === false) {
         throw new Error(data.message || 'Gagal memulai bot');
       }
@@ -99,7 +109,7 @@ export default function App() {
     setIsActionLoading(true);
     try {
       const res = await fetch('/api/bot/stop', { method: 'POST' });
-      const data = await res.json();
+      const data = await safeFetchJson<{ success?: boolean; message?: string }>(res, {});
       if (!res.ok) throw new Error(data.message || 'Gagal menghentikan bot');
       showToast('Perintah penghentian bot dikirim', 'info');
       await fetchStatus();
@@ -119,7 +129,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ botNumber, customCode }),
       });
-      const data = await res.json();
+      const data = await safeFetchJson<{ success?: boolean; message?: string }>(res, {});
       if (!res.ok) throw new Error(data.message || 'Gagal merestart bot');
       showToast('Bot sedang direstart...', 'success');
       await fetchStatus();
@@ -135,7 +145,7 @@ export default function App() {
     setIsActionLoading(true);
     try {
       const res = await fetch('/api/bot/reset-session', { method: 'POST' });
-      const data = await res.json();
+      const data = await safeFetchJson<{ success?: boolean; message?: string }>(res, {});
       if (!res.ok || data.success === false) {
         throw new Error(data.message || 'Gagal reset sesi');
       }
@@ -168,21 +178,25 @@ export default function App() {
 
       eventSource.addEventListener('status', (e) => {
         try {
-          const data = JSON.parse(e.data);
-          setBotState(data);
+          const data = safeJsonParse<BotState | null>(e.data, null);
+          if (data) {
+            setBotState(data);
+          }
         } catch {}
       });
 
       eventSource.addEventListener('log', (e) => {
         try {
-          const newLog: LogEntry = JSON.parse(e.data);
-          setLogs((prev) => {
-            // Cegah duplikasi log id saat SSE reconnect / initial payload
-            if (prev.some((existing) => existing.id === newLog.id)) {
-              return prev;
-            }
-            return [...prev.slice(-999), newLog];
-          });
+          const newLog = safeJsonParse<LogEntry | null>(e.data, null);
+          if (newLog && newLog.id) {
+            setLogs((prev) => {
+              // Cegah duplikasi log id saat SSE reconnect / initial payload
+              if (prev.some((existing) => existing.id === newLog.id)) {
+                return prev;
+              }
+              return [...prev.slice(-999), newLog];
+            });
+          }
         } catch {}
       });
 
@@ -313,6 +327,8 @@ export default function App() {
         {activeTab === 'rpg' && <RpgTab />}
 
         {activeTab === 'casino' && <CasinoTab />}
+
+        {activeTab === 'catur' && <CaturTab />}
 
         {activeTab === 'guide' && (
           <GuideTab onOpenDownloadZip={() => setIsDownloadZipOpen(true)} />

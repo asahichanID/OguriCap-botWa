@@ -9,6 +9,7 @@ import { initRpgServer, getRpgHtml } from './game/rpg/index.js';
 import { getCasinoHtml, createCasinoRoom, joinCasinoRoom, listCasinoRooms, getCasinoRoom, generateCasinoRewardCode } from './OguriCap/game/casino.js';
 import { initUlarTanggaWs, UlarTanggaManager } from './OguriCap/game/ulartanggaWs.js';
 import { getUlarTanggaHtml } from './OguriCap/game/ulartangga.js';
+import { CaturManager } from './OguriCap/game/caturWs.js';
 import {
   getSholatConfig,
   saveSholatConfig,
@@ -73,7 +74,10 @@ const botState: BotState = {
 function checkHasSession(): boolean {
   try {
     const credsPath = path.join(OGURI_DIR, 'nazedev', 'creds.json');
-    return fs.existsSync(credsPath);
+    if (!fs.existsSync(credsPath)) return false;
+    const raw = fs.readFileSync(credsPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    return Boolean(parsed && parsed.registered === true && parsed.me?.id);
   } catch {
     return false;
   }
@@ -184,17 +188,45 @@ function startBot(options?: { botNumber?: string; customCode?: string }) {
     return { success: false, message: 'Bot process is already running' };
   }
 
-  const botNumber = options?.botNumber?.replace(/[^0-9]/g, '') || botState.botNumber || '';
-  const customCode = options?.customCode?.toUpperCase().replace(/[^A-Z0-9]/g, '') || botState.customCode || 'OGURICAP';
+  let botNumber = (options?.botNumber || botState.botNumber || '').replace(/[^0-9]/g, '');
+  if (botNumber.startsWith('08')) {
+    botNumber = '628' + botNumber.slice(2);
+  }
+  const customCode = options?.customCode ? options.customCode.toUpperCase().replace(/[^A-Z0-9]/g, '').trim() : '';
 
   botState.botNumber = botNumber || null;
-  botState.customCode = customCode || 'OGURICAP';
+  botState.customCode = customCode || null;
   botState.status = 'starting';
   botState.startedAt = Date.now();
   botState.hasSession = checkHasSession();
   botState.lastError = null;
 
-  addLog('system', `[MANAGER] Memulai OguriCap Bot (Nomor: ${botNumber || 'Auto/Session'}, Code: ${customCode})...`);
+  // Jika botNumber diisi dan sesi di nazedev belum terdaftar (belum login sukses),
+  // bersihkan file sementara agar Baileys membuat kunci baru yang sinkron dengan WhatsApp server
+  const credsPath = path.join(OGURI_DIR, 'nazedev', 'creds.json');
+  if (botNumber && fs.existsSync(credsPath)) {
+    try {
+      const credsData = JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
+      if (!credsData || credsData.registered !== true) {
+        const sessionDir = path.join(OGURI_DIR, 'nazedev');
+        if (fs.existsSync(sessionDir)) {
+          const files = fs.readdirSync(sessionDir);
+          for (const file of files) {
+            try {
+              fs.unlinkSync(path.join(sessionDir, file));
+            } catch {
+              // ignore
+            }
+          }
+          addLog('system', '[MANAGER] Membersihkan kunci pairing sementara sebelumnya untuk handshake baru.');
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  addLog('system', `[MANAGER] Memulai OguriCap Bot (Nomor: ${botNumber || 'Auto/Session'}, Mode: ${customCode ? `Custom (${customCode})` : 'Standar Resmi WhatsApp'})...`);
   broadcastEvent('status', botState);
 
   const oguriModules = path.join(OGURI_DIR, 'node_modules');
@@ -1109,10 +1141,64 @@ app.post('/api/casino/claim-code', (req, res) => {
   }
 });
 
+// ==========================================
+// API & ROUTING CATUR 3D REALTIME
+// ==========================================
+app.post('/api/catur/create-room', (req, res) => {
+  try {
+    const { name } = req.body || {};
+    const room = CaturManager.createRoomDirect(name || 'Player 1');
+    res.json({ success: true, ...room });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err?.message || err });
+  }
+});
+
+app.get('/api/catur/room/:code', (req, res) => {
+  try {
+    const info = CaturManager.getRoomInfo(req.params.code);
+    if (!info) {
+      return res.status(404).json({ success: false, message: 'Room tidak ditemukan' });
+    }
+    res.json({ success: true, room: info });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err?.message || err });
+  }
+});
+
+app.get('/catur', (req, res) => {
+  const room = req.query.room ? `&room=${req.query.room}` : '';
+  res.redirect(`/?tab=catur${room}`);
+});
+
 async function startServer() {
   const httpServer = http.createServer(app);
-  initRpgServer(httpServer);
-  initUlarTanggaWs(httpServer);
+  const rpgServer = initRpgServer(httpServer);
+  const utWss = initUlarTanggaWs(httpServer);
+  const caturWss = CaturManager.init(httpServer);
+
+  // Centralized WebSocket Upgrade Dispatcher
+  httpServer.on('upgrade', (req, socket, head) => {
+    try {
+      const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+      const pathname = url.pathname;
+      if (pathname === '/ws/catur') {
+        caturWss.handleUpgrade(req, socket, head, (ws: any) => {
+          caturWss.emit('connection', ws, req);
+        });
+      } else if (pathname === '/ws/ulartangga') {
+        utWss.handleUpgrade(req, socket, head, (ws: any) => {
+          utWss.emit('connection', ws, req);
+        });
+      } else if (pathname === '/ws/rpg') {
+        rpgServer.wss.handleUpgrade(req, socket, head, (ws: any) => {
+          rpgServer.wss.emit('connection', ws, req);
+        });
+      }
+    } catch (err) {
+      console.error('[WS UPGRADE ROUTING ERROR]', err);
+    }
+  });
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

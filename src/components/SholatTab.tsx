@@ -24,6 +24,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { SholatConfig, SholatRegion, GroupSholatItem, PrayerSchedule } from '../types';
+import { safeFetchJson } from '../lib/safeJson';
 
 interface SholatTabProps {
   onShowToast: (text: string, type: 'success' | 'error' | 'info') => void;
@@ -85,10 +86,16 @@ export const SholatTab: React.FC<SholatTabProps> = ({ onShowToast }) => {
       setIsLoading(true);
       const res = await fetch('/api/sholat/config');
       if (res.ok) {
-        const data = await res.json();
-        setConfig(data.config);
-        setAvailableRegions(data.availableRegions || []);
-        setGroups(data.groups || []);
+        const data = await safeFetchJson<{
+          config?: SholatConfig;
+          availableRegions?: SholatRegion[];
+          groups?: GroupSholatItem[];
+        }>(res, {});
+        if (data.config) {
+          setConfig(data.config);
+          setAvailableRegions(data.availableRegions || []);
+          setGroups(data.groups || []);
+        }
       } else {
         throw new Error('Gagal memuat konfigurasi sholat');
       }
@@ -137,8 +144,8 @@ export const SholatTab: React.FC<SholatTabProps> = ({ onShowToast }) => {
       const res = await fetch('/api/sholat/sync-realtime', {
         method: 'POST',
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Gagal sinkronisasi waktu realtime');
+      const data = await safeFetchJson<{ error?: string; config?: SholatConfig }>(res, {});
+      if (!res.ok || !data.config) throw new Error(data.error || 'Gagal sinkronisasi waktu realtime');
 
       setConfig(data.config);
       setPreviewTimestamp(Date.now());
@@ -187,8 +194,8 @@ export const SholatTab: React.FC<SholatTabProps> = ({ onShowToast }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Gagal menyimpan konfigurasi');
+      const data = await safeFetchJson<{ error?: string; config?: SholatConfig }>(res, {});
+      if (!res.ok || !data.config) throw new Error(data.error || 'Gagal menyimpan konfigurasi');
 
       setConfig(data.config);
       onShowToast('Pengaturan wilayah & jadwal sholat realtime berhasil disimpan', 'success');
@@ -208,7 +215,7 @@ export const SholatTab: React.FC<SholatTabProps> = ({ onShowToast }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ groupId, enabled: !currentStatus }),
       });
-      const data = await res.json();
+      const data = await safeFetchJson<{ error?: string; success?: boolean }>(res, {});
       if (!res.ok) throw new Error(data.error || 'Gagal mengubah status grup');
 
       // Update local state
@@ -235,7 +242,7 @@ export const SholatTab: React.FC<SholatTabProps> = ({ onShowToast }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ groupId: newGroupId.trim(), enabled: true }),
       });
-      const data = await res.json();
+      const data = await safeFetchJson<{ error?: string; success?: boolean }>(res, {});
       if (!res.ok) throw new Error(data.error || 'Gagal menambahkan grup');
 
       onShowToast('Grup baru berhasil ditambahkan dan diaktifkan', 'success');

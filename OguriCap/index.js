@@ -366,7 +366,11 @@ async function startNazeBot() {
 				}
 				inputNum = await question('Please type your WhatsApp number : ');
 			}
-			phoneNumber = (inputNum || '').replace(/[^0-9]/g, '')
+			let cleanNum = (inputNum || '').replace(/[^0-9]/g, '');
+			if (cleanNum.startsWith('08')) {
+				cleanNum = '628' + cleanNum.slice(2);
+			}
+			phoneNumber = cleanNum;
 			
 			if (phoneNumber && (!parsePhoneNumber('+' + phoneNumber).valid && phoneNumber.length < 6)) {
 				console.log(chalk.bgBlack(chalk.redBright('Start with your Country WhatsApp code') + chalk.whiteBright(',') + chalk.greenBright(' Example : 62xxx')));
@@ -375,15 +379,12 @@ async function startNazeBot() {
 				}
 			}
 		}
-		(async () => {
-			await getPhoneNumber();
-			if (phoneNumber) {
-				exec('rm -rf ./nazedev/*');
-				console.log('Phone number captured. Waiting for Connection...\n' + chalk.blueBright('Estimated time: around 2 ~ 5 minutes'))
-			} else {
-				console.log(chalk.gray('[BOT] Menunggu nomor WhatsApp dikonfigurasi melalui Web Panel atau ENV BOT_NUMBER...'));
-			}
-		})()
+		await getPhoneNumber();
+		if (phoneNumber) {
+			console.log('Phone number captured: ' + phoneNumber + '. Waiting for Connection...\n' + chalk.blueBright('Estimated time: around 2 ~ 5 minutes'));
+		} else {
+			console.log(chalk.gray('[BOT] Menunggu nomor WhatsApp dikonfigurasi melalui Web Panel atau ENV BOT_NUMBER...'));
+		}
 	}
 	
 	await Solving(naze, global.store)
@@ -393,23 +394,40 @@ async function startNazeBot() {
 	naze.ev.on('connection.update', async (update) => {
 		const { qr, connection, lastDisconnect, isNewLogin, receivedPendingNotifications } = update;
 		if ((connection === 'connecting' || !!qr) && pairingCode && phoneNumber && !naze.authState.creds.registered && !pairingStarted) {
+			pairingStarted = true;
 			setTimeout(async () => {
-				pairingStarted = true;
+				if (naze.authState.creds.registered) return;
 				console.log('Requesting Pairing Code...')
-				let customCode = process.env.CUSTOM_PAIRING_CODE || global.custom_pairing_code || "LYNZOFFC";
+				
+				// WhatsApp Crockford Base32 characters: 1-9, A-Z excluding 0, O, I, L, U
+				const CROCKFORD_VALID = /^[1-9A-HJ-KM-NP-TV-Z]{8}$/;
+				let customCode = (process.env.CUSTOM_PAIRING_CODE || global.custom_pairing_code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
 				let code;
-				try {
-					code = await naze.requestPairingCode(phoneNumber.trim(), customCode);
-				} catch (err) {
-					console.log(chalk.yellow('[PAIRING] Custom code attempt failed, retrying standard pairing code...'), err?.message || err);
+				
+				if (customCode && CROCKFORD_VALID.test(customCode)) {
+					try {
+						console.log(chalk.cyan(`[PAIRING] Mencoba custom code: ${customCode}`));
+						code = await naze.requestPairingCode(phoneNumber.trim(), customCode);
+					} catch (err) {
+						console.log(chalk.yellow('[PAIRING] Custom code gagal, beralih ke kode standar Baileys:'), err?.message || err);
+						code = await naze.requestPairingCode(phoneNumber.trim());
+					}
+				} else {
+					if (customCode) {
+						console.log(chalk.yellow(`[PAIRING] Custom code "${customCode}" dilewati (harus 8 karakter Crockford Base32 tanpa 0/O/I/L/U). Menggunakan kode resmi WhatsApp.`));
+					}
+					// Gunakan standar Baileys (100% kompatibel dan resmi didukung WhatsApp)
 					code = await naze.requestPairingCode(phoneNumber.trim());
 				}
-				code = code.match(/.{1,4}/g).join(" - ") || code;
-				//let code = await naze.requestPairingCode(phoneNumber);
-				console.log(chalk.blue('Your Pairing Code :'), chalk.green(code), '\n', chalk.yellow('Expires in 15 second'));
+				
+				const formatted = (code && typeof code === 'string') ? (code.match(/.{1,4}/g)?.join(' - ') || code) : code;
+				console.log(chalk.blue('Your Pairing Code :'), chalk.green(formatted), '\n', chalk.yellow('Expires in 15 second'));
 			}, 3000)
 		}
 		if (connection === 'close') {
+			if (!naze.authState.creds.registered) {
+				pairingStarted = false;
+			}
 			if (global.isShuttingDown) {
 				console.log(chalk.red('[SYSTEM] Connection closed during intentional shutdown. Aborting reconnect.'));
 				return;
@@ -434,15 +452,12 @@ async function startNazeBot() {
 				console.log('Close current Session first...');
 			} else if (reason === DisconnectReason.loggedOut) {
 				console.log('Scan again and Run...');
-				exec('rm -rf ./nazedev/*')
 				process.exit(0)
 			} else if (reason === DisconnectReason.forbidden) {
 				console.log('Connection Failure, Scan again and Run...');
-				exec('rm -rf ./nazedev/*')
 				process.exit(1)
 			} else if (reason === DisconnectReason.multideviceMismatch) {
 				console.log('Scan again...');
-				exec('rm -rf ./nazedev/*')
 				process.exit(0)
 			} else {
 				naze.end(`Unknown DisconnectReason : ${reason}|${connection}`)

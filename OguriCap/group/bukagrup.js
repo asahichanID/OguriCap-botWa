@@ -51,23 +51,49 @@ export async function tampilkanBukaGrup(conn, m, args = []) {
       }, { quoted: m })
     }
 
-    // Mode Buka Grup Tertentu (.buka ini / .buka here / .buka <JID>)
-    const targetJid = (mode === "ini" || mode === "here")
-      ? (m.isGroup ? m.chat : null)
-      : (mode.includes("@g.us") ? cleanJid(mode) : null)
+    // Mode Buka Grup Tertentu (.buka ini / .buka here / .buka <JID> / .buka <index> / .buka <nama>)
+    let targetJid = null
+    if (mode === "ini" || mode === "here") {
+      targetJid = m.isGroup ? m.chat : null
+    } else if (mode.includes("@g.us") || /^\d{10,25}/.test(mode)) {
+      targetJid = cleanJid(mode)
+    } else if (args.length > 0) {
+      const daftar = getLockedGroups() || []
+      const num = parseInt(mode, 10)
+      if (!isNaN(num) && num > 0 && num <= daftar.length) {
+        targetJid = daftar[num - 1]?.id
+      } else {
+        const query = args.join(" ").toLowerCase()
+        const match = daftar.find(g => (g.name || "").toLowerCase().includes(query))
+        if (match) targetJid = match.id
+      }
+    }
 
     if (targetJid) {
-      await ensureSync(conn)
       const cleanTarget = cleanJid(targetJid)
       const g = unlockGroup(cleanTarget)
-      return m.reply(
-`🔓 *SUKSES DIBUKA*
-━━━━━━━━━━━━━━━━━━━━━━
-📛 *Nama Grup* : ${g?.name || "Grup WhatsApp"}
-🆔 *ID Grup*   : ${cleanTarget}
-✅ Bot sudah aktif kembali merespon di grup ini.
-💾 Status tersimpan permanen di database.`
-      )
+      const namaGrup = g?.name || botLock.groups?.[cleanTarget]?.name || "Grup WhatsApp"
+      const pesan = [
+        "🔓 *SUKSES DIBUKA*",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        `📛 *Nama Grup* : ${namaGrup}`,
+        `🆔 *ID Grup*   : ${cleanTarget}`,
+        "✅ Bot sudah aktif kembali merespon di grup ini.",
+        "💾 Status tersimpan permanen di database."
+      ].join("\n")
+
+      try {
+        await m.reply(pesan)
+      } catch {
+        await conn.sendMessage(m.chat, { text: pesan }).catch(() => {})
+      }
+
+      if (m.chat !== cleanTarget && cleanTarget.endsWith('@g.us')) {
+        await conn.sendMessage(cleanTarget, {
+          text: "🔓 *PEMBERITAHUAN*\n━━━━━━━━━━━━━━━━━━━━━━\n✅ Bot telah dibuka kuncinya oleh Owner dan kini aktif kembali merespon seluruh perintah di grup ini."
+        }).catch(() => {})
+      }
+      return
     }
 
     await ensureSync(conn)

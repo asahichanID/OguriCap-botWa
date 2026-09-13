@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Crown, Sparkles, Dices, Coins, Users, RefreshCw, ExternalLink, KeyRound, PlayCircle, Trophy, ShieldCheck, Gamepad2 } from 'lucide-react';
+import { safeFetchJson } from '../lib/safeJson';
 
 interface RoomItem {
   code: string;
@@ -25,10 +26,12 @@ export const CasinoTab: React.FC = () => {
     try {
       setLoadingRooms(true);
       const res = await fetch('/api/casino/rooms');
-      const data = await res.json();
-      setRooms(data.rooms || []);
-    } catch (e) {
-      console.error(e);
+      if (res.ok) {
+        const data = await safeFetchJson<{ rooms?: RoomItem[] }>(res, {});
+        setRooms(data.rooms || []);
+      }
+    } catch {
+      // Ignore network errors safely
     } finally {
       setLoadingRooms(false);
     }
@@ -50,14 +53,16 @@ export const CasinoTab: React.FC = () => {
           gameType: 'dice_duel'
         })
       });
-      const data = await res.json();
-      if (data.success && data.room) {
-        setCreatedRoomCode(data.room.code);
-        fetchRooms();
-        setIframeKey(k => k + 1);
+      if (res.ok) {
+        const data = await safeFetchJson<{ success?: boolean; room?: { code: string } }>(res, {});
+        if (data.success && data.room) {
+          setCreatedRoomCode(data.room.code);
+          fetchRooms();
+          setIframeKey(k => k + 1);
+        }
       }
-    } catch (e) {
-      console.error(e);
+    } catch {
+      // Ignore network errors safely
     }
   };
 

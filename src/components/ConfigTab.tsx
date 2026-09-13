@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, Save, RotateCcw, Code, CheckCircle, AlertCircle } from 'lucide-react';
 import { BotConfig } from '../types';
+import { safeFetchJson } from '../lib/safeJson';
 
 interface ConfigTabProps {
   onRestartNeeded: () => void;
@@ -30,7 +31,10 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ onRestartNeeded }) => {
     setErrorMessage(null);
     try {
       const res = await fetch('/api/bot/config');
-      const data = await res.json();
+      const data = await safeFetchJson<BotConfig | null>(res, null);
+      if (!data) {
+        throw new Error('Konfigurasi kosong atau server sedang menyiapkan data');
+      }
       setConfig(data);
       setBotname(data.botname || 'Oguri Cap');
       setAuthor(data.author || 'Shiro');
@@ -89,7 +93,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ onRestartNeeded }) => {
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const data = await safeFetchJson<{ error?: string; success?: boolean }>(res, {});
       if (!res.ok || data.error) {
         throw new Error(data.error || 'Gagal menyimpan');
       }

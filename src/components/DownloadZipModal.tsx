@@ -13,6 +13,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { ProjectExportInfo } from '../types';
+import { safeFetchJson } from '../lib/safeJson';
 
 interface DownloadZipModalProps {
   isOpen: boolean;
@@ -41,8 +42,8 @@ export const DownloadZipModal: React.FC<DownloadZipModalProps> = ({
     try {
       const res = await fetch('/api/project/export-info');
       if (res.ok) {
-        const data = await res.json();
-        setInfo(data);
+        const data = await safeFetchJson<ProjectExportInfo | null>(res, null);
+        if (data) setInfo(data);
       }
     } catch {
       // ignore

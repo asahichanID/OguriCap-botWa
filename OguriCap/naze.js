@@ -265,8 +265,14 @@ const naze = async (naze, m, msg, store) => {
 		if (isBotSentMessage(m.id || m.key?.id) || (m.fromMe && m.isBot)) {
 			return;
 		}
+		const isLockAction = Boolean(
+			(m.interactiveId && (m.interactiveId.startsWith('lock_') || m.interactiveId.startsWith('unlock_'))) ||
+			(m.body && (m.body.startsWith('lock_') || m.body.startsWith('unlock_'))) ||
+			(body && (body.startsWith('lock_') || body.startsWith('unlock_')))
+		);
+
 		// Jika pesan dari akun bot sendiri (fromMe) tapi bukan command ber-prefix resmi atau eval owner, buang total!
-		if (m.key.fromMe && !isCmd && !isOwnerEval) {
+		if (m.key.fromMe && !isCmd && !isOwnerEval && !isLockAction) {
 			return;
 		}
 		
@@ -279,17 +285,22 @@ const naze = async (naze, m, msg, store) => {
 		// ==========================================
 		// INTERSEPTOR EVENT KLIK TOMBOL LIST NATIVE (KUNCI / BUKA)
 		// ==========================================
-		const msgIdText = m.body || m.text || "";
+		const msgIdText = m.interactiveId || m.body || m.text || body || "";
 		if (msgIdText.startsWith('lock_') || msgIdText.startsWith('unlock_')) {
 			if (!isCreator) return; // Hanya jalankan jika yang klik adalah owner
 			if (await prosesTombolKunci(naze, m)) return;
 			return;
 		}
-		const resInteractive = m?.message?.interactiveResponseMessage?.nativeFlowResponseMessage;
+		const resInteractive = m?.message?.interactiveResponseMessage?.nativeFlowResponseMessage
+			|| m?.msg?.nativeFlowResponseMessage
+			|| m?.msg?.interactiveResponseMessage?.nativeFlowResponseMessage
+			|| m?.message?.viewOnceMessage?.message?.interactiveResponseMessage?.nativeFlowResponseMessage
+			|| m?.message?.ephemeralMessage?.message?.interactiveResponseMessage?.nativeFlowResponseMessage;
 		if (resInteractive?.paramsJson) {
 			try {
-				const parsed = JSON.parse(resInteractive.paramsJson);
-				if (parsed?.id?.startsWith('lock_') || parsed?.id?.startsWith('unlock_')) {
+				const parsed = typeof resInteractive.paramsJson === 'string' ? JSON.parse(resInteractive.paramsJson) : resInteractive.paramsJson;
+				const pId = parsed?.id || parsed?.selectedId || parsed?.selectedRowId || '';
+				if (pId.startsWith('lock_') || pId.startsWith('unlock_')) {
 					if (!isCreator) return;
 					if (await prosesTombolKunci(naze, m)) return;
 					return;
@@ -5683,7 +5694,7 @@ break
 			break
 			case 'chess': case 'catur': case 'ct': {
 				try {
-					await kirimCatur(naze, m.chat)
+					await kirimCatur(naze, m.chat, m.sender, args)
 				} catch (e) {
 					console.error('[CATUR]', e?.message || e)
 					await m.reply('❌ Gagal mengirim game: ' + (e?.message || e))

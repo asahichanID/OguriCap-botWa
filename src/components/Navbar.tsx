@@ -4,8 +4,8 @@ import { BotState } from '../types';
 
 interface NavbarProps {
   state: BotState;
-  activeTab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'rpg' | 'casino' | 'guide';
-  setActiveTab: (tab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'rpg' | 'casino' | 'guide') => void;
+  activeTab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'rpg' | 'casino' | 'catur' | 'guide';
+  setActiveTab: (tab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'rpg' | 'casino' | 'catur' | 'guide') => void;
   onRefresh: () => void;
   isRefreshing: boolean;
   onOpenDownloadZip: () => void;
@@ -197,6 +197,18 @@ export const Navbar: React.FC<NavbarProps> = ({
               3D Casino
             </button>
             <button
+              id="tab-catur-btn"
+              onClick={() => setActiveTab('catur')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                activeTab === 'catur'
+                  ? 'bg-amber-100 text-amber-950 shadow-xs font-bold ring-1 ring-amber-400'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+              }`}
+            >
+              <span className="text-sm">♟️</span>
+              Catur 3D
+            </button>
+            <button
               id="tab-guide-btn"
               onClick={() => setActiveTab('guide')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
@@ -278,6 +290,15 @@ export const Navbar: React.FC<NavbarProps> = ({
             }`}
           >
             🎲 3D Casino
+          </button>
+          <button
+            id="tab-catur-mobile-btn"
+            onClick={() => setActiveTab('catur')}
+            className={`px-2 py-1 rounded-md text-xs font-medium shrink-0 ${
+              activeTab === 'catur' ? 'bg-amber-100 text-amber-950 font-bold ring-1 ring-amber-400' : 'text-slate-600'
+            }`}
+          >
+            ♟️ Catur 3D
           </button>
           <button
             onClick={() => setActiveTab('logs')}

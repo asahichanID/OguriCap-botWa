@@ -56,8 +56,7 @@ export class UlarTanggaManager {
 		if (this.wss) return this.wss;
 		try {
 			this.wss = new WebSocketServer({
-				server: httpServer,
-				path: '/ws/ulartangga'
+				noServer: true
 			});
 
 			this.wss.on('connection', (ws, req) => {

@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   Zap,
 } from 'lucide-react';
+import { safeFetchJson } from '../lib/safeJson';
 
 interface DimensionData {
   width: number;
@@ -100,7 +101,7 @@ export const HdTestTab: React.FC = () => {
         }),
       });
 
-      const data = await res.json();
+      const data = await safeFetchJson<{ success?: boolean; error?: string } & any>(res, {});
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Gagal memproses pengujian gambar HD');
       }
