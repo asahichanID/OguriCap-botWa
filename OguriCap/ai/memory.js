@@ -1,30 +1,26 @@
+/**
+ * OguriCap/ai/memory.js
+ * -----------------------------------------------------------------------
+ * Re-export Mahiru memory.
+ */
+
+import { getMahiruMemory, addMahiruMessage, clearMahiruMemory } from './mahiru/memory.js';
+
 export function getMemory(db, key) {
-	db.oguriAI ??= {}
-
-	if (!db.oguriAI[key]) {
-		db.oguriAI[key] = { history: [] }
-	}
-
-	return db.oguriAI[key]
+	const history = getMahiruMemory(db, key);
+	return { history };
 }
 
 export function addUserMemory(db, key, text) {
-	const memory = getMemory(db, key)
-	memory.history.push({ role: 'user', content: text })
-	if (memory.history.length > 10) memory.history.shift()
+	addMahiruMessage(db, key, 'user', text);
 }
 
 export function addBotMemory(db, key, text) {
-	const memory = getMemory(db, key)
-	memory.history.push({ role: 'assistant', content: text })
-	if (memory.history.length > 10) memory.history.shift()
+	addMahiruMessage(db, key, 'assistant', text);
 }
 
 export function clearMemory(db, key) {
-	if (!db.oguriAI) return
-	delete db.oguriAI[key]
+	clearMahiruMemory(db, key);
 }
 
-export function clearAllMemory(db) {
-	db.oguriAI = {}
-}
+export { getMahiruMemory, addMahiruMessage, clearMahiruMemory };

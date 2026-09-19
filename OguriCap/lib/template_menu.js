@@ -10,26 +10,26 @@ const oguriCapAudio = fs.readFileSync('./src/media/oguricap.mp3');
 const __filename = fileURLToPath(import.meta.url);
 
 function getTopMenu(db, prefix, setv) {
-  let total = Object.entries(db.hit || {})
+  const total = Object.entries(db.hit || {})
     .sort((a, b) => b[1] - a[1])
     .slice(0, Math.min(7, Object.keys(db.hit || {}).length))
     .filter(([command]) => command !== 'totalcmd' && command !== 'todaycmd')
     .slice(0, 5);
 
-  let text = `╭──❍「 *TOP MENU* 」❍\n`;
+  let text = `┌── ‹ 🔥 ᴛᴏᴘ ᴄᴏᴍᴍᴀɴᴅs ›\n`;
 
   if (total.length >= 5) {
     total.forEach(([command, hit]) => {
-      text += `│${setv} ${prefix}${command}: ${hit} hits\n`;
+      text += `│ ▫ ${prefix}${command} ‹${hit} hits›\n`;
     });
-    text += '╰──────❍';
+    text += '└─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ✦';
   } else {
-    text += `│${setv} ${prefix}ai
-│${setv} ${prefix}brat
-│${setv} ${prefix}tiktok
-│${setv} ${prefix}cekmati
-│${setv} ${prefix}susunkata
-╰──────❍`;
+    text += `│ ▫ ${prefix}ai ‹smart ai chat›
+│ ▫ ${prefix}brat ‹sticker maker›
+│ ▫ ${prefix}tiktok ‹video downloader›
+│ ▫ ${prefix}catur ‹3d multiplayer›
+│ ▫ ${prefix}tebakbom ‹arcade minigame›
+└─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ✦`;
   }
 
   return text;
@@ -43,7 +43,7 @@ function getMenuSections(prefix) {
         {
           header: '📚',
           title: 'All Menu',
-          description: 'Tampilkan seluruh daftar perintah & fitur bot lengkap',
+          description: 'Daftar lengkap seluruh command & utilitas bot',
           id: `${prefix}allmenu`
         }
       ]
@@ -54,31 +54,31 @@ function getMenuSections(prefix) {
         {
           header: '⚡',
           title: 'Bot Menu',
-          description: 'Status bot, ping, speed & informasi sistem',
+          description: 'Status bot, ping, latency, speed & sistem info',
           id: `${prefix}botmenu`
         },
         {
           header: '🛠️',
           title: 'Tools Menu',
-          description: 'Alat utilitas, konversi, kalkulator, HD gambar, dll',
+          description: 'Konverter media, HD enhancer, kalkulator, QR, dll',
           id: `${prefix}toolsmenu`
         },
         {
           header: '🔎',
           title: 'Search Menu',
-          description: 'Pencarian internet, gambar, lirik & fakta',
+          description: 'Pencarian web, Pinterest, YouTube, lirik & cuaca',
           id: `${prefix}searchmenu`
         },
         {
           header: '🧠',
           title: 'AI Menu',
-          description: 'Gemini AI, Grok, Claude & chatbot cerdas',
+          description: 'Gemini AI, Grok, Claude, DeepSeek & txt2img',
           id: `${prefix}aimenu`
         }
       ]
     },
     {
-      title: '👥 GRUP & SOSIAL',
+      title: '👥 GRUP & KOMUNITAS',
       rows: [
         {
           header: '👥',
@@ -89,19 +89,19 @@ function getMenuSections(prefix) {
         {
           header: '🕵️',
           title: 'Stalker Menu',
-          description: 'Pengecekan profil medsos & e-wallet',
+          description: 'Cek profil GitHub, WhatsApp & identitas',
           id: `${prefix}stalkermenu`
         },
         {
           header: '💬',
           title: 'Quotes Menu',
-          description: 'Kutipan kata mutiara, motivasi & anime quotes',
+          description: 'Kutipan motivasi, anime, kata bijak & renungan',
           id: `${prefix}quotesmenu`
         },
         {
           header: '🕌',
           title: 'Jadwal Sholat',
-          description: 'Jadwal sholat otomatis & adzan di grup',
+          description: 'Pengingat adzan & jadwal ibadah otomatis',
           id: `${prefix}sholat`
         }
       ]
@@ -112,13 +112,13 @@ function getMenuSections(prefix) {
         {
           header: '⬇️',
           title: 'Download Menu',
-          description: 'Download video TikTok, YouTube, IG, FB, dll',
+          description: 'Unduh video TikTok, YouTube, Instagram, FB, dll',
           id: `${prefix}downloadmenu`
         },
         {
           header: '🌸',
           title: 'Anime Menu',
-          description: 'Info anime, waifu, wallpaper & manga',
+          description: 'Info anime terkini, waifu, wallpaper & neko',
           id: `${prefix}animemenu`
         }
       ]
@@ -129,19 +129,19 @@ function getMenuSections(prefix) {
         {
           header: '🎮',
           title: 'Game Menu',
-          description: 'Mini games seru, tebak-tebakan, RPG, kuis',
+          description: 'Catur 3D realtime, tebak bom, ular tangga & kuis',
           id: `${prefix}gamemenu`
         },
         {
           header: '😂',
           title: 'Fun Menu',
-          description: 'Fitur seru, jokes, cek kecocokan & hiburan',
+          description: 'Fitur seru, cek khodam, rate, jokes & games teks',
           id: `${prefix}funmenu`
         },
         {
           header: '🎁',
           title: 'Random Menu',
-          description: 'Fakta unik, cerita acak & generator teks',
+          description: 'Kopi, fakta unik & generator acak harian',
           id: `${prefix}randommenu`
         }
       ]
@@ -151,14 +151,14 @@ function getMenuSections(prefix) {
       rows: [
         {
           header: '🏇',
-          title: 'Tracen Menu',
-          description: 'Fitur spesial Uma Musume Pretty Derby',
-          id: `${prefix}tracenmenu`
+          title: 'Economy Menu',
+          description: 'Bank Tracen, transfer saldo, audit & bansos',
+          id: `${prefix}economymenu`
         },
         {
           header: '👑',
           title: 'Owner Menu',
-          description: 'Menu kontrol khusus Trainer / Owner bot',
+          description: 'Panel kontrol & konfigurasi khusus Trainer Utama',
           id: `${prefix}ownermenu`
         }
       ]
@@ -202,38 +202,39 @@ async function setTemplateMenu(
   options = {}
 ) {
   const uma = getUmaQuote();
-  const text = getTopMenu(db, prefix, setv);
+  const topText = getTopMenu(db, prefix, setv);
 
   const senderNumber = m.sender.split('@')[0];
   const ownerNumber = String(global.owner?.[0] || owner?.[0] || '').replace(/[^0-9]/g, '');
   const botName = db?.set?.[options.botNumber]?.botname || global.botname || 'Oguri Cap';
   const prefixDisplay = db?.set?.[options.botNumber]?.multiprefix
     ? '「 MULTI-PREFIX 」'
-    : `*${prefix}*`;
-  const userStatus = options.isVip ? 'VIP' : options.isPremium ? 'PREMIUM' : 'FREE';
-  const userLimit = options.isVip ? 'UNLIMITED (VIP)' : (db.users?.[m.sender]?.limit ?? 0);
-  const userCarats = db.users?.[m.sender]?.money?.toLocaleString('id-ID') || '0';
+    : `[ ${prefix} ]`;
+  const userStatus = options.isVip ? '🌟 LEGEND TRAINER' : options.isPremium ? '⭐ SENIOR TRAINER' : '🌱 ROOKIE TRAINER';
+  const userLimit = options.isVip ? 'UNLIMITED (VIP)' : `${db.users?.[m.sender]?.limit ?? 0} Tickets`;
+  const userCarats = db.users?.[m.sender]?.money ? `${db.users[m.sender].money.toLocaleString('id-ID')} Coins` : '0 Coins';
 
-  const menunya = `
-╭──「 *TRAINER STATUS* 」
-├ 👤 *Nama* : ${m.pushName || 'Tanpa Nama'}
-├ 🆔 *Id* : @${senderNumber}
-├ ⭐ *Status* : ${userStatus}
-├ 🎫 *Limit* : ${userLimit}
-├ 💎 *Carats* : ${userCarats}
-╰─┬────────❍
-╭─┴─「 *OGURI SYSTEM* 」
-├ 🏇 *Nama Bot* : ${botName}
-${options.locale_day ? `├ 📅 *Hari* : ${options.locale_day}\n` : ''}${options.date ? `├ 📆 *Tanggal* : ${options.date}\n` : ''}${options.date_time ? `├ ⏰ *Waktu* : ${options.date_time}\n` : ''}├ 📱 *Powered* : @0
-├ 🎓 *Trainer* : @${ownerNumber}
-├ 🌙 *Mode* : ${naze.public ? 'Public' : 'Self'}
-├ ⌨️ *Prefix* : ${prefixDisplay}
-╰─┬────────❍
-╭─┴─📒「 *UMA TALK* 」📒
-💬 ${uma.name}
-"${uma.quote}"
-╰──────────❍
-`;
+  const menunya = `┌── ✦ 𝐎𝐆𝐔𝐑𝐈 𝐂𝐀𝐏 ✦ ──┐
+│ ᴛʀᴀᴄᴇɴ ᴀᴄᴀᴅᴇᴍʏ ᴀssɪsᴛᴀɴᴛ
+└── ─ ─ ─ ─ ─ ─ ─ ─ ──┘
+
+┌─ ‹ ᴛʀᴀɪɴᴇʀ ɪɴꜰᴏ ›
+├ ◦ ɴᴀᴍᴇ   : ${m.pushName || 'Trainer'}
+├ ◦ ɪᴅ     : @${senderNumber}
+├ ◦ ʀᴀɴᴋ   : ${userStatus}
+├ ◦ ʟɪᴍɪᴛ  : ${userLimit}
+└ ◦ ᴄᴀʀʀᴏᴛ : ${userCarats}
+
+┌─ ‹ ᴀᴄᴀᴅᴇᴍʏ ꜱʏꜱᴛᴇᴍ ›
+├ ◦ ᴀssɪsᴛᴀɴᴛ : ${botName}
+├ ◦ ᴍᴏᴅᴇ      : ${naze.public ? '🌍 Public Race' : '🏠 Private Training'}
+├ ◦ ᴘʀᴇғɪx    : ${prefixDisplay}
+├ ◦ ʜᴇᴀᴅ ᴛʀ   : @${ownerNumber}
+${options.date ? `├ ◦ ᴅᴀᴛᴇ      : ${options.locale_day ? options.locale_day + ', ' : ''}${options.date}\n` : ''}${options.date_time ? `└ ◦ ᴛɪᴍᴇ      : ${options.date_time}\n` : '└ ◦ sᴛᴀᴛᴜs    : 🟢 Online\n'}
+┌─ ‹ ᴜᴍᴀ ᴛᴀʟᴋ ›
+│ 💬 *${uma.name}* ${uma.title ? `‹${uma.title}›` : ''}
+│ "${uma.quote}"
+└─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ✦`;
 
   // Standard menu buttons list with TRACEN MENU single_select (Sairidev NativeFlow)
   const menuButtons = [
@@ -275,12 +276,13 @@ ${options.locale_day ? `├ 📅 *Hari* : ${options.locale_day}\n` : ''}${option
     type === 2 ||
     type === 'listMessage'
   ) {
+    const greetingText = options.ucapanWaktu ? `🌸 *${options.ucapanWaktu.toUpperCase()}*, Trainer @${senderNumber}!` : `🌸 *SELAMAT DATANG*, Trainer @${senderNumber}!`;
     const fullCaption =
-      `🌸 Halo @${senderNumber}\n\n` +
+      `${greetingText}\n\n` +
       menunya +
-      '\n' +
-      text +
-      `\n\n💡 *Tekan tombol TRACEN MENU di bawah untuk membuka daftar kategori menu lengkap:*`;
+      '\n\n' +
+      topText +
+      `\n\n💡 *Tekan tombol TRACEN MENU di bawah untuk membuka daftar kategori menu:*`;
 
     const menuFooter = options.ucapanWaktu
       ? `✨ ${options.ucapanWaktu} • OguriCap MD`

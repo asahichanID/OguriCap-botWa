@@ -1,46 +1,40 @@
-// helperai.js
+/**
+ * OguriCap/ai/helperai.js
+ * -----------------------------------------------------------------------
+ * Re-export Mahiru helpers.
+ */
+
+import { cleanMahiruMessage, sendMahiruTyping, sleep } from './mahiru/helper.js';
 
 export function buildKey(chat, sender) {
-	return `${chat}:${sender}`
+	return `${chat}:${sender}`;
 }
 
 export function cleanMessage(text = '') {
-	return text
-		.replace(/^oguri[\s,.:!?-]*/i, '')
-		.replace(/^(hai|halo|hei|oi)\s+oguri[\s,.:!?-]*/i, '')
-		.trim()
+	return cleanMahiruMessage(text);
 }
 
 export function randomDelay(min = 1200, max = 2500) {
-	return Math.floor(Math.random() * (max - min + 1)) + min
+	return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-export function sleep(ms) {
-	return new Promise(resolve => setTimeout(resolve, ms))
-}
+export { sleep };
 
 export function shouldIgnore(m) {
-	if (!m?.body && !m?.text) return true
-	if (m.isBaileys) return true
-	if (m.fromMe) return true
-
-	if (
-	m.type !== 'conversation' &&
-	m.type !== 'extendedTextMessage'
-	) return true
+	if (!m?.body && !m?.text) return true;
+	if (m.isBaileys) return true;
+	if (m.fromMe) return true;
+	if (m.type !== 'conversation' && m.type !== 'extendedTextMessage') return true;
+	return false;
 }
 
 export async function sendTyping(naze, chat) {
-	try {
-		await naze.sendPresenceUpdate('composing', chat)
-	} catch {
-		// ignore — tidak kritis jika presence gagal
-	}
+	return sendMahiruTyping(naze, chat);
 }
 
 export function formatHistory(history = [], prompt = '') {
 	return [
 		{ role: 'system', content: prompt },
 		...history
-	]
+	];
 }

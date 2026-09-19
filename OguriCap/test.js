@@ -8,6 +8,7 @@ import './downloader/tracendd.js'
 import './lib/sticker/sticker.js'
 import './src/guard.js'
 import './ai/oguriAI.js'
+import './ai/mahiru/index.js'
 import './lib/fetch.js'
 
 console.log(`
@@ -23,6 +24,7 @@ console.log(`
 ✅ lib/sticker/sticker.js
 ✅ src/guard.js
 ✅ ai/oguriAI.js
+✅ ai/mahiru/index.js
 ✅ lib/fetch.js
 
 🎉 Semua modul core aman dan berhasil dimuat!

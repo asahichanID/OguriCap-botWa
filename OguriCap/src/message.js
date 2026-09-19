@@ -69,10 +69,15 @@ async function dispatchNazeHandler(naze, m, msg, store) {
 	if (isBotSentMessage(m.id || msg?.key?.id)) return;
 	const senderNum = m.sender ? m.sender.split('@')[0] : '';
 	const isOwner = Boolean(
-		global.ownerNumber?.some(o => {
+		(global.owner && Array.isArray(global.owner) && global.owner.some(o => {
 			const clean = String(o).replace(/[^0-9]/g, '');
 			return clean && clean === senderNum;
-		})
+		})) ||
+		(global.ownerNumber && Array.isArray(global.ownerNumber) && global.ownerNumber.some(o => {
+			const clean = String(o).replace(/[^0-9]/g, '');
+			return clean && clean === senderNum;
+		})) ||
+		m.fromMe
 	);
 	const hasActiveMath = Boolean(global.__oguriMathSessionManager?.hasSession(m.chat));
 	if (!isOwner && !hasActiveMath && m.fromMe && isBotSentMessage(m.id || msg?.key?.id)) return;
@@ -357,6 +362,7 @@ async function LoadDataBase(naze, m) {
 		global.db.users[m.sender] = user;
 		global.db.set[botNumber] = setBot;
 		global.db.oguriAI ??= {};
+		global.db.mahiruMemory ??= {};
 		if (!global.db.bank)
     	global.db.bank = {
 		kas: 1000000000,
@@ -495,6 +501,9 @@ if (!Array.isArray(bank.aktivitas))
 				waktusholat: false,
 				
 				oguriAI: {
+				   enable: false,
+				},
+				mahiruAI: {
 				   enable: false,
 				}
 			};

@@ -1,19 +1,14 @@
 /**
- * musume/Oguriai/api.js
+ * OguriCap/ai/api.js
  * -----------------------------------------------------------------------
- * MIGRASI KE apiGlobal.
- *
- * Implementasi asli (3 endpoint Naze dicoba berurutan: /ai/chat ->
- * /ai/message -> /ai/llama) sekarang sepenuhnya ditangani oleh
- * apiGlobal/services/ai/ai.js (fungsi apiOguriChat). File ini hanya
- * menjadi pembungkus tipis supaya `oguriAI.js` (pemanggil satu-satunya
- * fungsi ini) TIDAK PERLU diubah sama sekali — signature & bentuk
- * kembalian (string) dipertahankan persis seperti sebelumnya.
+ * Re-export Mahiru scraper.
  */
 
-import { apiOguriChat } from '../apiGlobal/index.js'
+import { scrapeMahiruChat } from './mahiru/scraper.js';
+import { MAHIRU_BASE_PROMPT } from './mahiru/prompt.js';
 
-export async function chatOguri(messages) {
-	const { result } = await apiOguriChat(messages)
-	return result
+export async function chatOguri(messages = []) {
+	return scrapeMahiruChat(messages, MAHIRU_BASE_PROMPT);
 }
+
+export { scrapeMahiruChat as chatMahiru, scrapeMahiruChat };

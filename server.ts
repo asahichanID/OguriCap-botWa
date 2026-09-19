@@ -5,7 +5,6 @@ import fs from 'fs';
 import { spawn, ChildProcess } from 'child_process';
 import { createServer as createViteServer } from 'vite';
 import { sanitizeSairidev } from './scripts/clean-sairidev.js';
-import { initRpgServer, getRpgHtml } from './game/rpg/index.js';
 import { initUlarTanggaWs, UlarTanggaManager } from './OguriCap/game/ulartanggaWs.js';
 import { getUlarTanggaHtml } from './OguriCap/game/ulartangga.js';
 import { buildTebakBomHTML } from './OguriCap/game/tebakbom.js';
@@ -1078,12 +1077,6 @@ app.get('/api/system/stats', (req, res) => {
   });
 });
 
-// RPG HTML Web Client endpoint
-app.get('/rpg', (req, res) => {
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(getRpgHtml());
-});
-
 // 3D Tebak Bom HTML Web Client endpoint
 app.get(['/tebakbom', '/tb', '/bom', '/minesweeper'], (req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -1145,7 +1138,6 @@ app.get('/catur', (req, res) => {
 
 async function startServer() {
   const httpServer = http.createServer(app);
-  const rpgServer = initRpgServer(httpServer);
   const utWss = initUlarTanggaWs(httpServer);
   const caturWss = CaturManager.init(httpServer);
 
@@ -1161,10 +1153,6 @@ async function startServer() {
       } else if (pathname === '/ws/ulartangga') {
         utWss.handleUpgrade(req, socket, head, (ws: any) => {
           utWss.emit('connection', ws, req);
-        });
-      } else if (pathname === '/ws/rpg') {
-        rpgServer.wss.handleUpgrade(req, socket, head, (ws: any) => {
-          rpgServer.wss.emit('connection', ws, req);
         });
       }
     } catch (err) {

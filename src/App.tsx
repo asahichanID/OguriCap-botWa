@@ -7,7 +7,6 @@ import { ConfigTab } from './components/ConfigTab';
 import { GuideTab } from './components/GuideTab';
 import { SholatTab } from './components/SholatTab';
 import { HdTestTab } from './components/HdTestTab';
-import { RpgTab } from './components/RpgTab';
 import { CaturTab } from './components/CaturTab';
 import { TebakBomTab } from './components/TebakBomTab';
 import { DownloadZipModal } from './components/DownloadZipModal';
@@ -15,7 +14,7 @@ import { BotState, LogEntry, SystemStats } from './types';
 import { safeFetchJson, safeJsonParse } from './lib/safeJson';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'rpg' | 'catur' | 'tebakbom' | 'guide'>('control');
+  const [activeTab, setActiveTab] = useState<'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'catur' | 'tebakbom' | 'guide'>('control');
   const [isDownloadZipOpen, setIsDownloadZipOpen] = useState(false);
   const [botState, setBotState] = useState<BotState>({
     status: 'stopped',
@@ -326,8 +325,6 @@ export default function App() {
         {activeTab === 'sholat' && <SholatTab onShowToast={showToast} />}
 
         {activeTab === 'hdTest' && <HdTestTab />}
-
-        {activeTab === 'rpg' && <RpgTab />}
 
         {activeTab === 'catur' && <CaturTab />}
 

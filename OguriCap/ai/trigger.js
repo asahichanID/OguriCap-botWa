@@ -1,11 +1,7 @@
-export const oguriTrigger = [
-  'oguri',
-  'oguri?',
-  'oguri!',
-  'oguri.',
-  'oguri,',
-  'hai oguri',
-  'halo oguri',
-  'hei oguri',
-  'oi oguri'
-]
+/**
+ * OguriCap/ai/trigger.js
+ * -----------------------------------------------------------------------
+ * Re-export Mahiru trigger.
+ */
+
+export { mahiruTrigger as oguriTrigger, mahiruTrigger, isMahiruTrigger } from './mahiru/trigger.js';
