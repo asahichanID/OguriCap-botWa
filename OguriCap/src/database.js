@@ -17,6 +17,8 @@ class MongoDB {
 		this.options = options
 		this.isConnecting = false
 		this.isReconnecting = false
+		this._fallbackMode = false
+		this._fallbackData = {}
 		
 		mongoose.connection.on('disconnected', async () => {
 			if (this.isReconnecting) return
@@ -56,40 +58,62 @@ class MongoDB {
 			}
 		}
 		this.isConnecting = false;
-		throw new Error('❌ MongoDB connection failed after multiple attempts.');
+		console.warn('⚠️ [AI Studio] MongoDB connection failed — falling back to in-memory store.');
+		this._fallbackMode = true;
 	}
 	
 	read = async () => {
-		if (mongoose.connection.readyState !== 1 && !this.isConnecting) {
-			await this.connect();
+		if (this._fallbackMode || !this.url) {
+			return this._fallbackData || {};
 		}
-		let doc = await this._model.findOne({});
-		if (!doc) {
-			doc = new this._model({ data: {} });
-			await doc.save();
+		if (mongoose.connection.readyState !== 1 && !this.isConnecting) {
+			try {
+				await this.connect();
+			} catch {
+				return this._fallbackData || {};
+			}
+		}
+		if (!this._model) {
+			return this._fallbackData || {};
 		}
 		try {
+			let doc = await this._model.findOne({});
+			if (!doc) {
+				doc = new this._model({ data: {} });
+				await doc.save();
+			}
 			return JSON.parse(doc.data);
 		} catch {
-			return doc.data || {};
+			return this._fallbackData || {};
 		}
 	}
 	
 	write = async (data) => {
 		if (!data) return;
+		this._fallbackData = data;
+		if (this._fallbackMode || !this.url) return;
 		if (mongoose.connection.readyState !== 1 && !this.isConnecting) {
-			await this.connect();
+			try {
+				await this.connect();
+			} catch {
+				return;
+			}
 		}
-		const safeData = JSON.stringify(data, (key, value) => {
-			if (typeof value === 'object' && value !== null && value._id) {
-				return undefined;
-			}
-			if (typeof value === 'bigint') {
-				return value.toString();
-			}
-			return value;
-		});
-		await this._model.findOneAndUpdate({}, { data: safeData }, { upsert: true, new: true, setDefaultsOnInsert: true });
+		if (!this._model) return;
+		try {
+			const safeData = JSON.stringify(data, (key, value) => {
+				if (typeof value === 'object' && value !== null && value._id) {
+					return undefined;
+				}
+				if (typeof value === 'bigint') {
+					return value.toString();
+				}
+				return value;
+			});
+			await this._model.findOneAndUpdate({}, { data: safeData }, { upsert: true, new: true, setDefaultsOnInsert: true });
+		} catch (err) {
+			console.warn('[MongoDB write warning]', err.message);
+		}
 	}
 }
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Save, RotateCcw, Code, CheckCircle, AlertCircle } from 'lucide-react';
+import { Settings, Save, RotateCcw, Code, CheckCircle, AlertCircle, Sparkles, Globe, Key, Cpu } from 'lucide-react';
 import { BotConfig } from '../types';
 import { safeFetchJson } from '../lib/safeJson';
 
@@ -26,6 +26,13 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ onRestartNeeded }) => {
   const [ownersInput, setOwnersInput] = useState('');
   const [prefixesInput, setPrefixesInput] = useState('');
 
+  // Mahiru AI states
+  const [mahiruApiUrl, setMahiruApiUrl] = useState('');
+  const [mahiruApiKey, setMahiruApiKey] = useState('');
+  const [mahiruCustomModel, setMahiruCustomModel] = useState('gpt-4o-mini');
+  const [mahiruGeminiKey, setMahiruGeminiKey] = useState('');
+  const [mahiruGeminiModel, setMahiruGeminiModel] = useState('gemini-2.5-flash');
+
   const fetchConfig = async () => {
     setIsLoading(true);
     setErrorMessage(null);
@@ -44,6 +51,11 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ onRestartNeeded }) => {
       setNumberBot(data.number_bot || '');
       setOwnersInput((data.owners || []).join(', '));
       setPrefixesInput((data.prefixes || []).join(', '));
+      setMahiruApiUrl(data.mahiru_api_url || '');
+      setMahiruApiKey(data.mahiru_api_key || '');
+      setMahiruCustomModel(data.mahiru_custom_model || 'gpt-4o-mini');
+      setMahiruGeminiKey(data.mahiru_gemini_key || '');
+      setMahiruGeminiModel(data.mahiru_gemini_model || 'gemini-2.5-flash');
       setRawText(data.rawContent || '');
     } catch (err: any) {
       setErrorMessage('Gagal memuat konfigurasi: ' + err.message);
@@ -84,6 +96,11 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ onRestartNeeded }) => {
           number_bot: numberBot,
           owners: parsedOwners,
           prefixes: parsedPrefixes,
+          mahiru_api_url: mahiruApiUrl,
+          mahiru_api_key: mahiruApiKey,
+          mahiru_custom_model: mahiruCustomModel,
+          mahiru_gemini_key: mahiruGeminiKey,
+          mahiru_gemini_model: mahiruGeminiModel,
         };
       }
 
@@ -304,6 +321,110 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({ onRestartNeeded }) => {
               placeholder="., !, +"
               className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+          </div>
+
+          {/* Mahiru Shiina AI Configuration Box */}
+          <div className="sm:col-span-2 pt-4 border-t border-slate-200">
+            <div className="p-4 bg-amber-50/60 rounded-2xl border border-amber-200/80 mb-4">
+              <div className="flex items-center gap-2 mb-2 text-amber-900 font-semibold text-sm">
+                <Sparkles className="w-4 h-4 text-amber-600" />
+                <span>Karakter Mahiru Shiina (Pengaturan AI Fleksibel)</span>
+              </div>
+              <p className="text-xs text-amber-800 leading-relaxed mb-2">
+                Konfigurasi engine AI untuk karakter Mahiru Shiina di <code>OguriCap/settings.js</code>:
+              </p>
+              <ul className="text-xs text-amber-700/90 space-y-1 list-disc list-inside">
+                <li><strong>API Pihak Ketiga (Custom URL):</strong> Jika diisi, Mahiru memanggil URL ini (mendukung GET endpoint atau OpenAI-compatible chat completions).</li>
+                <li><strong>Google Gemini Resmi:</strong> Jika URL di atas dikosongkan, Mahiru memakai Google Gemini resmi menggunakan API Key yang Anda masukkan.</li>
+                <li><strong>Scraper Gratis Otomatis:</strong> Jika URL dan API Key kosong, Mahiru tetap aktif menggunakan scraper multi-model gratis.</li>
+              </ul>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Third Party URL */}
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
+                  <Globe className="w-3.5 h-3.5 text-blue-600" />
+                  URL API Pihak Ketiga (apiUrl)
+                </label>
+                <input
+                  type="text"
+                  value={mahiruApiUrl}
+                  onChange={(e) => setMahiruApiUrl(e.target.value)}
+                  placeholder="https://api.example.com/ai?text= atau https://api.openai.com/v1/chat/completions (kosongkan jika pakai Gemini)"
+                  className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+                <span className="text-[11px] text-slate-500 mt-1 block">
+                  Kosongkan jika ingin memakai Google Gemini Resmi atau scraper gratis.
+                </span>
+              </div>
+
+              {/* Third Party Model */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5 text-indigo-600" />
+                  Nama Model Pihak Ketiga (customModel)
+                </label>
+                <input
+                  type="text"
+                  value={mahiruCustomModel}
+                  onChange={(e) => setMahiruCustomModel(e.target.value)}
+                  placeholder="gpt-4o-mini / claude-3-5-sonnet / deepseek-chat"
+                  className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              {/* Third Party API Key (Optional) */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5 text-slate-500" />
+                  API Key Pihak Ketiga (Opsional)
+                </label>
+                <input
+                  type="password"
+                  value={mahiruApiKey}
+                  onChange={(e) => setMahiruApiKey(e.target.value)}
+                  placeholder="Bearer token jika API pihak ketiga membutuhkan autentikasi"
+                  className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              {/* Gemini Official API Key */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5 text-amber-600" />
+                  Google Gemini API Key Resmi (geminiKey)
+                </label>
+                <input
+                  type="password"
+                  value={mahiruGeminiKey}
+                  onChange={(e) => setMahiruGeminiKey(e.target.value)}
+                  placeholder="AIzaSy... (Google AI Studio Key)"
+                  className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+                <span className="text-[11px] text-slate-500 mt-1 block">
+                  Dipakai otomatis jika URL pihak ketiga di atas kosong.
+                </span>
+              </div>
+
+              {/* Gemini Official Model */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5 text-amber-600" />
+                  Model Gemini Resmi (geminiModel)
+                </label>
+                <input
+                  type="text"
+                  value={mahiruGeminiModel}
+                  onChange={(e) => setMahiruGeminiModel(e.target.value)}
+                  placeholder="gemini-2.5-flash"
+                  className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+                <span className="text-[11px] text-slate-500 mt-1 block">
+                  Contoh: gemini-2.5-flash, gemini-3.1-flash-lite.
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       )}

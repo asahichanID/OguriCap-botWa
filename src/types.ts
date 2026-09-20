@@ -30,6 +30,11 @@ export interface BotConfig {
   custom_pairing_code: string;
   owners: string[];
   prefixes: string[];
+  mahiru_api_url?: string;
+  mahiru_api_key?: string;
+  mahiru_custom_model?: string;
+  mahiru_gemini_key?: string;
+  mahiru_gemini_model?: string;
   rawContent?: string;
 }
 

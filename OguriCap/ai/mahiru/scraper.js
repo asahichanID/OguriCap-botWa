@@ -10,25 +10,228 @@
 
 import axios from 'axios';
 import { GoogleGenAI } from '@google/genai';
+import '../../settings.js';
 
-let geminiClient = null;
+let cachedGeminiClients = new Map();
 
-function getGeminiClient() {
-	if (!geminiClient) {
-		const apiKey = process.env.GEMINI_API_KEY || '';
-		if (apiKey) {
-			geminiClient = new GoogleGenAI({ apiKey });
-		}
+/**
+ * Mengambil konfigurasi Mahiru AI dari global.mahiruAI (OguriCap/settings.js),
+ * dengan fallback ke environment variables jika ada.
+ */
+export function getMahiruConfig() {
+	const conf = global.mahiruAI || {};
+	const apiUrl = (conf.apiUrl || global.mahiruApiUrl || global.mahiruUrl || '').trim();
+	const apiKey = (conf.apiKey || global.mahiruApiKey || '').trim();
+	const customModel = (conf.customModel || conf.model || global.mahiruModel || 'gpt-4o-mini').trim();
+	const geminiKey = (conf.geminiKey || global.mahiruGeminiKey || global.geminiKey || process.env.GEMINI_API_KEY || '').trim();
+	const geminiModel = (conf.geminiModel || global.mahiruGeminiModel || 'gemini-2.5-flash').trim();
+
+	return {
+		apiUrl,
+		apiKey,
+		customModel,
+		geminiKey,
+		geminiModel
+	};
+}
+
+function getGeminiClient(customApiKey = '') {
+	const config = getMahiruConfig();
+	const apiKey = customApiKey || config.geminiKey || process.env.GEMINI_API_KEY || '';
+	if (!apiKey) return null;
+
+	if (!cachedGeminiClients.has(apiKey)) {
+		cachedGeminiClients.set(apiKey, new GoogleGenAI({ apiKey }));
 	}
-	return geminiClient;
+	return cachedGeminiClients.get(apiKey);
 }
 
 /**
- * Provider 0: Direct Google Gemini AI Engine (State-of-the-Art context, character roleplay, & speed)
+ * Mengekstrak teks balasan AI secara cerdas dari berbagai format respon API pihak ketiga
+ * (OpenAI, Gemini, Groq, Anthropic proxy, Ryzendesu, Blackbox, Ollama, custom JSON, dll).
  */
-async function generateGeminiDirect(messages = [], systemPrompt = '', timeoutMs = 12000) {
-	const ai = getGeminiClient();
-	if (!ai) throw new Error('GEMINI_API_KEY is not available');
+function extractAiText(data) {
+	if (!data) return '';
+	if (typeof data === 'string') return data.trim();
+	if (Array.isArray(data)) {
+		if (data.length > 0 && typeof data[0] === 'string') return data[0].trim();
+		if (data.length > 0 && data[0]?.content) return String(data[0].content).trim();
+		if (data.length > 0 && data[0]?.text) return String(data[0].text).trim();
+	}
+	if (typeof data === 'object') {
+		// Format OpenAI: choices[0].message.content
+		if (data.choices?.[0]?.message?.content) return String(data.choices[0].message.content).trim();
+		if (data.choices?.[0]?.text) return String(data.choices[0].text).trim();
+
+		// Format Gemini: candidates[0].content.parts[0].text
+		if (data.candidates?.[0]?.content?.parts?.[0]?.text) return String(data.candidates[0].content.parts[0].text).trim();
+
+		// Format API Umum / Bot Wrapper Indonesia
+		if (typeof data.answer === 'string') return data.answer.trim();
+		if (typeof data.result === 'string') return data.result.trim();
+		if (typeof data.result === 'object' && data.result?.text) return String(data.result.text).trim();
+		if (typeof data.response === 'string') return data.response.trim();
+		if (typeof data.reply === 'string') return data.reply.trim();
+		if (typeof data.output === 'string') return data.output.trim();
+		if (typeof data.text === 'string') return data.text.trim();
+		if (typeof data.message === 'string') return data.message.trim();
+		if (typeof data.msg === 'string') return data.msg.trim();
+		if (typeof data.data === 'string') return data.data.trim();
+		if (typeof data.data === 'object') {
+			const nested = extractAiText(data.data);
+			if (nested) return nested;
+		}
+	}
+	return '';
+}
+
+/**
+ * Provider Fleksibel: API Pihak Ketiga (Custom URL di settings.js)
+ * Sangat fleksibel:
+ * - Mendukung GET URL dengan atau tanpa placeholder ({prompt}, {text}, ?text=, dll)
+ * - Mendukung endpoint OpenAI-compatible / Chat Completions (POST)
+ * - Mendukung API key / auth Bearer jika endpoint membutuhkan auth
+ */
+async function generateThirdPartyAI(messages = [], systemPrompt = '', config = {}, timeoutMs = 12000) {
+	const apiUrl = config.apiUrl;
+	if (!apiUrl || typeof apiUrl !== 'string') {
+		throw new Error('API URL pihak ketiga kosong');
+	}
+
+	const historyText = messages
+		.slice(-8)
+		.map(m => `${m.role === 'user' ? 'User' : 'Mahiru Shiina'}: ${m.content}`)
+		.join('\n\n');
+	const fullPrompt = `${systemPrompt}\n\n[Riwayat Percakapan Sebelumnya]:\n${historyText}\n\nLanjutkan percakapan dengan merespon pesan terakhir di atas sebagai Mahiru Shiina:`;
+	const lastUserMsg = [...messages].reverse().find(m => m.role === 'user')?.content || 'Halo Mahiru';
+
+	const authHeaders = {};
+	if (config.apiKey) {
+		const token = config.apiKey.startsWith('Bearer ') ? config.apiKey : `Bearer ${config.apiKey}`;
+		authHeaders['Authorization'] = token;
+		authHeaders['x-api-key'] = config.apiKey;
+	}
+
+	// 1. Cek apakah endpoint adalah format OpenAI-compatible / Chat Completions
+	const isOpenAiEndpoint = /\/chat\/completions|\/v1\b/i.test(apiUrl) && !apiUrl.includes('?text=') && !apiUrl.includes('?prompt=');
+
+	if (isOpenAiEndpoint) {
+		let endpoint = apiUrl;
+		if (!endpoint.includes('/chat/completions')) {
+			endpoint = `${endpoint.replace(/\/+$/, '')}/chat/completions`;
+		}
+
+		const payload = {
+			model: config.customModel || 'gpt-4o-mini',
+			messages: [
+				{ role: 'system', content: systemPrompt },
+				...messages.slice(-8).map(m => ({
+					role: m.role === 'assistant' ? 'assistant' : 'user',
+					content: m.content
+				}))
+			],
+			temperature: 0.8,
+			max_tokens: 300
+		};
+
+		const res = await axios.post(endpoint, payload, {
+			timeout: timeoutMs,
+			headers: {
+				'Content-Type': 'application/json',
+				'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+				...authHeaders
+			}
+		});
+
+		const text = extractAiText(res.data);
+		if (text) return text;
+		throw new Error('Respons dari endpoint OpenAI pihak ketiga kosong atau format tidak sesuai');
+	}
+
+	// 2. URL GET dengan placeholder atau query parameter
+	const hasPlaceholder = /{prompt}|{text}|%text|{query}|{msg}|{q}/i.test(apiUrl);
+	const hasQueryParam = apiUrl.includes('?') || apiUrl.endsWith('=');
+
+	if (hasPlaceholder || hasQueryParam) {
+		let finalUrl = apiUrl;
+		if (hasPlaceholder) {
+			finalUrl = finalUrl
+				.replace(/{prompt}/gi, encodeURIComponent(fullPrompt))
+				.replace(/{text}/gi, encodeURIComponent(fullPrompt))
+				.replace(/%text/gi, encodeURIComponent(fullPrompt))
+				.replace(/{query}/gi, encodeURIComponent(fullPrompt))
+				.replace(/{msg}/gi, encodeURIComponent(fullPrompt))
+				.replace(/{q}/gi, encodeURIComponent(fullPrompt));
+		} else if (finalUrl.endsWith('=')) {
+			finalUrl = `${finalUrl}${encodeURIComponent(fullPrompt)}`;
+		} else if (finalUrl.includes('?')) {
+			finalUrl = `${finalUrl}&text=${encodeURIComponent(fullPrompt)}`;
+		}
+
+		try {
+			const res = await axios.get(finalUrl, {
+				timeout: timeoutMs,
+				headers: {
+					'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+					...authHeaders
+				}
+			});
+
+			const text = extractAiText(res.data);
+			if (text) return text;
+		} catch (getErr) {
+			console.warn(`[MahiruAI:ThirdParty] GET ${finalUrl.slice(0, 50)}... gagal (${getErr.message}), mencoba fallback POST...`);
+		}
+	}
+
+	// 3. Fallback POST Universal (mengirim prompt dalam format JSON fleksibel)
+	const postPayloads = [
+		{
+			model: config.customModel || 'gpt-4o-mini',
+			messages: [
+				{ role: 'system', content: systemPrompt },
+				...messages.slice(-8)
+			],
+			prompt: fullPrompt,
+			text: fullPrompt,
+			query: fullPrompt
+		},
+		{
+			text: fullPrompt,
+			prompt: fullPrompt,
+			content: fullPrompt,
+			q: lastUserMsg
+		}
+	];
+
+	for (const payload of postPayloads) {
+		try {
+			const res = await axios.post(apiUrl, payload, {
+				timeout: timeoutMs,
+				headers: {
+					'Content-Type': 'application/json',
+					'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+					...authHeaders
+				}
+			});
+
+			const text = extractAiText(res.data);
+			if (text) return text;
+		} catch {
+			// lanjut ke format payload berikutnya
+		}
+	}
+
+	throw new Error(`Tidak mendapat balasan teks yang valid dari API pihak ketiga: ${apiUrl}`);
+}
+
+/**
+ * Provider 0: Direct Google Gemini AI Engine Resmi (@google/genai)
+ */
+async function generateGeminiDirect(messages = [], systemPrompt = '', timeoutMs = 12000, config = null) {
+	const conf = config || getMahiruConfig();
+	const ai = getGeminiClient(conf.geminiKey);
+	if (!ai) throw new Error('GEMINI_API_KEY tidak tersedia di settings.js maupun env');
 
 	// Format messages into Gemini multi-turn contents format
 	const contents = messages.slice(-10).map(m => ({
@@ -45,13 +248,15 @@ async function generateGeminiDirect(messages = [], systemPrompt = '', timeoutMs 
 
 	if (contents.length === 0) throw new Error('No user messages found');
 
-	// List of models to try in order of latency and quota availability
+	// Model prioritas: model yang dipilih user di settings.js, lalu fallback resmi lainnya
+	const userModel = conf.geminiModel || 'gemini-3.6-flash';
 	const candidateModels = [
-		'gemini-3.1-flash-lite',
+		userModel,
 		'gemini-3.6-flash',
-		'gemini-3.1-pro-preview',
-		'gemini-flash-latest'
-	];
+		'gemini-3.1-flash-lite',
+		'gemini-2.5-flash',
+		'gemini-1.5-flash'
+	].filter((m, idx, arr) => m && arr.indexOf(m) === idx);
 
 	for (const model of candidateModels) {
 		try {
@@ -365,6 +570,12 @@ function fallbackMahiruDialogue(userMessage = '', userName = 'Teman', isOwner = 
 /**
  * Fungsi utama untuk meminta respon AI Mahiru Shiina.
  *
+ * Prioritas eksekusi:
+ * 1. API Pihak Ketiga (jika apiUrl di settings.js diisi)
+ * 2. Google Gemini Resmi (jika apiUrl kosong, atau pihak ketiga gagal, dan geminiKey / GEMINI_API_KEY tersedia)
+ * 3. Multi-Provider Scraper AI Gratis (jika tidak ada API key)
+ * 4. Fallback Mesin Dialog Mahiru Offline (100% aman tanpa error di chat)
+ *
  * @param {Array<{role: string, content: string}>} messages - Riwayat percakapan
  * @param {string} systemPrompt - Prompt karakter Mahiru
  * @param {Object} [meta] - Metadata user
@@ -374,9 +585,43 @@ function fallbackMahiruDialogue(userMessage = '', userName = 'Teman', isOwner = 
  * @returns {Promise<string>} Balasan Mahiru yang sudah disanitasi
  */
 export async function scrapeMahiruChat(messages = [], systemPrompt = '', { userName = 'Teman', isOwner = false, relationship = null } = {}) {
-	// Urutan percobaan provider AI: Gemini Direct Engine -> Web Gemini -> GPT-4o -> Claude 3.5 -> Blackbox -> Pollinations
-	const providers = [
-		() => generateGeminiDirect(messages, systemPrompt, 10000),
+	const config = getMahiruConfig();
+
+	// [1] Prioritas Utama: API Pihak Ketiga (Custom URL di settings.js)
+	if (config.apiUrl) {
+		try {
+			console.log(`[MahiruAI] Menggunakan API pihak ketiga: ${config.apiUrl}`);
+			const rawResponse = await generateThirdPartyAI(messages, systemPrompt, config, 12000);
+			if (rawResponse && typeof rawResponse === 'string' && rawResponse.trim().length > 0) {
+				const sanitized = sanitizeMahiruResponse(rawResponse, userName, isOwner);
+				if (sanitized && sanitized.length > 5) {
+					return sanitized;
+				}
+			}
+		} catch (err) {
+			console.warn(`[MahiruAI:ThirdParty] Gagal menggunakan API pihak ketiga (${config.apiUrl}): ${err.message}. Beralih ke provider berikutnya...`);
+		}
+	}
+
+	// [2] Prioritas Kedua: Google Gemini Resmi (@google/genai)
+	// Aktif jika ada geminiKey di settings.js ATAU GEMINI_API_KEY di environment
+	const hasGeminiKey = Boolean(config.geminiKey || process.env.GEMINI_API_KEY);
+	if (hasGeminiKey) {
+		try {
+			const rawResponse = await generateGeminiDirect(messages, systemPrompt, 10000, config);
+			if (rawResponse && typeof rawResponse === 'string' && rawResponse.trim().length > 0) {
+				const sanitized = sanitizeMahiruResponse(rawResponse, userName, isOwner);
+				if (sanitized && sanitized.length > 5) {
+					return sanitized;
+				}
+			}
+		} catch (err) {
+			console.warn(`[MahiruAI:GeminiOfficial] Gemini resmi gagal: ${err.message}. Beralih ke scraper gratis...`);
+		}
+	}
+
+	// [3] Prioritas Ketiga: Multi-Provider Scraper AI Gratis
+	const freeProviders = [
 		() => scrapeGeminiFree(messages, systemPrompt, 6000),
 		() => scrapeGpt4oFree(messages, systemPrompt, 6000),
 		() => scrapeClaudeFree(messages, systemPrompt, 6000),
@@ -384,7 +629,7 @@ export async function scrapeMahiruChat(messages = [], systemPrompt = '', { userN
 		() => scrapePollinationsOpenAI(messages, systemPrompt, 7000)
 	];
 
-	for (const provider of providers) {
+	for (const provider of freeProviders) {
 		try {
 			const rawResponse = await provider();
 			if (rawResponse && typeof rawResponse === 'string' && rawResponse.trim().length > 0) {
@@ -394,11 +639,11 @@ export async function scrapeMahiruChat(messages = [], systemPrompt = '', { userN
 				}
 			}
 		} catch (err) {
-			console.warn('[MahiruAI:Scraper] Provider attempt failed, falling back...', err.message);
+			// Lanjut ke provider scraper gratis berikutnya
 		}
 	}
 
-	// Jika semua provider web mengalami kegagalan/timeout, gunakan mesin dialog kontekstual Mahiru
+	// [4] Prioritas Keempat: Dialog Kontekstual Offline Mahiru (100% aman tanpa error)
 	const lastUserMsg = [...messages].reverse().find(m => m.role === 'user')?.content || '';
 	return fallbackMahiruDialogue(lastUserMsg, userName, isOwner, relationship);
 }

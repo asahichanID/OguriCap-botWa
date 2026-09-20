@@ -432,6 +432,13 @@ app.get('/api/bot/config', (req, res) => {
     const ownerMatch = content.match(/global\.owner\s*=\s*\[([^\]]+)\]/);
     const prefixMatch = content.match(/global\.listprefix\s*=\s*\[([^\]]+)\]/);
 
+    // Parse Mahiru AI settings
+    const mahiruApiUrlMatch = content.match(/global\.mahiruAI\s*=\s*\{[\s\S]*?apiUrl\s*:\s*['"]([^'"]*)['"]/);
+    const mahiruApiKeyMatch = content.match(/global\.mahiruAI\s*=\s*\{[\s\S]*?apiKey\s*:\s*['"]([^'"]*)['"]/);
+    const mahiruCustomModelMatch = content.match(/global\.mahiruAI\s*=\s*\{[\s\S]*?customModel\s*:\s*['"]([^'"]*)['"]/);
+    const mahiruGeminiKeyMatch = content.match(/global\.mahiruAI\s*=\s*\{[\s\S]*?geminiKey\s*:\s*['"]([^'"]*)['"]/);
+    const mahiruGeminiModelMatch = content.match(/global\.mahiruAI\s*=\s*\{[\s\S]*?geminiModel\s*:\s*['"]([^'"]*)['"]/);
+
     const owners = ownerMatch
       ? ownerMatch[1].split(',').map((s) => s.trim().replace(/['"]/g, '')).filter(Boolean)
       : [];
@@ -448,6 +455,11 @@ app.get('/api/bot/config', (req, res) => {
       custom_pairing_code: customPairingMatch ? customPairingMatch[1] : 'OGURICAP',
       owners,
       prefixes,
+      mahiru_api_url: mahiruApiUrlMatch ? mahiruApiUrlMatch[1] : '',
+      mahiru_api_key: mahiruApiKeyMatch ? mahiruApiKeyMatch[1] : '',
+      mahiru_custom_model: mahiruCustomModelMatch ? mahiruCustomModelMatch[1] : 'gpt-4o-mini',
+      mahiru_gemini_key: mahiruGeminiKeyMatch ? mahiruGeminiKeyMatch[1] : '',
+      mahiru_gemini_model: mahiruGeminiModelMatch ? mahiruGeminiModelMatch[1] : 'gemini-2.5-flash',
       rawContent: content,
     });
   } catch (err: any) {
@@ -460,7 +472,22 @@ app.post('/api/bot/config', (req, res) => {
     const settingsPath = path.join(OGURI_DIR, 'settings.js');
     let content = fs.readFileSync(settingsPath, 'utf-8');
 
-    const { botname, author, packname, timezone, number_bot, custom_pairing_code, owners, prefixes, rawContent } = req.body || {};
+    const {
+      botname,
+      author,
+      packname,
+      timezone,
+      number_bot,
+      custom_pairing_code,
+      owners,
+      prefixes,
+      mahiru_api_url,
+      mahiru_api_key,
+      mahiru_custom_model,
+      mahiru_gemini_key,
+      mahiru_gemini_model,
+      rawContent,
+    } = req.body || {};
 
     if (rawContent && typeof rawContent === 'string') {
       fs.writeFileSync(settingsPath, rawContent, 'utf-8');
@@ -485,6 +512,21 @@ app.post('/api/bot/config', (req, res) => {
     }
     if (custom_pairing_code !== undefined) {
       content = content.replace(/global\.custom_pairing_code\s*=\s*['"][^'"]*['"]/, `global.custom_pairing_code = '${custom_pairing_code.replace(/'/g, "\\'")}'`);
+    }
+    if (mahiru_api_url !== undefined) {
+      content = content.replace(/(global\.mahiruAI\s*=\s*\{[\s\S]*?apiUrl\s*:\s*['"])[^'"]*(['"])/, `$1${mahiru_api_url.replace(/'/g, "\\'")}$2`);
+    }
+    if (mahiru_api_key !== undefined) {
+      content = content.replace(/(global\.mahiruAI\s*=\s*\{[\s\S]*?apiKey\s*:\s*['"])[^'"]*(['"])/, `$1${mahiru_api_key.replace(/'/g, "\\'")}$2`);
+    }
+    if (mahiru_custom_model !== undefined) {
+      content = content.replace(/(global\.mahiruAI\s*=\s*\{[\s\S]*?customModel\s*:\s*['"])[^'"]*(['"])/, `$1${mahiru_custom_model.replace(/'/g, "\\'")}$2`);
+    }
+    if (mahiru_gemini_key !== undefined) {
+      content = content.replace(/(global\.mahiruAI\s*=\s*\{[\s\S]*?geminiKey\s*:\s*['"])[^'"]*(['"])/, `$1${mahiru_gemini_key.replace(/'/g, "\\'")}$2`);
+    }
+    if (mahiru_gemini_model !== undefined) {
+      content = content.replace(/(global\.mahiruAI\s*=\s*\{[\s\S]*?geminiModel\s*:\s*['"])[^'"]*(['"])/, `$1${mahiru_gemini_model.replace(/'/g, "\\'")}$2`);
     }
     if (Array.isArray(owners)) {
       const formatted = owners.map((o) => `'${o.replace(/'/g, '')}'`).join(', ');

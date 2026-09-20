@@ -1899,15 +1899,39 @@ break
 			break
 			case 'setapikey': case 'setbotapikey': {
 				if (!isCreator) return m.reply(global.mess.owner)
-				if (!text) return m.reply('Mana apikey nya?')
-				if (args[0]?.toLowerCase() == 'neo') {
+				if (!text) return m.reply(`Mana apikey nya?\n\n*Pilihan Penggunaan:*\n• ${prefix + command} nz-xxxx (Naze API)\n• ${prefix + command} neo nsk_xxxx (Neosantara)\n• ${prefix + command} mahiru <GeminiApiKey> (Google Gemini Resmi Mahiru)\n• ${prefix + command} mahiruurl <UrlAPI> (URL API Pihak Ketiga Mahiru)\n• ${prefix + command} mahirumodel <nama_model> (Model pihak ketiga Mahiru)`)
+				const sub = args[0]?.toLowerCase();
+				if (sub == 'neo') {
 					if (!args[1]?.startsWith('nsk_')) return m.reply('Apikey Tidak Valid!\nAmbil Apikey di : https://app.neosantara.xyz/api-keys');
 					let old_key = global.APIKeys[global.APIs.neosantara];
 					await updateSettings({
 						filePath: settingsPath,
 						neosantara: args[1].trim()
 					});
-					m.reply(`*Apikey telah di ganti dari ${old_key} menjadi ${q}*`)
+					m.reply(`*Apikey Neosantara telah diganti dari ${old_key} menjadi ${args[1].trim()}*`)
+				} else if (sub == 'mahiru' || sub == 'gemini') {
+					const newKey = (args[1] || '').trim();
+					let old_key = global.mahiruAI?.geminiKey || '(kosong)';
+					await updateSettings({
+						filePath: settingsPath,
+						mahiruGeminiKey: newKey
+					});
+					m.reply(`*Gemini API Key Mahiru Shiina berhasil diperbarui!*\n\n• Key Lama: ${old_key}\n• Key Baru: ${newKey || '(dikosongkan)'}\n\n_Jika apiUrl kosong, Mahiru AI otomatis memakai Google Gemini resmi._`)
+				} else if (sub == 'mahiruurl' || sub == 'urlmahiru') {
+					const newUrl = text.slice(sub.length).trim();
+					let old_url = global.mahiruAI?.apiUrl || '(kosong)';
+					await updateSettings({
+						filePath: settingsPath,
+						mahiruUrl: newUrl
+					});
+					m.reply(`*URL API Pihak Ketiga Mahiru Shiina berhasil diperbarui!*\n\n• URL Lama: ${old_url}\n• URL Baru: ${newUrl || '(dikosongkan)'}\n\n_Jika URL diisi, Mahiru AI akan mengutamakan endpoint ini._`)
+				} else if (sub == 'mahirumodel') {
+					const newModel = (args[1] || '').trim();
+					await updateSettings({
+						filePath: settingsPath,
+						mahiruModel: newModel
+					});
+					m.reply(`*Model pihak ketiga Mahiru berhasil diubah ke: ${newModel}*`)
 				} else {
 					if (!text.startsWith('nz-')) return m.reply('Apikey Tidak Valid!\nAmbil Apikey di : https://naze.biz.id/profile');
 					let old_key = global.APIKeys[global.APIs.naze];

@@ -263,7 +263,7 @@ const getSizeMedia = async (path) => {
 
 async function updateSettings({
 	filePath, owner, author, apikey, botname, packname,
-	neosantara,
+	neosantara, mahiruUrl, mahiruGeminiKey, mahiruApiKey, mahiruModel,
 	locale, timezone, addPrefix, removePrefix, newMess,
 	addBadword, removeBadword, setLimitRole, setMoneyRole
 }) {
@@ -301,6 +301,22 @@ async function updateSettings({
 			if (neosantara) {
 				content = content.replace(/(global\.APIKeys\s*=\s*\{[\s\S]*?'https:\/\/api\.neosantara\.xyz\/v1'\s*:\s*')[^']*(')/, `$1${neosantara}$2`);
 				if (global.APIKeys) global.APIKeys[global.APIs.neosantara] = neosantara;
+			}
+			if (mahiruUrl !== undefined) {
+				content = content.replace(/(global\.mahiruAI\s*=\s*\{[\s\S]*?apiUrl\s*:\s*['"`]).*?(['"`])/, `$1${mahiruUrl}$2`);
+				if (global.mahiruAI) global.mahiruAI.apiUrl = mahiruUrl;
+			}
+			if (mahiruGeminiKey !== undefined) {
+				content = content.replace(/(global\.mahiruAI\s*=\s*\{[\s\S]*?geminiKey\s*:\s*['"`]).*?(['"`])/, `$1${mahiruGeminiKey}$2`);
+				if (global.mahiruAI) global.mahiruAI.geminiKey = mahiruGeminiKey;
+			}
+			if (mahiruApiKey !== undefined) {
+				content = content.replace(/(global\.mahiruAI\s*=\s*\{[\s\S]*?apiKey\s*:\s*['"`]).*?(['"`])/, `$1${mahiruApiKey}$2`);
+				if (global.mahiruAI) global.mahiruAI.apiKey = mahiruApiKey;
+			}
+			if (mahiruModel !== undefined) {
+				content = content.replace(/(global\.mahiruAI\s*=\s*\{[\s\S]*?customModel\s*:\s*['"`]).*?(['"`])/, `$1${mahiruModel}$2`);
+				if (global.mahiruAI) global.mahiruAI.customModel = mahiruModel;
 			}
 			if (setLimitRole) {
 				const { role, value } = setLimitRole;

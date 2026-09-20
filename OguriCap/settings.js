@@ -1,8 +1,10 @@
 import fs from 'fs';
+import path from 'path';
 import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /*
 	* Create By Naze
@@ -27,11 +29,14 @@ global.pairing_code = true
 global.number_bot = '' // Kalo pake panel bisa masukin nomer di sini, jika belum ambil session. Format : '628xx'
 global.custom_pairing_code = '' // Kosongkan agar menggunakan kode pairing standar resmi Baileys (paling stabil & kompatibel)
 
+const thumbPath = path.join(__dirname, 'src/media/naze.png');
+const fakePdfPath = path.join(__dirname, 'src/media/fake.pdf');
+
 global.fake = {
 	anonim: 'https://telegra.ph/file/95670d63378f7f4210f03.png',
 	thumbnailUrl: 'https://telegra.ph/file/fe4843a1261fc414542c4.jpg',
-	thumbnail: fs.readFileSync('./src/media/naze.png'),
-	docs: fs.readFileSync('./src/media/fake.pdf'),
+	thumbnail: fs.existsSync(thumbPath) ? fs.readFileSync(thumbPath) : Buffer.alloc(0),
+	docs: fs.existsSync(fakePdfPath) ? fs.readFileSync(fakePdfPath) : Buffer.alloc(0),
 	listfakedocs: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/vnd.openxmlformats-officedocument.presentationml.presentation','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/pdf'],
 }
 
@@ -85,6 +90,35 @@ global.APIs = {
 global.APIKeys = {
 	'https://api.naze.biz.id': 'nz-880c23d4fd',
 	'https://api.neosantara.xyz/v1': 'API_KEY_NEOSANTARA_AI',
+}
+
+//~~~~~~~~~~~~< MAHIRU SHIINA AI (SETTINGS) >~~~~~~~~~~~~\\
+/*
+ * PENGATURAN API AI KARAKTER MAHIRU SHIINA:
+ * 
+ * 1. Pake API Pihak Ketiga (Custom API URL):
+ *    - Tempel URL API di 'apiUrl'. Sangat fleksibel!
+ *    - Bisa URL GET langsung (contoh: 'https://api.ryzendesu.vip/api/ai/gpt4o?text=')
+ *    - Bisa URL dengan placeholder (contoh: 'https://api.example.com/chat?text={prompt}')
+ *    - Bisa endpoint OpenAI-compatible (contoh: 'https://api.groq.com/openai/v1/chat/completions')
+ *    - Jika TIDAK mau pakai API pihak ketiga, CUKUP KOSONGKAN ('').
+ * 
+ * 2. Pake Google Gemini Resmi (Official API Key):
+ *    - Kosongkan 'apiUrl' di atas, lalu masukkan apikey Gemini resmi di 'geminiKey'.
+ *    - Otomatis Mahiru AI akan memakai engine resmi Google Gemini (@google/genai).
+ * 
+ * 3. Fallback Otomatis:
+ *    - Jika 'apiUrl' & 'geminiKey' kosong, bot otomatis memakai multi-provider scraper AI gratis.
+ */
+global.mahiruAI = {
+	// [1] API Pihak Ketiga (URL Luar)
+	apiUrl: '', // Tempel URL API pihak ketiga di sini. Kosongkan jika tidak ingin memakai API pihak ketiga.
+	apiKey: '', // API key pihak ketiga (jika butuh header auth / Bearer). Kosongkan jika gratis.
+	customModel: 'gpt-4o-mini', // Model untuk endpoint pihak ketiga (contoh: 'gpt-4o', 'claude-3-5-sonnet', dll).
+
+	// [2] Google Gemini Resmi (Official API)
+	geminiKey: '', // Masukkan API Key Gemini dari Google AI Studio (format: 'AIzaSy...'). Kosongkan jika pakai env / fallback.
+	geminiModel: 'gemini-3.6-flash', // Pilihan model Gemini resmi (contoh: 'gemini-3.6-flash', 'gemini-3.1-flash-lite').
 }
 
 // Lainnya
