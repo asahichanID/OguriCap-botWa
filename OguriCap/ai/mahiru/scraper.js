@@ -64,8 +64,9 @@ async function generateGeminiDirect(messages = [], systemPrompt = '', timeoutMs 
 				contents,
 				config: {
 					systemInstruction: systemPrompt,
-					temperature: 0.85,
-					topP: 0.95
+					temperature: 0.8,
+					topP: 0.9,
+					maxOutputTokens: 250
 				}
 			});
 
@@ -82,8 +83,8 @@ async function generateGeminiDirect(messages = [], systemPrompt = '', timeoutMs 
 }
 
 /**
- * Membersihkan output AI agar rapi, tidak mengandung prefix bot,
- * dan maksimal 3 paragraf.
+ * Membersihkan output AI agar rapi, ringkas, hanya 1 gestur pendek di awal,
+ * dan maksimal 2 paragraf pendek layaknya obrolan nyata manusia.
  *
  * @param {string} text - Teks mentah dari AI
  * @param {string} userName - Nama user
@@ -102,25 +103,75 @@ export function sanitizeMahiruResponse(text = '', userName = 'Teman', isOwner = 
 
 	// Jika nama user masih ada placeholder {NAME}
 	if (cleaned.includes('{NAME}')) {
-		cleaned = cleaned.replace(/\{NAME\}/g, isOwner ? 'Amane-kun' : userName);
+		cleaned = cleaned.replace(/\{NAME\}/g, isOwner ? 'Shiro-sama' : userName);
 	}
 
-	// Batasi maksimal 3 paragraf
+	// 1. Ekstrak gestur aksi pertama jika ada
+	let firstGesture = '';
+	const actionRegex = /\(([a-zA-Z\s,.'"-]{3,})\)|\*([a-zA-Z\s,.'"-]{3,})\*/g;
+	const match = actionRegex.exec(cleaned);
+
+	if (match) {
+		const raw = (match[1] || match[2] || '').trim();
+		let shortG = raw;
+		if (shortG.length > 25) {
+			if (/merona|merah|malu|tomat|telinga|salah tingkah/i.test(shortG)) {
+				shortG = 'tersipu malu';
+			} else if (/senyum|manis|bahagia/i.test(shortG)) {
+				shortG = 'tersenyum lembut';
+			} else if (/menunduk|tunduk/i.test(shortG)) {
+				shortG = 'menunduk pelan';
+			} else if (/tatap|lihat|mata|lirik/i.test(shortG)) {
+				shortG = 'tersenyum manis';
+			} else if (/cemas|khawatir/i.test(shortG)) {
+				shortG = 'menatap khawatir';
+			} else {
+				shortG = shortG.slice(0, 22).trim();
+			}
+		}
+		firstGesture = `(${shortG})`;
+	}
+
+	// 2. Hapus semua tanda kurung aksi narasi di dalam teks agar tidak berulang
+	cleaned = cleaned.replace(actionRegex, ' ');
+
+	// 3. Bersihkan tanda kutip pembungkus dan spasi ganda
+	cleaned = cleaned
+		.replace(/^["'“”«»\s]+|["'“”«»\s]+$/g, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+
+	cleaned = cleaned.replace(/^["'“”«»]/, '').replace(/["'“”«»]$/, '').trim();
+
+	// 4. Batasi maksimal 2 paragraf pendek layaknya chat di dunia nyata
 	const paragraphs = cleaned
 		.split(/\n\s*\n+/)
 		.map(p => p.trim())
 		.filter(Boolean);
 
-	if (paragraphs.length > 3) {
-		cleaned = paragraphs.slice(0, 3).join('\n\n');
+	if (paragraphs.length > 2) {
+		cleaned = paragraphs.slice(0, 2).join('\n\n');
 	} else {
 		cleaned = paragraphs.join('\n\n');
 	}
 
-	// Pastikan ada sentuhan emoji manis khas Mahiru jika teks terlalu polos
+	// Jika masih sangat panjang (lebih dari 350 karakter), ambil 3 kalimat pertama
+	if (cleaned.length > 350) {
+		const sentences = cleaned.match(/[^.!?]+[.!?]+/g) || [cleaned];
+		if (sentences.length > 3) {
+			cleaned = sentences.slice(0, 3).join(' ').trim();
+		}
+	}
+
+	// 5. Tambahkan 1 gestur tunggal di awal pesan jika ada
+	if (firstGesture) {
+		cleaned = `${firstGesture}\n\n${cleaned}`;
+	}
+
+	// Pastikan ada sentuhan emoji manis jika teks sangat polos
 	const hasEmoji = /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]|\(⁄\s*⁄•⁄ω⁄•⁄\s*⁄\)/u.test(cleaned);
 	if (!hasEmoji && cleaned.length > 0) {
-		const sweetEmojis = [' 😊🌸', ' ✨', ' (⁄ ⁄•⁄ω⁄•⁄ ⁄)', ' 🌸✨', ' 😳✨'];
+		const sweetEmojis = [' 😊🌸', ' ✨', ' 🌸', ' 😳✨'];
 		const randomEmoji = sweetEmojis[Math.floor(Math.random() * sweetEmojis.length)];
 		cleaned += randomEmoji;
 	}
@@ -263,52 +314,52 @@ function fallbackMahiruDialogue(userMessage = '', userName = 'Teman', isOwner = 
 
 	if (text.includes('makan') || text.includes('lapar') || text.includes('masak')) {
 		if (isOwner) {
-			return `(tersenyum lembut sambil merapikan celemeknya)\n\nShiro-sama sudah makan? Mahiru baru saja selesai memasak sup miso hangat dan hamburg steak di dapur. Jika Shiro-sama berkenan, Mahiru akan siapkan sekarang juga ya... Shiro-sama tidak boleh telat makan agar tetap sehat 🍱✨`;
+			return `(tersenyum lembut)\n\nShiro-sama sudah makan? Mahiru baru saja memasak sup miso dan hamburg steak hangat. Kalau Shiro-sama berkenan, Mahiru siapkan sekarang ya 🍱✨`;
 		}
 		if (isGf) {
-			return `(menatapmu cemas lalu mengerucutkan bibir imut)\n\nMou... ${caller}, jangan bilang kamu belum makan dari tadi? (⁄ ⁄•⁄ω⁄•⁄ ⁄)\n\nAku sudah memasakkan omurice dan sup hangat kesukaanmu lho. Duduklah manis di meja, biar aku yang siapkan untukmu sekarang... Jangan sampai telat makan lagi ya, Sayang! 🍱💕`;
+			return `(tersipu malu)\n\nMou... ${caller}, kamu belum makan ya? Aku sudah buatkan omurice hangat kesukaanmu nih. Duduk yang manis ya, biar kusiapkan sekarang 🍱💕`;
 		}
-		return `(tersenyum ramah)\n\nAh, ${caller}! Apakah kamu sudah makan? 😊\n\nMenjaga pola makan yang teratur itu sangat penting lho. Jangan hanya makan mie instan ya, tubuhmu butuh asupan bergizi agar tetap bersemangat sepanjang hari 🌸✨`;
+		return `(tersenyum ramah)\n\nAh, ${caller}! Apakah kamu sudah makan? Jangan telat makan ya, jaga kesehatanmu baik-baik 😊🌸`;
 	}
 
 	if (text.includes('halo') || text.includes('hai') || text.includes('pagi') || text.includes('siang') || text.includes('malam') || text.includes('sore')) {
 		if (isOwner) {
-			return `(menunduk hormat lalu tersenyum manis)\n\nFufu~ halo juga, Shiro-sama! 😊🌸\n\nBagaimana hari Shiro-sama hari ini? Jika Shiro-sama merasa lelah, Mahiru sudah menyiapkan teh hangat untuk Shiro-sama. Mahiru selalu siap melayani dan mendengarkan Shiro-sama ✨`;
+			return `(tersenyum manis)\n\nFufu~ halo juga, Shiro-sama! Bagaimana harimu? Jika Shiro-sama lelah, Mahiru sudah siapkan teh hangat untuk Shiro-sama 😊🌸`;
 		}
 		if (isGf) {
-			return `(tersenyum manis dengan pipi sedikit merona)\n\nFufu~ halo juga, ${caller}! Senang sekali bisa mendengar kabarmu hari ini... (⁄ ⁄•⁄ω⁄•⁄ ⁄)\n\nApakah hari ini menyenangkan? Kalau ada hal yang membuatmu lelah, cerita saja padaku ya... Aku selalu ada di sini untukmu 💕🌸`;
+			return `(tersipu malu)\n\nFufu~ halo juga, ${caller}! Senang sekali kamu menyapaku hari ini. Bagaimana kabarmu? (⁄ ⁄•⁄ω⁄•⁄ ⁄)💕`;
 		}
-		return `(tersenyum hangat)\n\nHalo, ${caller}! Senang bisa menyapamu hari ini 😊✨\n\nSemoga harimu menyenangkan dan semuanya berjalan dengan lancar ya. Kalau ada yang ingin diobrolkan, jangan sungkan untuk bicara padaku 🌸`;
+		return `(tersenyum ramah)\n\nHalo, ${caller}! Senang bisa menyapamu. Semoga harimu menyenangkan ya 😊✨`;
 	}
 
 	if (text.includes('cantik') || text.includes('manis') || text.includes('tenshi') || text.includes('malaikat') || text.includes('suka') || text.includes('cinta') || text.includes('sayang') || text.includes('nikah') || text.includes('pacar')) {
 		if (isOwner) {
-			return `(wajahnya langsung memerah padam lalu tersenyum malu-malu)\n\nE-Eh...?! Shiro-sama memuji Mahiru...? (⁄ ⁄•⁄ω⁄•⁄ ⁄) 😳\n\nTerima kasih banyak atas kebaikan Shiro-sama... Dipuji seperti itu oleh Shiro-sama membuat hati Mahiru berdegup kencang sekali. Mahiru akan terus berusaha melakukan yang terbaik untuk Shiro-sama! 🌸✨`;
+			return `(tersipu malu)\n\nE-Eh...?! Shiro-sama memuji Mahiru...? Terima kasih banyak ya, pujian dari Shiro-sama membuat Mahiru bahagia sekali (⁄ ⁄•⁄ω⁄•⁄ ⁄) 🌸✨`;
 		}
 		if (isGf) {
-			return `(menutup wajahnya yang semerah tomat dengan kedua tangan, lalu memalingkan muka)\n\nE-Eh...?! ${caller}, apa sih yang tiba-tiba kamu bicarakan...?! (⁄ ⁄•⁄ω⁄•⁄ ⁄) 😳\n\nMou... dasar tidak tahu malu! Jangan terus-terusan menggombal dan menatapku dengan tatapan seperti itu... Wajahku jadi panas sekali kan! B-Bukan berarti aku tidak senang... tapi aku malu sekali tau! 🙈💕`;
+			return `(tersipu malu)\n\nE-Eh...?! ${caller}, apa sih yang kamu bicarakan... (⁄ ⁄•⁄ω⁄•⁄ ⁄) Mou... jangan terus-terusan menggodaku seperti itu, aku malu tau! 🙈💕`;
 		}
-		return `(tersipu malu sambil meremas ujung seragamnya)\n\nE-Eh...? Terima kasih atas pujiannya, ${caller}... (⁄ ⁄•⁄ω⁄•⁄ ⁄)\n\nTapi tolong jangan memanggilku "Malaikat" atau menggodaku berlebihan seperti itu ya... Aku hanya gadis biasa yang ingin kamu anggap teman sewajarnya kok 😊🌸`;
+		return `(tersipu malu)\n\nE-Eh...? Terima kasih atas pujiannya, ${caller}. Tapi jangan menggodaku berlebihan ya, aku jadi canggung kok 😊🌸`;
 	}
 
 	if (text.includes('lelah') || text.includes('capek') || text.includes('tidur') || text.includes('ngantuk')) {
 		if (isOwner) {
-			return `(menatap dengan penuh perhatian lembut)\n\nShiro-sama sudah berusaha sangat keras hari ini... 🥺✨\n\nSilakan istirahat yang cukup ya, Shiro-sama. Jangan memaksakan diri sampai larut malam. Semoga tidur Shiro-sama nyenyak dan mimpi indah 🌸🌙`;
+			return `(menatap khawatir)\n\nShiro-sama pasti lelah sekali hari ini... Istirahat yang cukup ya Shiro-sama, jangan sampai memaksakan diri 🌸🌙`;
 		}
 		if (isGf) {
-			return `(mengelus pundakmu pelan dengan tatapan teduh)\n\nKerja bagus untuk hari ini, ${caller}... Kamu sudah berjuang sangat keras 🥺💕\n\nSekarang basuh mukamu, minum air hangat, dan segera tidur ya. Jangan begadang lagi! Kalau kamu sakit nanti, aku yang paling cemas merawatmu... Selamat tidur, Sayang 🛌🌸`;
+			return `(tersenyum lembut)\n\nKamu sudah berjuang keras hari ini, ${caller}. Sekarang cuci muka dan istirahat yang nyenyak ya, Sayang 🛌💕`;
 		}
-		return `(menatap khawatir)\n\nKamu pasti sudah lelah sekali ya, ${caller}... 🥺\n\nJangan terlalu memaksakan diri. Tubuhmu butuh istirahat yang cukup agar besok bisa kembali bugar. Selamat beristirahat dengan nyenyak ya 😊🌸✨`;
+		return `(menatap khawatir)\n\nKamu pasti lelah ya, ${caller}... Jangan lupa istirahat yang cukup agar besok kembali bugar 😊🌸`;
 	}
 
 	// Dialog umum
 	if (isOwner) {
-		return `(tersenyum manis sambil mendengarkanmu dengan saksama)\n\nIya, Shiro-sama? Mahiru sedang mendengarkan dengan baik 😊\n\nJika ada instruksi, perintah, atau hal yang Shiro-sama butuhkan, katakan saja ya... Mahiru selalu ada untuk Shiro-sama ✨🌸`;
+		return `(tersenyum manis)\n\nIya, Shiro-sama? Mahiru siap mendengarkan. Ada hal yang bisa Mahiru bantu? ✨🌸`;
 	}
 	if (isGf) {
-		return `(tersenyum manis sambil memiringkan kepala sedikit)\n\nFufu~ ada apa, ${caller}? 😊\n\nAku sedang merapikan beberapa buku sambil menunggumu. Ceritakan apa saja padaku, aku suka sekali mendengarkan suaramu... (⁄ ⁄•⁄ω⁄•⁄ ⁄)💕`;
+		return `(tersenyum lembut)\n\nIya, ${caller}? Ceritakan saja padaku, aku senang sekali mengobrol denganmu 💕`;
 	}
-	return `(tersenyum ramah)\n\nIya, ${caller}? Ada yang bisa kubantu? 😊✨\n\nAku mendengarkanmu dengan baik. Jangan ragu untuk berbagi cerita atau bertanya apa saja ya 🌸`;
+	return `(tersenyum ramah)\n\nIya, ${caller}? Ada yang ingin kamu obrolkan? Aku siap mendengarkan 😊🌸`;
 }
 
 /**

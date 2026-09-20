@@ -55,11 +55,8 @@ export const afk = async (
 
 		user.afkReason = alasan
 
-        let thumb = afkThumb 
-		return naze.sendMessage(
-	m.chat,
-	{
-		text:
+		let thumb = afkThumb
+		const captionText =
 `╭─❖「 🌙 𝐓𝐑𝐀𝐈𝐍𝐄𝐑 𝐁𝐑𝐄𝐀𝐊 🌙 」
 │
 ├ 🐎 Trainer
@@ -74,38 +71,32 @@ export const afk = async (
 ╰─────────────❖
 
 💬 ${uma.name}
+"${uma.quote}"`
 
-"${uma.quote}"`,
-
-		mentions: [
-			m.sender
-
-		],
-
-		contextInfo: {
-			externalAdReply: {
-				title:
-				'🌙 Turu',
-				thumbnail: thumb,
-				mediaType: 1,
-				renderLargerThumbnail: false,
-				showAdAttribution: false,
-				sourceUrl:
-				'https://tracen-academy.jp'
-
-			}
-
+		if (thumb && Buffer.isBuffer(thumb) && thumb.length > 0) {
+			return naze.sendMessage(
+				m.chat,
+				{
+					image: thumb,
+					caption: captionText,
+					mentions: [m.sender]
+				},
+				{
+					quoted: m
+				}
+			)
 		}
 
-	},
-
-	{
-
-		quoted: m
-
-	}
-
-)
+		return naze.sendMessage(
+			m.chat,
+			{
+				text: captionText,
+				mentions: [m.sender]
+			},
+			{
+				quoted: m
+			}
+		)
 
 	}
 
