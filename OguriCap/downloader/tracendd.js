@@ -1,5 +1,6 @@
 import { pickRandom, getUmaQuote } from '../lib/helperquotes.js'
 import { getYtmp4Thumb } from '../lib/mediahelper.js'
+import { handleOguriError } from '../lib/oguri-error.js'
 
 import {
   apiYoutubeDownload,
@@ -38,9 +39,8 @@ export const ytmp3 = async (naze, m, text) => {
 
     console.log('🎧 YTMP3')
   } catch (err) {
-    console.log('❌ YTMP3')
-    console.log(err)
-    return m.reply('❌ Gagal mengunduh audio')
+    console.log('❌ YTMP3', err)
+    return handleOguriError({ err, m, naze, command: 'ytmp3', text })
   }
 }
 
@@ -237,10 +237,9 @@ untuk Trainer Premium.
     console.log('🎥 YTMP4')
 
   } catch (err) {
-    console.log('❌ YTMP4')
-    console.log(err)
+    console.log('❌ YTMP4', err)
     await m.react('❌')
-    return m.reply('❌ Gagal mengirim video')
+    return handleOguriError({ err, m, naze, command: 'ytmp4', text })
   }
 }
 
@@ -543,10 +542,8 @@ const photoList = Array.isArray(images)
 
   } catch (err) {
     console.error('❌ TT →', err)
-
     await m.react('❌')
-
-    m.reply('❌ Gagal mengunduh video TikTok')
+    return handleOguriError({ err, m, naze, command: 'tiktok', text })
   }
 }
 
@@ -579,9 +576,8 @@ export const ttmp3 = async (naze, m, text) => {
 
     console.log('🎵 TTMP3')
   } catch (err) {
-    console.log('❌ TTMP3')
-    console.log(err)
-    return m.reply('❌ Gagal mengirim audio')
+    console.log('❌ TTMP3', err)
+    return handleOguriError({ err, m, naze, command: 'ttmp3', text })
   }
 }
 
@@ -745,7 +741,7 @@ export const instagram = async (naze, m, text) => {
     } catch (error) {
         console.error('❌ IG →', error)
         await m.react('❌')
-        m.reply(global.mess.fail)
+        return handleOguriError({ err: error, m, naze, command: 'instagram', text })
     }
 }
 
@@ -873,7 +869,7 @@ const teks = [
 */
   } catch (e) {
     console.error('💥 ERROR CARI SPOTIFY →', e)
-    m.reply('❌ Maaf Oguri sedang kesulitan mengambil data~')
+    return handleOguriError({ err: e, m, naze: conn, command: 'spotify', text })
   }
 }
 
@@ -892,12 +888,12 @@ export const unduhSpotify = async (conn, m, urlLagu) => {
       data = res.result
       provider = res.provider || 'Unknown'
       console.log(`🎵 SPOTIFY DL: Berhasil lewat ${provider}`)
-    } catch {
-      return m.reply('❌ Oguri gagal mengambil audio lagu ini, coba lagi nanti ya~')
+    } catch (errDl) {
+      return handleOguriError({ err: errDl, m, naze: conn, command: 'spotify', text: urlLagu })
     }
 
     if (!data?.url) {
-      return m.reply('❌ Oguri gagal mengambil audio lagu ini, coba lagi nanti ya~')
+      return handleOguriError({ err: new Error('Audio Spotify tidak ditemukan'), m, naze: conn, command: 'spotify', text: urlLagu })
     }
 
       const meta = data.metadata || data
@@ -970,6 +966,6 @@ export const unduhSpotify = async (conn, m, urlLagu) => {
 
   } catch (e) {
     console.error('💥 ERROR UNDUH SPOTIFY →', e)
-    m.reply('❌ Gagal mengunduh lagu, coba link lain ya~')
+    return handleOguriError({ err: e, m, naze: conn, command: 'spotify', text: urlLagu })
   }
 }

@@ -41,6 +41,7 @@ import { exec, spawn, execSync } from 'child_process';
 import { generateWAMessageContent, jidNormalizedUser, getContentType } from 'baileys';
 
 import 'moment/min/locales.js';
+import { handleOguriError } from './lib/oguri-error.js';
 import TicTacToe from './lib/tictactoe.js';
 import { antiSpam } from './src/antispam.js';
 import { allowAutoResponse, allowModAlert, isBotSentMessage } from './src/botGuard.js';
@@ -4108,7 +4109,7 @@ Select Bot Settings:
 					}
 				} catch (e) {
 					console.log(e)
-					m.reply(global.mess.fail)
+					return handleOguriError({ err: e, m, naze, command, text })
 				}
 			}
 			break
@@ -4124,7 +4125,7 @@ Select Bot Settings:
 					}
 				} catch (err) {
 					console.log('[brat] Error:', err);
-					m.reply(global.mess.fail);
+					return handleOguriError({ err, m, naze, command: 'brat', text })
 				}
 			}
 			break
@@ -4564,7 +4565,7 @@ break
 						setLimit(m, db)
 					}
 				} catch (e) {
-					m.reply('Server wallpaper sedang offline!')
+					return handleOguriError({ err: e, m, naze, command: 'wallpaper', text })
 				}
 			}
 			break
@@ -4577,7 +4578,7 @@ break
 					await m.reply({ audio: { url: anu.result.populated.media[result.media.audio[0]].url }, fileName: result.slug + '.mp3', mimetype: 'audio/mpeg' })
 					setLimit(m, db)
 				} catch (e) {
-					m.reply('Audio tidak ditemukan!')
+					return handleOguriError({ err: e, m, naze, command: 'ringtone', text })
 				}
 			}
 			break
@@ -4812,7 +4813,7 @@ break
 					}
 					setLimit(m, db)
 				} catch (e) {
-					m.reply(global.mess.fail)
+					return handleOguriError({ err: e, m, naze, command: 'facebook', text })
 				}
 			}
 			break
@@ -4825,7 +4826,7 @@ break
 					await naze.sendMedia(m.chat, res.link, res.filename, `*MEDIAFIRE DOWNLOADER*\n\n*${setv} Name* : ${res.filename}\n*${setv} Size* : ${res.size}`, m)
 					setLimit(m, db)
 				} catch (e) {
-					m.reply(global.mess.fail)
+					return handleOguriError({ err: e, m, naze, command: 'mediafire', text })
 				}
 			}
 			break
@@ -4857,7 +4858,7 @@ break
 					setLimit(m, db)
 				} catch (e) {
 					console.log(e)
-					m.reply(global.mess.fail)
+					return handleOguriError({ err: e, m, naze, command: 'spotifydl', text })
 				}
 			}
 			break
@@ -6675,37 +6676,17 @@ break
 			}
 		}
 	} catch (e) {
-		console.log(e);
-		if (e?.message?.includes('No sessions') || e?.message?.includes('ffmpeg exited with code') || e?.code === 'ERR_FR_MAX_BODY_LENGTH_EXCEEDED' || e?.message?.includes('maxBodyLength limit') || e?.message?.includes('rate-overlimit')) return;
-		const errorKey = e?.code || e?.name || e?.message?.slice(0, 100) || 'unknown_error';
-		const now = Date.now();
-		if (!errorCache[errorKey]) errorCache[errorKey] = [];
-		errorCache[errorKey] = errorCache[errorKey].filter(ts => now - ts < 600000);
-		if (errorCache[errorKey].length >= 3) return;
-		errorCache[errorKey].push(now);
-		const isAxiosError = e?.isAxiosError || !!e?.response; 
-		const statusCode = e?.response?.status || e?.statusCode || e?.data;
-		const errorUrl = e?.config?.url || e?.request?.host || '';
-		if (statusCode === 500) {
-			m.reply('Server API Error: Terjadi gangguan pada server tujuan.');
-		} else if (statusCode === 429) {
-			if (errorUrl.includes('api.naze.biz.id')) {
-				return m.reply('Limit Reached: ' + mess.key);
-			} else m.reply('Limit Reached (Sistem/WA): Terlalu banyak permintaan.\nLog Error Telah dikirim ke Owner');
-		} else if (statusCode === 403) {
-			if (isAxiosError) {
-				if (errorUrl.includes('api.naze.biz.id')) {
-					return m.reply('Akses Khusus Premium!');
-				} else m.reply('API Error: Akses ke server API ditolak (403 Forbidden).');
-			} else console.log(chalk.yellowBright('[SYSTEM] Akses grup ditolak (Baileys 403 / Forbidden).'));
-		} else if (statusCode === 401) {
-			if (isAxiosError) {
-				if (errorUrl.includes('api.naze.biz.id')) {
-					return m.reply('Invalid Apikey!');
-				} else m.reply('API Error: Akses ke server API ditolak (401 Unauthorized).');
-			} else console.log(chalk.yellowBright('[SYSTEM] Akses ditolak (401 Unauthorized).'));
-		} else m.reply('Error: ' + (e?.name || e?.code || e?.message || 'Terjadi kesalahan tidak diketahui') + '\nLog Error Telah dikirim ke Owner\n\n');
-		return naze.sendFromOwner(ownerNumber, `Halo sayang, sepertinya ada yang error nih, jangan lupa diperbaiki ya\n\nVersion : *${require('./package.json').version}*\nType : *${m.type || errorKey}*\n\n*Log error:*\n\n` + util.format(e), m, { contextInfo: { isForwarded: true }})
+		return await handleOguriError({
+			err: e,
+			m,
+			naze,
+			command: typeof command !== 'undefined' ? command : '',
+			text: typeof text !== 'undefined' ? text : '',
+			isCmd: typeof isCmd !== 'undefined' ? isCmd : false,
+			db: typeof db !== 'undefined' ? db : global.db,
+			ownerNumber: typeof ownerNumber !== 'undefined' ? ownerNumber : global.owner,
+			prefix: typeof prefix !== 'undefined' ? prefix : '.'
+		});
 	}
 }
 
