@@ -17,30 +17,37 @@ async function ensureSync(conn) {
   const now = Date.now()
   if (!botLock.cache?.synced || now - cache.lastSync > cache.ttl) {
     try {
-      await syncGroups(conn)
-      botLock.cache = { ...(botLock.cache || {}), synced: true }
-      cache.lastSync = now
-      console.log("🔐 [KUNCI] ✅ Sinkronisasi grup berhasil")
-    } catch (e) {
-      console.error("🔐 [KUNCI] ❌ Gagal sinkron →", e.message)
-    }
+      // Jalankan sync dengan safety catch agar tidak memblokir
+      syncGroups(conn).then(() => {
+        botLock.cache = { ...(botLock.cache || {}), synced: true }
+        cache.lastSync = Date.now()
+      }).catch(e => {
+        console.warn("🔐 [KUNCI] Sync warning:", e.message)
+      })
+    } catch {}
   }
 }
 
 /**
  * Tampilkan antarmuka Kunci Grup
  * Mode 1: args[0] === 'semua' / 'all' -> Kunci seluruh grup tanpa sisa
- * Mode 2: default -> Panel kelola grup dengan pemisahan ATAS (grup dibuka) dan BAWAH (grup dikunci)
+ * Mode 2: args[0] === 'ini' / 'here' -> Kunci grup saat ini
+ * Mode 3: args[0] === <angka> -> Kunci grup berdasarkan nomor urut di daftar grup dibuka
+ * Mode 4: args[0] === <jid/nama> -> Kunci grup berdasarkan JID atau nama
+ * Mode 5: default -> Panel kelola grup dengan pemisahan ATAS (grup dibuka) dan BAWAH (grup dikunci)
  */
 export async function tampilkanKunciGrup(conn, m, args = []) {
   try {
-    const mode = (args[0] || "").toLowerCase().trim()
+    const rawMode = (args[0] || "").toLowerCase().trim()
+    const fullQuery = args.join(" ").toLowerCase().trim()
+
+    // Trigger sync di latar belakang
+    ensureSync(conn)
 
     // =================================================================
-    // MODE 1: KUNCI SEMUA GRUP TANPA SISA (.kunci semua / .kuncigrup semua)
+    // MODE 1: KUNCI SEMUA GRUP TANPA SISA (.kunci semua / .lock all)
     // =================================================================
-    if (mode === "semua" || mode === "all") {
-      await ensureSync(conn)
+    if (rawMode === "semua" || rawMode === "all") {
       const listSemua = lockAllGroups()
       const total = listSemua.length
 
@@ -52,44 +59,81 @@ export async function tampilkanKunciGrup(conn, m, args = []) {
         "💾 *Penyimpanan:* PERMANEN (database/locked_groups.json)",
         "",
         "🛑 *Pengaruh Penguncian:*",
-        "• Bot mengabaikan 100% seluruh pesan dan perintah member di SEMUA grup.",
+        "• Bot mengabaikan seluruh pesan dan perintah member di SEMUA grup.",
         "• Bot tidak akan merespon siapapun di grup sampai dibuka kembali oleh Owner.",
-        "• Penguncian ini bersifat *ABADI* (tetap terkunci walau bot mati, server restart, atau sesi login berganti).",
-        "• Khusus Owner tetap bebas menggunakan perintah di grup maupun private chat.",
+        "• Penguncian bersifat *MANDIRI & PERMANEN* (tetap aman meski server/file berubah).",
+        "• Khusus Owner tetap bebas menggunakan perintah di manapun.",
         "",
         "━━━━━━━━━━━━━━━━━━━━━━",
         "💡 *Perintah Terkait:*",
-        "• Ketik *.kunci* untuk melihat status & kelola per-grup.",
-        "• Ketik *.buka semua* untuk membuka kunci seluruh grup sekaligus."
+        "• Ketik *.buka semua* untuk membuka kembali seluruh grup sekaligus.",
+        "• Ketik *.buka ini* atau *.buka <nomor>* untuk membuka grup tertentu."
       ].join("\n")
 
       return conn.sendMessage(m.chat, { text: pesanKunciSemua }, { quoted: m })
     }
 
     // =================================================================
-    // MODE 1B: KUNCI GRUP SAAT INI ATAU VIA JID SPESIFIK
+    // MODE 2: KUNCI GRUP TERTENTU / SAAT INI / VIA NOMOR / JID
     // =================================================================
-    const targetJid = (mode === "ini" || mode === "here")
-      ? (m.isGroup ? m.chat : null)
-      : (mode.includes("@g.us") || /^\d{10,25}/.test(mode) ? cleanJid(mode) : null)
+    let targetJid = null
+    let targetName = "Grup WhatsApp"
+
+    if (rawMode === "ini" || rawMode === "here") {
+      if (m.isGroup) {
+        targetJid = m.chat
+        targetName = m.metadata?.subject || "Grup Ini"
+      } else {
+        return m.reply("❌ Perintah *.kunci ini* hanya bisa digunakan di dalam grup.")
+      }
+    } else if (rawMode.includes("@g.us") || /^\d{10,25}/.test(rawMode)) {
+      targetJid = cleanJid(rawMode)
+    } else if (args.length > 0) {
+      const grupDibuka = getUnlockedGroups() || []
+      const num = parseInt(rawMode, 10)
+      if (!isNaN(num) && num > 0 && num <= grupDibuka.length) {
+        targetJid = grupDibuka[num - 1]?.id
+        targetName = grupDibuka[num - 1]?.name || targetName
+      } else if (fullQuery) {
+        const match = (getAllGroups() || []).find(g => (g.name || "").toLowerCase().includes(fullQuery))
+        if (match) {
+          targetJid = match.id
+          targetName = match.name || targetName
+        }
+      }
+    }
 
     if (targetJid) {
-      await ensureSync(conn)
-      const g = lockGroup(targetJid, m.metadata?.subject || "Grup WhatsApp")
-      return m.reply(
-`🔒 *SUKSES DIKUNCI*
-━━━━━━━━━━━━━━━━━━━━━━
-📛 *Nama Grup* : ${g?.name || "Grup WhatsApp"}
-🆔 *ID Grup*   : ${targetJid}
-✅ Bot sekarang membisukan diri di grup ini sampai dibuka kembali oleh Owner.
-💾 Status tersimpan permanen di database.`
-      )
+      const cleanTarget = cleanJid(targetJid)
+      const g = lockGroup(cleanTarget, targetName)
+      const finalName = g?.name || targetName || "Grup WhatsApp"
+
+      const pesan = [
+        "🔒 *SUKSES DIKUNCI*",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        `📛 *Nama Grup* : ${finalName}`,
+        `🆔 *ID Grup*   : ${cleanTarget}`,
+        "✅ Bot sekarang membisukan diri di grup ini sampai dibuka kembali oleh Owner.",
+        "💾 Status tersimpan mandiri & permanen di database."
+      ].join("\n")
+
+      try {
+        await m.reply(pesan)
+      } catch {
+        await conn.sendMessage(m.chat, { text: pesan }).catch(() => {})
+      }
+
+      if (m.chat !== cleanTarget && cleanTarget.endsWith('@g.us')) {
+        await conn.sendMessage(cleanTarget, {
+          text: "🔒 *PEMBERITAHUAN*\n━━━━━━━━━━━━━━━━━━━━━━\n🛑 Bot telah dikunci oleh Owner dan dinonaktifkan sementara di grup ini."
+        }).catch(() => {})
+      }
+      return
     }
 
     // =================================================================
-    // MODE 2: KELOLA KUNCI GRUP DENGAN PEMISAHAN ATAS & BAWAH (.kunci)
+    // MODE 3: PANEL KELOLA KUNCI GRUP (.kunci)
     // =================================================================
-    await ensureSync(conn)
     const grupDibuka = getUnlockedGroups() || []
     const grupDikunci = getLockedGroups() || []
     const totalGrup = (getAllGroups() || []).length
@@ -140,7 +184,7 @@ export async function tampilkanKunciGrup(conn, m, args = []) {
       `• Total Grup   : ${totalGrup}`,
       `• Grup Dibuka  : ${grupDibuka.length} 🟢`,
       `• Grup Dikunci : ${grupDikunci.length} 🔴`,
-      botLock.allLocked ? "⚠️ *Status Mode:* KUNCI SEMUA (AKTIF)\n" : "",
+      botLock.allLocked ? "⚠️ *Status Global:* SEMUA GRUP DIKUNCI (ALL LOCKED)\n" : "",
       "━━━━━━━━━━━━━━━━━━━━━━",
       "🟢 *DAFTAR GRUP DIBUKA (AKTIF):*",
       listTextDibuka,
@@ -148,37 +192,45 @@ export async function tampilkanKunciGrup(conn, m, args = []) {
       "🔴 *DAFTAR GRUP DIKUNCI:*",
       listTextDikunci,
       "━━━━━━━━━━━━━━━━━━━━━━",
-      "💡 *Panduan Penggunaan:*",
+      "💡 *Opsi Penggunaan Cepat:*",
       "• Klik tombol *📋 KELOLA KUNCI GRUP* di bawah:",
-      "  ↳ *Bagian Atas*: Daftar grup dibuka (klik untuk mengunci).",
-      "  ↳ *Bagian Bawah*: Daftar grup dikunci (klik untuk membuka).",
-      "• Ketik *.kunci semua* untuk langsung mengunci seluruh grup tanpa sisa.",
-      "• Ketik *.buka semua* untuk membuka kunci seluruh grup."
+      "  ↳ *Atas*: Grup dibuka (klik utk mengunci).",
+      "  ↳ *Bawah*: Grup dikunci (klik utk membuka).",
+      "• Ketik *.kunci semua* untuk mengunci seluruh grup.",
+      "• Ketik *.buka semua* untuk membuka seluruh grup.",
+      "• Ketik *.kunci <nomor>* untuk mengunci grup tertentu (misal: *.kunci 1*).",
+      "• Ketik *.buka <nomor>* untuk membuka grup tertentu (misal: *.buka 1*)."
     ].join("\n")
 
-    // 4. Kirim Pesan Interaktif dengan Panel Ngambang (single_select)
-    return conn.sendListMsg(m.chat, {
-      text: textMsg,
-      footer: FOOTER,
-      buttons: [{
-        name: "single_select",
-        buttonParamsJson: {
-          title: "📋 KELOLA KUNCI GRUP",
-          sections: [
-            {
-              title: `🟢 GRUP DIBUKA (${grupDibuka.length}) - KLIK UTK KUNCI`,
-              highlight_label: "DIBUKA",
-              rows: rowsDibuka
-            },
-            {
-              title: `🔴 GRUP DIKUNCI (${grupDikunci.length}) - KLIK UTK BUKA`,
-              highlight_label: "DIKUNCI",
-              rows: rowsDikunci
+    // 4. Kirim Pesan Interaktif dengan fallback teks yang aman
+    try {
+      if (typeof conn.sendListMsg === "function") {
+        return await conn.sendListMsg(m.chat, {
+          text: textMsg,
+          footer: FOOTER,
+          buttons: [{
+            name: "single_select",
+            buttonParamsJson: {
+              title: "📋 KELOLA KUNCI GRUP",
+              sections: [
+                {
+                  title: `🟢 GRUP DIBUKA (${grupDibuka.length}) - KLIK UTK KUNCI`,
+                  highlight_label: "DIBUKA",
+                  rows: rowsDibuka
+                },
+                {
+                  title: `🔴 GRUP DIKUNCI (${grupDikunci.length}) - KLIK UTK BUKA`,
+                  highlight_label: "DIKUNCI",
+                  rows: rowsDikunci
+                }
+              ]
             }
-          ]
-        }
-      }]
-    }, { quoted: m })
+          }]
+        }, { quoted: m })
+      }
+    } catch {}
+
+    return conn.sendMessage(m.chat, { text: textMsg }, { quoted: m })
 
   } catch (e) {
     console.error("🔐 [KUNCI] Error tampilkanKunciGrup:", e.stack || e)
@@ -187,7 +239,7 @@ export async function tampilkanKunciGrup(conn, m, args = []) {
 }
 
 /**
- * Memproses klik tombol interaktif kunci atau buka
+ * Memproses klik tombol interaktif kunci atau buka secara mandiri & instan
  */
 export async function prosesTombolKunci(conn, m) {
   try {

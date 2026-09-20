@@ -5,8 +5,17 @@ import { fileURLToPath } from 'url';
 import moment from 'moment-timezone';
 import { getUmaQuote } from './helperquotes.js';
 
-const oguriMenuThumb = fs.readFileSync('./src/media/ogurimenu.jpeg');
-const oguriCapAudio = fs.readFileSync('./src/media/oguricap.mp3');
+const oguriMenuThumb = fs.existsSync('./src/media/ogurimenu.jpeg')
+  ? fs.readFileSync('./src/media/ogurimenu.jpeg')
+  : fs.existsSync('./OguriCap/src/media/ogurimenu.jpeg')
+  ? fs.readFileSync('./OguriCap/src/media/ogurimenu.jpeg')
+  : Buffer.alloc(0);
+
+const oguriCapAudio = fs.existsSync('./src/media/oguricap.mp3')
+  ? fs.readFileSync('./src/media/oguricap.mp3')
+  : fs.existsSync('./OguriCap/src/media/oguricap.mp3')
+  ? fs.readFileSync('./OguriCap/src/media/oguricap.mp3')
+  : Buffer.alloc(0);
 const __filename = fileURLToPath(import.meta.url);
 
 function getTopMenu(db, prefix, setv) {
@@ -72,7 +81,7 @@ function getMenuSections(prefix) {
         {
           header: '🧠',
           title: 'AI Menu',
-          description: 'Gemini AI, Grok, Claude, DeepSeek & txt2img',
+          description: 'Mahiru Shiina AI, Gemini, Grok, Claude & DeepSeek',
           id: `${prefix}aimenu`
         }
       ]
@@ -350,6 +359,7 @@ ${options.date ? `├ ◦ ᴅᴀᴛᴇ      : ${options.locale_day ? options.loc
   );
 }
 
+export { getNativeMenuButton, getMenuSections, getTopMenu };
 export default setTemplateMenu;
 
 fs.watchFile(__filename, async () => {

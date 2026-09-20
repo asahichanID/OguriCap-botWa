@@ -68,16 +68,18 @@ async function dispatchNazeHandler(naze, m, msg, store) {
 	// 🛡️ ANTI SELF-REPLY & BOT ISOLATION: Jangan pernah memproses pesan yang dikirim oleh proses bot ini
 	if (isBotSentMessage(m.id || msg?.key?.id)) return;
 	const senderNum = m.sender ? m.sender.split('@')[0] : '';
+	const senderNormalized = m.sender ? jidNormalizedUser(m.sender) : '';
 	const isOwner = Boolean(
 		(global.owner && Array.isArray(global.owner) && global.owner.some(o => {
 			const clean = String(o).replace(/[^0-9]/g, '');
-			return clean && clean === senderNum;
+			return clean && (clean === senderNum || senderNormalized.startsWith(clean));
 		})) ||
 		(global.ownerNumber && Array.isArray(global.ownerNumber) && global.ownerNumber.some(o => {
 			const clean = String(o).replace(/[^0-9]/g, '');
-			return clean && clean === senderNum;
+			return clean && (clean === senderNum || senderNormalized.startsWith(clean));
 		})) ||
-		m.fromMe
+		m.fromMe ||
+		m.key?.fromMe
 	);
 	const hasActiveMath = Boolean(global.__oguriMathSessionManager?.hasSession(m.chat));
 	if (!isOwner && !hasActiveMath && m.fromMe && isBotSentMessage(m.id || msg?.key?.id)) return;
@@ -85,7 +87,9 @@ async function dispatchNazeHandler(naze, m, msg, store) {
 		m.interactiveId?.startsWith('lock_') ||
 		m.interactiveId?.startsWith('unlock_') ||
 		m.body?.startsWith('lock_') ||
-		m.body?.startsWith('unlock_')
+		m.body?.startsWith('unlock_') ||
+		m.text?.startsWith('lock_') ||
+		m.text?.startsWith('unlock_')
 	);
 	if (!hasActiveMath && m.fromMe && !m.isCmd && !isButtonAction && !isOwner) return;
 

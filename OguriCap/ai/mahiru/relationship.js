@@ -123,34 +123,43 @@ export function parseOwnerRelationIntent(text = '', mentionedJids = [], quotedSe
 	if (!text || typeof text !== 'string') return null;
 	const lower = text.toLowerCase();
 
-	// Tentukan target JID
+	// Tentukan target JID (dari mention array, quoted sender, atau nomor di dalam teks)
 	let targetJid = null;
 	if (Array.isArray(mentionedJids) && mentionedJids.length > 0) {
 		targetJid = mentionedJids[0];
 	} else if (quotedSender) {
 		targetJid = quotedSender;
+	} else {
+		// Coba ekstrak nomor WhatsApp dari teks (misal @628123456789 atau 628123456789)
+		const numMatch = text.match(/@?(\d{8,16})/);
+		if (numMatch && numMatch[1]) {
+			targetJid = `${numMatch[1]}@s.whatsapp.net`;
+		}
 	}
 
 	// Cek jika perintah hapus relasi
-	const isRemove = /(hapus|cabut|batalkan|putus(in)?|hilangkan)\s+(relasi|hubungan|status|pacar)/i.test(lower) ||
-		/(jangan\s+anggap\s+.*(pacar|kekasih))/i.test(lower);
+	const isRemove = /(hapus|cabut|batalkan|putus(in)?|hilangkan)\s+(relasi|hubungan|status|pacar|suami|istri|tunangan)/i.test(lower) ||
+		/(jangan\s+anggap\s+.*(pacar|kekasih|suami|istri|pasangan))/i.test(lower);
 
 	if (isRemove && targetJid) {
 		return { action: 'remove', targetJid };
 	}
 
 	// Cek kata kunci penetapan relasi
-	const isSetMatch = /(anggap|perlakukan|jadikan|buat)\s+(dia|mereka|kamu|kak|user|orang\s+ini|.*)?\s*(layaknya|sebagai|jadi)?\s*(pacar|kekasih|sahabat|adik|kakak|tunangan|istri|suami)/i.test(lower) ||
-		/(mulai\s+sekarang\s+.*(pacar|kekasih))/i.test(lower) ||
-		/(pacaran\s+sama\s+.*)/i.test(lower);
+	const isSetMatch = /(anggap|perlakukan|jadikan|buat|set|tetapkan)\s+(dia|mereka|kamu|kak|user|orang\s+ini|.*)?\s*(layaknya|sebagai|jadi)?\s*(pacar|kekasih|sahabat|adik|kakak|tunangan|istri|suami|pasangan)/i.test(lower) ||
+		/(mulai\s+sekarang\s+.*(pacar|kekasih|suami|istri|tunangan|pasangan))/i.test(lower) ||
+		/(pacaran\s+sama\s+.*|nikah\s+sama\s+.*|suami\s+kamu\s+.*|suamimu\s+.*)/i.test(lower);
 
 	if (isSetMatch) {
 		let role = 'pacar';
-		if (/sahabat/i.test(lower)) role = 'sahabat';
+		if (/suami/i.test(lower)) role = 'suami';
+		else if (/istri/i.test(lower)) role = 'istri';
+		else if (/tunangan/i.test(lower)) role = 'tunangan';
+		else if (/pacar|kekasih/i.test(lower)) role = 'pacar';
+		else if (/pasangan/i.test(lower)) role = 'pasangan';
+		else if (/sahabat/i.test(lower)) role = 'sahabat';
 		else if (/adik/i.test(lower)) role = 'adik';
 		else if (/kakak/i.test(lower)) role = 'kakak';
-		else if (/tunangan/i.test(lower)) role = 'tunangan';
-		else if (/istri|suami/i.test(lower)) role = 'pasangan';
 
 		// Jika targetJid ditemukan
 		if (targetJid) {

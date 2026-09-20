@@ -45,7 +45,7 @@ import TicTacToe from './lib/tictactoe.js';
 import { antiSpam } from './src/antispam.js';
 import { allowAutoResponse, allowModAlert, isBotSentMessage } from './src/botGuard.js';
 import { ytMp4, ytMp3 } from './lib/scraper.js';
-import setTemplateMenu from './lib/template_menu.js';
+import setTemplateMenu, { getNativeMenuButton } from './lib/template_menu.js';
 import { toAudio, toPTT, toVideo } from './lib/converter.js';
 import { GroupUpdate, LoadDataBase } from './src/message.js';
 import { getSholatConfig, updateSholatGroupState, generateRamadanPrayerCanvas, getRealtimePrayerSchedule, buildPrayerMessageCaption, sendPrayerNotification, sendPrayerAudioVN, ADZAN_REGULAR_PATH, ADZAN_SUBUH_PATH } from './lib/sholat.js';
@@ -57,6 +57,13 @@ import { kirimSonic } from './game/sonic.js';
 import { kirimTebakBom } from './game/tebakbom.js';
 import { verifyAndClaimCode, renderLeaderboardCanvas, getTopLeaderboard } from './game/tebakbomData.js';
 import { kirimUlarTangga } from './game/ulartangga.js';
+import { kirimAngryBirds } from './game/angry_birds.js';
+import { kirimBalap } from './game/balap.js';
+import { kirimDino } from './game/dino.js';
+import { kirimSnake } from './game/snake.js';
+import { kirimStickman } from './game/stickman.js';
+import { kirimSuperMario } from './game/supermario.js';
+import { kirimTetris } from './game/tetris.js';
 import { getRandom, getBuffer, fetchJson, runtime, clockString, sleep, isUrl, formatDate, formatp, generateProfilePicture, errorCache, normalize, normalizeAnswer, runUpdate, updateSettings, parseMention, fixBytes, similarity, pickRandom, encodeToLetters, tarBackup } from './lib/function.js';
 import {
 	apiInstagramDownload,
@@ -127,7 +134,7 @@ import { ytmp3, ytmp4, tiktok, ttmp3, cariSpotify, unduhSpotify, instagram } fro
 import { audit, bansos } from './lib/economy/academy.js'
 import { banktracen, cekbank } from './lib/economy/banktracen.js'
 import { autoSound } from './downloader/sounds.js'
-import { mahiruAI, clearMahiruMemory, getMahiruRelationship, setMahiruRelationship, removeMahiruRelationship, listMahiruRelationships } from './ai/mahiru/index.js'
+import { mahiruAI, clearMahiruMemory, getMahiruRelationship, setMahiruRelationship, removeMahiruRelationship, listMahiruRelationships, isReplyToMahiru } from './ai/mahiru/index.js'
 import { isMahiruTrigger } from './ai/mahiru/trigger.js'
 import { tampilkanKunciGrup, prosesTombolKunci } from "./group/kuncigrup.js"
 import { tampilkanBukaGrup, prosesTombolBuka } from "./group/bukagrup.js"
@@ -214,15 +221,17 @@ const naze = async (naze, m, msg, store) => {
 		
 		const budy = (typeof m.text == 'string' ? m.text : '')
 		const senderNum = m.sender ? m.sender.split('@')[0] : '';
+		const senderNormalized = m.sender ? jidNormalizedUser(m.sender) : '';
 		const isCreator = global.isOwner = Boolean(
-			m.key.fromMe ||
+			m.key?.fromMe ||
+			m.fromMe ||
 			ownerNumber.some(owner => {
 				const cleanOwner = String(owner).replace(/[^0-9]/g, '');
-				if (cleanOwner && cleanOwner === senderNum) return true;
-				const ownerJid = owner.includes('@') ? owner : owner + '@s.whatsapp.net';
-				if (m.sender === ownerJid) return true;
-				const findJid = naze.findJidByLid ? naze.findJidByLid(jidNormalizedUser(ownerJid), store, true) : null;
-				return findJid && findJid === m.sender;
+				if (cleanOwner && (cleanOwner === senderNum || senderNormalized.startsWith(cleanOwner))) return true;
+				const ownerJid = owner.includes('@') ? jidNormalizedUser(owner) : owner + '@s.whatsapp.net';
+				if (senderNormalized === ownerJid || m.sender === ownerJid) return true;
+				const findJid = naze.findJidByLid ? naze.findJidByLid(ownerJid, store, true) : null;
+				return findJid && (findJid === m.sender || findJid === senderNormalized);
 			})
 		);
 		// Hapus regex emojiMatch agar emoji dekoratif (seperti 💰, 🎮, 🏆) tidak disangka sebagai command prefix!
@@ -263,25 +272,7 @@ const naze = async (naze, m, msg, store) => {
 		if (!isCreator && !hasActiveMath && isSenderBot) {
 			return;
 		}
-		const isLockAction = Boolean(
-			(m.interactiveId && (m.interactiveId.startsWith('lock_') || m.interactiveId.startsWith('unlock_'))) ||
-			(m.body && (m.body.startsWith('lock_') || m.body.startsWith('unlock_'))) ||
-			(body && (body.startsWith('lock_') || body.startsWith('unlock_')))
-		);
 
-		const isMahiruInteraction = isMahiruTrigger(body || budy || m.text) || Boolean(m.quoted && (m.quoted.fromMe || isBotSentMessage(m.quoted.id)));
-
-		// Jika pesan dari akun bot sendiri (fromMe) tapi bukan command ber-prefix resmi, eval owner, tombol kunci, kuis math, atau interaksi Mahiru AI, buang
-		if (!hasActiveMath && m.key.fromMe && !isCmd && !isOwnerEval && !isLockAction && !isMahiruInteraction) {
-			return;
-		}
-		
-	// ==========================================
-	// PRE-CHECK: PROTEKSI GRUP YANG DIKUNCI
-	// ==========================================
-		if (m.isGroup && isLocked(m.chat) && !isCreator) {
-			return; // Bot mengabaikan pesan sepenuhnya jika grup dikunci oleh owner
-		}
 		// ==========================================
 		// INTERSEPTOR EVENT KLIK TOMBOL LIST NATIVE (KUNCI / BUKA)
 		// ==========================================
@@ -306,6 +297,26 @@ const naze = async (naze, m, msg, store) => {
 					return;
 				}
 			} catch {}
+		}
+
+		const isLockAction = Boolean(
+			(m.interactiveId && (m.interactiveId.startsWith('lock_') || m.interactiveId.startsWith('unlock_'))) ||
+			(m.body && (m.body.startsWith('lock_') || m.body.startsWith('unlock_'))) ||
+			(body && (body.startsWith('lock_') || body.startsWith('unlock_')))
+		);
+
+		const isMahiruInteraction = isMahiruTrigger(body || budy || m.text) || isReplyToMahiru(m, db);
+
+		// Jika pesan dari akun bot sendiri (fromMe) tapi bukan command ber-prefix resmi, eval owner, tombol kunci, kuis math, atau interaksi Mahiru AI, buang
+		if (!hasActiveMath && m.key.fromMe && !isCmd && !isOwnerEval && !isLockAction && !isMahiruInteraction) {
+			return;
+		}
+		
+		// ==========================================
+		// PRE-CHECK: PROTEKSI GRUP YANG DIKUNCI
+		// ==========================================
+		if (m.isGroup && isLocked(m.chat) && !isCreator) {
+			return; // Bot mengabaikan pesan sepenuhnya jika grup dikunci oleh owner
 		}
 		const args = body.trim().split(/ +/).slice(1)
 		const quoted = m.quoted ? m.quoted : m
@@ -1377,7 +1388,7 @@ ${statusText}
 			}
 			break
 			case 'audit': {
-				await audit(naze, m, db, args, isCreator, m.metadata?.participants);
+				await audit(naze, m, db, args, isCreator, m.metadata?.participants, store);
 				global._dbDirty = true;
 			}
 			break;
@@ -2211,17 +2222,17 @@ break
 				db.groups[m.chat].oguriAI ??= { enable: false }
 				const sub = args[0]?.toLowerCase()
 
-				if (sub === 'on') {
-					if (!m.isAdmin) return m.reply(global.mess.admin)
+				if (sub === 'on' || sub === 'enable' || sub === '1') {
+					if (!isCreator) return m.reply('⚠️ Fitur Mahiru Shiina AI hanya dapat diaktifkan oleh *Owner Bot (Shiro-sama)*.')
 					if (db.groups[m.chat].mahiruAI.enable) return m.reply('🟢 Mahiru Shiina AI sudah aktif di grup ini.')
 					db.groups[m.chat].mahiruAI.enable = true
 					db.groups[m.chat].oguriAI.enable = true
 					global._dbDirty = true
-					return m.reply('🌸 *Mahiru Shiina AI diaktifkan!* ✨\n\nKamu bisa mengajak Mahiru mengobrol dengan mengetik:\n• mahiru <pesanmu>\n• hai mahiru <pesanmu>\n• halo/hei/oi/pagi mahiru\n• tenshi-sama <pesanmu>\n\nAtau reply/mention langsung pesan Mahiru untuk melanjutkan obrolan (⁄ ⁄•⁄ω⁄•⁄ ⁄) 💕')
+					return m.reply('🌸 *Mahiru Shiina AI diaktifkan oleh Shiro-sama!* ✨\n\nKamu bisa mengajak Mahiru mengobrol dengan mengetik:\n• mahiru <pesanmu>\n• hai mahiru <pesanmu>\n• halo/hei/oi/pagi mahiru\n• tenshi-sama <pesanmu>\n\nAtau reply langsung pesan Mahiru untuk melanjutkan obrolan (⁄ ⁄•⁄ω⁄•⁄ ⁄) 💕')
 				}
 
-				if (sub === 'off') {
-					if (!m.isAdmin) return m.reply(global.mess.admin)
+				if (sub === 'off' || sub === 'disable' || sub === '0') {
+					if (!isCreator) return m.reply('⚠️ Fitur Mahiru Shiina AI hanya dapat dinonaktifkan oleh *Owner Bot (Shiro-sama)*.')
 					if (!db.groups[m.chat].mahiruAI.enable) return m.reply('🔴 Mahiru Shiina AI sudah nonaktif di grup ini.')
 					db.groups[m.chat].mahiruAI.enable = false
 					db.groups[m.chat].oguriAI.enable = false
@@ -2235,15 +2246,21 @@ break
 				}
 
 				// Perintah Pengelolaan Relasi Khusus oleh Shiro-sama (Owner)
-				if (['setrelasi', 'setpacar', 'jadikanpacar', 'relasi'].includes(sub)) {
+				if (['setrelasi', 'setpacar', 'jadikanpacar', 'setsuami', 'jadikansuami', 'settunangan', 'setsahabat', 'relasi'].includes(sub)) {
 					if (!isCreator) return m.reply('⚠️ Hanya *Shiro-sama* (Owner) yang memiliki wewenang untuk menetapkan relasi khusus pada Mahiru.')
 
 					const targetJid = m.mentionedJid?.[0] || m.quoted?.sender || (args[1] ? args[1].replace(/[^0-9]/g, '') + '@s.whatsapp.net' : null)
 					if (!targetJid) {
-						return m.reply(`🌸 *Format Perintah Relasi Shiro-sama:*\n• ${prefix}mahiru setrelasi @user pacar\n• ${prefix}mahiru delrelasi @user\n• ${prefix}mahiru listrelasi\n\n_Atau cukup katakan di chat: "Mahiru, tolong perlakukan @user layaknya pacar ya" (⁄ ⁄•⁄ω⁄•⁄ ⁄)_`)
+						return m.reply(`🌸 *Format Perintah Relasi Shiro-sama:*\n• ${prefix}mahiru setrelasi @user suami\n• ${prefix}mahiru setrelasi @user pacar\n• ${prefix}mahiru delrelasi @user\n• ${prefix}mahiru listrelasi\n\n_Atau cukup katakan di chat: "Mahiru, @user suami kamu ya" (⁄ ⁄•⁄ω⁄•⁄ ⁄)_`)
 					}
 
-					const role = args[2]?.toLowerCase() || (sub === 'setpacar' || sub === 'jadikanpacar' ? 'pacar' : 'pacar')
+					let role = 'pacar';
+					if (sub === 'setsuami' || sub === 'jadikansuami') role = 'suami';
+					else if (sub === 'settunangan') role = 'tunangan';
+					else if (sub === 'setsahabat') role = 'sahabat';
+					else if (args[2]) role = args[2].toLowerCase();
+					else if (args[1] && ['suami', 'pacar', 'tunangan', 'sahabat', 'adik', 'kakak', 'istri'].includes(args[1].toLowerCase())) role = args[1].toLowerCase();
+
 					const targetNum = targetJid.split('@')[0]
 					const targetName = db.users?.[targetJid]?.name || `@${targetNum}`
 
@@ -2253,7 +2270,11 @@ break
 						note: `Disetujui oleh Shiro-sama pada ${new Date().toLocaleDateString('id-ID')}`
 					})
 
-					const roleDesc = role === 'pacar' ? 'pacar tercinta' : role
+					let roleDesc = role;
+					if (role === 'suami') roleDesc = 'suami tercinta (anata)';
+					else if (role === 'pacar') roleDesc = 'pacar tercinta';
+					else if (role === 'tunangan') roleDesc = 'tunangan / calon suami';
+
 					return await naze.sendMessage(m.chat, {
 						text: `(⁄ ⁄•⁄ω⁄•⁄ ⁄) E-Eh?! Perintah dari Shiro-sama telah Mahiru simpan ke ingatan...\n\nMulai sekarang Mahiru akan memperlakukan @${targetNum} layaknya *${roleDesc}* sendiri atas izin resmi Shiro-sama! 🌸💕✨`,
 						mentions: [targetJid, m.sender]
@@ -2299,7 +2320,7 @@ break
 
 				// Info status
 				const status = db.groups[m.chat].mahiruAI.enable ? '🟢 Aktif' : '🔴 Nonaktif'
-				m.reply(`🎀 *Mahiru Shiina AI (The Angel Next Door) — Status Grup*\n\nStatus : ${status}\nOwner  : *Shiro-sama*\n\n*Perintah Pengaturan:*\n• ${prefix}mahiru on — Aktifkan interaksi di grup\n• ${prefix}mahiru off — Nonaktifkan interaksi di grup\n• ${prefix}mahiru clearmemory — Hapus ingatan obrolanmu\n• ${prefix}mahiru <pesan> — Tanya langsung ke Mahiru\n\n*Menu Khusus Shiro-sama (Owner):*\n• ${prefix}mahiru setrelasi @user pacar — Izinkan relasi pacar\n• ${prefix}mahiru delrelasi @user — Cabut relasi\n• ${prefix}mahiru listrelasi — Lihat daftar relasi\n\n_100% Free AI Scrape • Otentik Karakter Anime_ 🌸✨`)
+				m.reply(`🎀 *Mahiru Shiina AI (The Angel Next Door) — Status Grup*\n\nStatus : ${status}\nOwner  : *Shiro-sama*\n\n*Perintah Pengaturan (Khusus Owner):*\n• ${prefix}mahiru on — Aktifkan interaksi di grup\n• ${prefix}mahiru off — Nonaktifkan interaksi di grup\n\n*Perintah Pengguna:*\n• ${prefix}mahiru clearmemory — Hapus ingatan obrolanmu\n• ${prefix}mahiru <pesan> — Tanya langsung ke Mahiru\n\n*Menu Khusus Shiro-sama (Owner):*\n• ${prefix}mahiru setrelasi @user pacar — Izinkan relasi pacar\n• ${prefix}mahiru delrelasi @user — Cabut relasi\n• ${prefix}mahiru listrelasi — Lihat daftar relasi\n\n_100% Free AI Scrape • Otentik Karakter Anime_ 🌸✨`)
 			}
 			break
 			case 'group': case 'grup': case 'gc': {
@@ -2938,17 +2959,31 @@ break
         // ==========================================================
         case 'kunci':
         case 'kuncigrup':
-        case 'lockgroup': {
+        case 'lock':
+        case 'lockgroup':
+        case 'lockgc': {
             if (!isCreator) return m.reply(global.mess.owner)
-            await tampilkanKunciGrup(naze, m, args)
+            try {
+                await tampilkanKunciGrup(naze, m, args)
+            } catch (err) {
+                console.error("❌ [KUNCI ERROR]", err)
+                m.reply("❌ Terjadi kesalahan saat memproses perintah kunci grup.")
+            }
             global._dbDirty = true
         } break
         
         case 'buka':
         case 'bukakunci':
-        case 'unlockgroup': {
+        case 'unlock':
+        case 'unlockgroup':
+        case 'unlockgc': {
             if (!isCreator) return m.reply(global.mess.owner)
-            await tampilkanBukaGrup(naze, m, args)
+            try {
+                await tampilkanBukaGrup(naze, m, args)
+            } catch (err) {
+                console.error("❌ [BUKA ERROR]", err)
+                m.reply("❌ Terjadi kesalahan saat memproses perintah buka kunci grup.")
+            }
             global._dbDirty = true
         } break
 
@@ -5118,6 +5153,69 @@ break
 				}
 			}
 			break
+			case 'angrybirds': case 'angrybird': case 'ab': {
+				try {
+					await kirimAngryBirds(naze, m.chat)
+				} catch (e) {
+					console.error('[ANGRYBIRDS]', e?.message || e)
+					await m.reply('❌ Gagal mengirim game: ' + (e?.message || e))
+				}
+			}
+			break
+			case 'balap': case 'balapan': case 'racing': case 'balapmobil': {
+				try {
+					await kirimBalap(naze, m.chat)
+				} catch (e) {
+					console.error('[BALAP]', e?.message || e)
+					await m.reply('❌ Gagal mengirim game: ' + (e?.message || e))
+				}
+			}
+			break
+			case 'dino': case 'dinorun': case 'dinosaur': {
+				try {
+					await kirimDino(naze, m.chat)
+				} catch (e) {
+					console.error('[DINO]', e?.message || e)
+					await m.reply('❌ Gagal mengirim game: ' + (e?.message || e))
+				}
+			}
+			break
+			case 'snake': case 'ular': case 'ularrimba': case 'snakegame': {
+				try {
+					await kirimSnake(naze, m.chat)
+				} catch (e) {
+					console.error('[SNAKE]', e?.message || e)
+					await m.reply('❌ Gagal mengirim game: ' + (e?.message || e))
+				}
+			}
+			break
+			case 'stickman': case 'stick': case 'stickgame': {
+				try {
+					await kirimStickman(naze, m.chat)
+				} catch (e) {
+					console.error('[STICKMAN]', e?.message || e)
+					await m.reply('❌ Gagal mengirim game: ' + (e?.message || e))
+				}
+			}
+			break
+			case 'supermario': case 'mario': {
+				try {
+					await kirimSuperMario(naze, m.chat)
+				} catch (e) {
+					console.error('[SUPERMARIO]', e?.message || e)
+					await m.reply('❌ Gagal mengirim game: ' + (e?.message || e))
+				}
+			}
+			break
+			case 'tetris': case 'tetri': {
+				try {
+					await kirimTetris(naze, m.chat)
+				} catch (e) {
+					console.error('[TETRIS]', e?.message || e)
+					await m.reply('❌ Gagal mengirim game: ' + (e?.message || e))
+				}
+			}
+			break
 			case 'rampok': case 'merampok': {
 				await gameMerampok(m, db)
 			}
@@ -5814,37 +5912,41 @@ break
 └─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ✦
 
 ┌── ‹ 🤖 ʙᴏᴛ & ᴜᴛɪʟɪᴛʏ ›
-│ ▫ ${prefix}profile
-│ ▫ ${prefix}claim
+│ ▫ ${prefix}profile / ${prefix}me
+│ ▫ ${prefix}limit / ${prefix}ceklimit
+│ ▫ ${prefix}claim / ${prefix}daily
 │ ▫ ${prefix}buy ‹item› ‹nominal›
-│ ▫ ${prefix}transfer
+│ ▫ ${prefix}transfer ‹@tag/nominal›
 │ ▫ ${prefix}leaderboard
+│ ▫ ${prefix}leaderboardgame
 │ ▫ ${prefix}request ‹teks›
 │ ▫ ${prefix}react ‹emoji›
 │ ▫ ${prefix}tagme
 │ ▫ ${prefix}runtime
 │ ▫ ${prefix}totalfitur
-│ ▫ ${prefix}speed
-│ ▫ ${prefix}ping
-│ ▫ ${prefix}afk
+│ ▫ ${prefix}speed / ${prefix}speedtest
+│ ▫ ${prefix}ping / ${prefix}statusbot
+│ ▫ ${prefix}afk ‹alasan›
 │ ▫ ${prefix}rvo ‹reply viewone›
 │ ▫ ${prefix}inspect ‹link grup›
-│ ▫ ${prefix}addmsg
-│ ▫ ${prefix}delmsg
-│ ▫ ${prefix}getmsg
-│ ▫ ${prefix}listmsg
-│ ▫ ${prefix}setcmd
-│ ▫ ${prefix}delcmd
-│ ▫ ${prefix}listcmd
-│ ▫ ${prefix}lockcmd
 │ ▫ ${prefix}q ‹reply pesan›
 │ ▫ ${prefix}menfes ‹62xxx|pesan›
-│ ▫ ${prefix}confes ‹62xxx|pesan›
-│ ▫ ${prefix}roomai
+│ ▫ ${prefix}delmenfes
+│ ▫ ${prefix}roomai / ${prefix}cai
+│ ▫ ${prefix}delroomai / ${prefix}delcai
 │ ▫ ${prefix}jadibot
 │ ▫ ${prefix}stopjadibot
 │ ▫ ${prefix}listjadibot
 │ ▫ ${prefix}donasi
+│ ▫ ${prefix}script / ${prefix}sc
+│ ▫ ${prefix}addmsg ‹nama›
+│ ▫ ${prefix}delmsg ‹nama›
+│ ▫ ${prefix}getmsg ‹nama›
+│ ▫ ${prefix}listmsg
+│ ▫ ${prefix}setcmd ‹reply stiker›
+│ ▫ ${prefix}delcmd ‹reply stiker›
+│ ▫ ${prefix}listcmd
+│ ▫ ${prefix}lockcmd / ${prefix}unlockcmd
 │ ▫ ${prefix}addsewa
 │ ▫ ${prefix}delsewa
 │ ▫ ${prefix}listsewa
@@ -5861,23 +5963,47 @@ break
 │ ▫ ${prefix}setdesc ‹deskripsi›
 │ ▫ ${prefix}setppgc ‹reply foto›
 │ ▫ ${prefix}delete ‹reply pesan›
-│ ▫ ${prefix}linkgrup
-│ ▫ ${prefix}revoke
+│ ▫ ${prefix}linkgrup / ${prefix}linkgc
+│ ▫ ${prefix}revoke / ${prefix}newlink
 │ ▫ ${prefix}tagall
-│ ▫ ${prefix}pin
-│ ▫ ${prefix}unpin
+│ ▫ ${prefix}pin / ${prefix}unpin
 │ ▫ ${prefix}hidetag ‹teks›
 │ ▫ ${prefix}totag ‹reply pesan›
 │ ▫ ${prefix}listonline
+│ ▫ ${prefix}totalpesan / ${prefix}totalchat
 │ ▫ ${prefix}group ‹open/close›
 │ ▫ ${prefix}group set
+│ ▫ ${prefix}kunci / ${prefix}buka
 │ ▫ ${prefix}sholat ‹on/off›
 │ ▫ ${prefix}aktifkansholat
 │ ▫ ${prefix}matikhansholat
+│ ▫ ${prefix}sholatsetgrup
 │ ▫ ${prefix}tessholat
 └───────────────
 
+┌── ‹ 🧠 ᴀɪ & ɪɴᴛᴇʟʟɪɢᴇɴᴄᴇ ›
+│ ▫ ${prefix}mahiru ‹pesan/on/off›
+│ ▫ ${prefix}mahiru setrelasi ‹@tag pacar›
+│ ▫ ${prefix}mahiru delrelasi ‹@tag›
+│ ▫ ${prefix}mahiru listrelasi
+│ ▫ ${prefix}mahiru clearmemory
+│ ▫ ${prefix}oguriai ‹on/off›
+│ ▫ ${prefix}ai ‹pertanyaan›
+│ ▫ ${prefix}gemini ‹pertanyaan›
+│ ▫ ${prefix}bard ‹pertanyaan›
+│ ▫ ${prefix}glm ‹pertanyaan›
+│ ▫ ${prefix}grok ‹pertanyaan›
+│ ▫ ${prefix}claude ‹pertanyaan›
+│ ▫ ${prefix}archipelago ‹pertanyaan›
+│ ▫ ${prefix}deepseek ‹pertanyaan›
+│ ▫ ${prefix}r1 ‹pertanyaan›
+│ ▫ ${prefix}roomai / ${prefix}cai
+│ ▫ ${prefix}txt2img ‹prompt deskripsi›
+└───────────────
+
 ┌── ‹ 🔎 sᴇᴀʀᴄʜ & ᴇxᴘʟᴏʀᴇ ›
+│ ▫ ${prefix}play ‹judul lagu›
+│ ▫ ${prefix}play2 ‹judul lagu›
 │ ▫ ${prefix}ytsearch ‹query›
 │ ▫ ${prefix}spotify ‹query›
 │ ▫ ${prefix}pixiv ‹query›
@@ -5886,6 +6012,7 @@ break
 │ ▫ ${prefix}ringtone ‹query›
 │ ▫ ${prefix}google ‹query›
 │ ▫ ${prefix}gimage ‹query›
+│ ▫ ${prefix}bingimg ‹query›
 │ ▫ ${prefix}npm ‹query›
 │ ▫ ${prefix}style ‹query›
 │ ▫ ${prefix}cuaca ‹kota›
@@ -5894,12 +6021,16 @@ break
 └───────────────
 
 ┌── ‹ 📥 ᴍᴇᴅɪᴀ ᴅᴏᴡɴʟᴏᴀᴅᴇʀ ›
-│ ▫ ${prefix}ytmp3 ‹link›
-│ ▫ ${prefix}ytmp4 ‹link›
+│ ▫ ${prefix}play ‹judul lagu›
+│ ▫ ${prefix}play2 ‹judul lagu›
+│ ▫ ${prefix}ytmp3 / ${prefix}yta ‹link›
+│ ▫ ${prefix}ytmp4 / ${prefix}ytv ‹link›
 │ ▫ ${prefix}instagram ‹link›
-│ ▫ ${prefix}tiktok ‹link›
-│ ▫ ${prefix}tiktokmp3 ‹link›
-│ ▫ ${prefix}facebook ‹link›
+│ ▫ ${prefix}igvideo ‹link›
+│ ▫ ${prefix}igimage ‹link›
+│ ▫ ${prefix}tiktok / ${prefix}tt ‹link›
+│ ▫ ${prefix}tiktokmp3 / ${prefix}ttmp3 ‹link›
+│ ▫ ${prefix}facebook / ${prefix}fb ‹link›
 │ ▫ ${prefix}spotifydl ‹link›
 │ ▫ ${prefix}mediafire ‹link›
 └───────────────
@@ -5917,10 +6048,13 @@ break
 ┌── ‹ 🛠️ ᴛᴏᴏʟs & ᴄᴏɴᴠᴇʀᴛᴇʀ ›
 │ ▫ ${prefix}get ‹link›
 │ ▫ ${prefix}hd ‹reply foto›
+│ ▫ ${prefix}remini ‹reply foto›
 │ ▫ ${prefix}toaudio ‹reply video›
 │ ▫ ${prefix}tomp3 ‹reply video›
 │ ▫ ${prefix}tovn ‹reply audio›
+│ ▫ ${prefix}togif ‹reply stiker/video›
 │ ▫ ${prefix}toimage ‹reply stiker›
+│ ▫ ${prefix}tovid ‹reply stiker gerak›
 │ ▫ ${prefix}toptv ‹reply video›
 │ ▫ ${prefix}tourl ‹reply media›
 │ ▫ ${prefix}tts ‹teks›
@@ -5931,34 +6065,31 @@ break
 │ ▫ ${prefix}sticker ‹send/reply foto›
 │ ▫ ${prefix}colong ‹reply stiker›
 │ ▫ ${prefix}smeme ‹atas|bawah›
+│ ▫ ${prefix}smemec ‹warna|atas|bawah›
 │ ▫ ${prefix}dehaze ‹reply foto›
 │ ▫ ${prefix}colorize ‹reply foto›
 │ ▫ ${prefix}hitamkan ‹reply foto›
 │ ▫ ${prefix}emojimix ‹emoji+emoji›
 │ ▫ ${prefix}nulis ‹teks›
+│ ▫ ${prefix}nuliskanan ‹teks›
+│ ▫ ${prefix}nuliskiri ‹teks›
+│ ▫ ${prefix}foliokanan ‹teks›
+│ ▫ ${prefix}foliokiri ‹teks›
 │ ▫ ${prefix}readmore ‹teks1|teks2›
 │ ▫ ${prefix}qc ‹pesan›
+│ ▫ ${prefix}iqc ‹pesan›
+│ ▫ ${prefix}fakechat ‹pesan›
 │ ▫ ${prefix}translate ‹kode teks›
 │ ▫ ${prefix}wasted ‹reply foto›
 │ ▫ ${prefix}triggered ‹reply foto›
 │ ▫ ${prefix}shorturl ‹link›
+│ ▫ ${prefix}tinyurl ‹link›
 │ ▫ ${prefix}gitclone ‹repo url›
 │ ▫ ${prefix}fat / ${prefix}fast / ${prefix}bass
 │ ▫ ${prefix}slow / ${prefix}tupai / ${prefix}deep
 │ ▫ ${prefix}robot / ${prefix}reverse / ${prefix}smooth
 │ ▫ ${prefix}nightcore / ${prefix}earrape
 │ ▫ ${prefix}getexif ‹reply stiker›
-└───────────────
-
-┌── ‹ 🧠 ᴀɪ & ɪɴᴛᴇʟʟɪɢᴇɴᴄᴇ ›
-│ ▫ ${prefix}ai ‹pertanyaan›
-│ ▫ ${prefix}gemini ‹pertanyaan›
-│ ▫ ${prefix}glm ‹pertanyaan›
-│ ▫ ${prefix}grok ‹pertanyaan›
-│ ▫ ${prefix}claude ‹pertanyaan›
-│ ▫ ${prefix}archipelago ‹pertanyaan›
-│ ▫ ${prefix}deepseek ‹pertanyaan›
-│ ▫ ${prefix}txt2img ‹prompt deskripsi›
 └───────────────
 
 ┌── ‹ 🌸 ᴀɴɪᴍᴇ & ᴡᴀɪғᴜ ›
@@ -5968,21 +6099,33 @@ break
 
 ┌── ‹ 🏦 ᴛʀᴀᴄᴇɴ ᴇᴄᴏɴᴏᴍʏ ›
 │ ▫ ${prefix}bank
-│ ▫ ${prefix}cekbank
+│ ▫ ${prefix}cekbank / ${prefix}cb
 │ ▫ ${prefix}audit
 │ ▫ ${prefix}bansos
-│ ▫ ${prefix}daily
+│ ▫ ${prefix}daily / ${prefix}claim
 │ ▫ ${prefix}transfer ‹@tag/nominal›
 │ ▫ ${prefix}buy ‹item› ‹jumlah›
 └───────────────
 
 ┌── ‹ 🎮 ɢᴀᴍᴇs & ᴀʀᴄᴀᴅᴇ ›
-│ ▫ ${prefix}catur ‹3D Multiplayer›
+│ ▫ ${prefix}catur ‹3D & Inline›
 │ ▫ ${prefix}tebakbom ‹3D Arcade›
+│ ▫ ${prefix}deltebakbom
+│ ▫ ${prefix}claimr ‹kode tebakbom›
 │ ▫ ${prefix}ulartangga ‹3D Classic›
+│ ▫ ${prefix}family100
 │ ▫ ${prefix}sonic
+│ ▫ ${prefix}angrybirds
+│ ▫ ${prefix}balap
+│ ▫ ${prefix}dino
+│ ▫ ${prefix}snake
+│ ▫ ${prefix}stickman
+│ ▫ ${prefix}supermario
+│ ▫ ${prefix}tetris
 │ ▫ ${prefix}tictactoe
-│ ▫ ${prefix}suit
+│ ▫ ${prefix}delttc
+│ ▫ ${prefix}suit ‹@tag›
+│ ▫ ${prefix}delsuit
 │ ▫ ${prefix}math ‹level 1-11›
 │ ▫ ${prefix}begal
 │ ▫ ${prefix}rampok ‹@tag›
@@ -5990,8 +6133,6 @@ break
 │ ▫ ${prefix}tekateki
 │ ▫ ${prefix}tebaklirik
 │ ▫ ${prefix}tebakkata
-│ ▫ ${prefix}claimr ‹kode tebakbom›
-│ ▫ ${prefix}leaderboard game
 │ ▫ ${prefix}susunkata
 │ ▫ ${prefix}colorblind
 │ ▫ ${prefix}tebakkimia
@@ -6000,6 +6141,7 @@ break
 │ ▫ ${prefix}tebaknegara
 │ ▫ ${prefix}tebakgambar
 │ ▫ ${prefix}tebakbendera
+│ ▫ ${prefix}leaderboardgame
 └───────────────
 
 ┌── ‹ 😂 ғᴜɴ & ᴇɴᴛᴇʀᴛᴀɪɴᴍᴇɴᴛ ›
@@ -6022,7 +6164,7 @@ break
 └───────────────
 
 ┌── ‹ 🎁 ʀᴀɴᴅᴏᴍ & ᴍɪsᴄ ›
-│ ▫ ${prefix}coffe
+│ ▫ ${prefix}coffe / ${prefix}kopi
 └───────────────
 
 ┌── ‹ 🕵️ sᴛᴀʟᴋᴇʀ ›
@@ -6031,16 +6173,24 @@ break
 └───────────────
 
 ┌── ‹ 👑 ᴏᴡɴᴇʀ & ᴄᴏɴᴛʀᴏʟ ›
+│ ▫ ${prefix}stop bot ‹jam/status/cancel/now›
+│ ▫ ${prefix}shutdown
+│ ▫ ${prefix}update / ${prefix}upgrade
+│ ▫ ${prefix}monsterstats / ${prefix}monsterinfo
+│ ▫ ${prefix}byq ‹reply pesan›
 │ ▫ ${prefix}bot ‹on/off›
+│ ▫ ${prefix}mode ‹public/self›
 │ ▫ ${prefix}setbio ‹teks›
 │ ▫ ${prefix}setppbot ‹reply foto›
+│ ▫ ${prefix}delppbot
+│ ▫ ${prefix}version
 │ ▫ ${prefix}join ‹link gc›
 │ ▫ ${prefix}leave
 │ ▫ ${prefix}block / ${prefix}unblock
 │ ▫ ${prefix}listblock
 │ ▫ ${prefix}listpc / ${prefix}listgc
 │ ▫ ${prefix}ban / ${prefix}unban
-│ ▫ ${prefix}kunci / ${prefix}kuncigrup
+│ ▫ ${prefix}kunci / ${prefix}buka
 │ ▫ ${prefix}creategc ‹nama›
 │ ▫ ${prefix}clearchat
 │ ▫ ${prefix}addprem / ${prefix}delprem
@@ -6061,89 +6211,135 @@ break
 │ ▫ ${prefix}getmsgstore
 │ ▫ ${prefix}bot settings
 │ ▫ ${prefix}getsession / ${prefix}delsession
-│ ▫ ${prefix}delsampah
+│ ▫ ${prefix}delsampah / ${prefix}deltemp
+│ ▫ ${prefix}backup ‹all/auto/session/database›
+│ ▫ ${prefix}addcase / ${prefix}getcase / ${prefix}delcase
 │ ▫ ${prefix}upsw
-│ ▫ ${prefix}backup
 │ ▫ $ / > / <
 └───────────────`
 
 
-   await naze.sendMessage(
-    m.chat,
-    {
-        video: {
-            url: 'https://raw.githubusercontent.com/asahichanID/Umaimage/main/uma/OguriCap.mp4'
-        },
-        gifPlayback: true,
-        caption: menunya,
-        contextInfo: {
-            mentionedJid: [
-                m.sender,
-                '0@s.whatsapp.net',
-                ownerNumber[0] + '@s.whatsapp.net'
-            ],
-            forwardingScore: 10,
-            isForwarded: true,
-            forwardedNewsletterMessageInfo: {
-                newsletterJid: my.ch,
-                serverMessageId: null,
-                newsletterName: 'Join For More Info'
-            }
-        }
-    },
-    {
-        quoted: m
-    }
-)
-	await new Promise(resolve =>
-	setTimeout(resolve, 3000)
-)
+				const allMenuButtons = [
+					{
+						name: 'quick_reply',
+						buttonParamsJson: JSON.stringify({
+							display_text: '👑 Owner',
+							id: `${prefix}owner`
+						}),
+						buttonId: `${prefix}owner`,
+						buttonText: {
+							displayText: '👑 Owner'
+						},
+						type: 1
+					},
+					getNativeMenuButton(prefix)
+				];
 
-await naze.sendMessage(
-	m.chat,
-	{
-		audio: oguriCapAudio,
-		mimetype: 'audio/mpeg'
-	},
-	{
-		quoted: m
-	}
-)
+				const headOwnerJid = Array.isArray(ownerNumber) && ownerNumber[0]
+					? ownerNumber[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net'
+					: typeof ownerNumber === 'string' && ownerNumber
+					? ownerNumber.replace(/[^0-9]/g, '') + '@s.whatsapp.net'
+					: '0@s.whatsapp.net';
+
+				const mentionsList = [
+					m.sender,
+					'0@s.whatsapp.net',
+					headOwnerJid
+				];
+
+				try {
+					await naze.sendButtonMsg(
+						m.chat,
+						{
+							video: {
+								url: 'https://raw.githubusercontent.com/asahichanID/Umaimage/main/uma/OguriCap.mp4'
+							},
+							gifPlayback: true,
+							caption: menunya,
+							text: menunya,
+							footer: 'Tracen Academy Navigation • OguriCap MD',
+							mentions: mentionsList,
+							buttons: allMenuButtons
+						},
+						{
+							quoted: m
+						}
+					);
+				} catch (btnErr) {
+					console.error('[ALLMENU] Gagal mengirim menu interaktif button, fallback ke sendMessage biasa:', btnErr);
+					await naze.sendMessage(
+						m.chat,
+						{
+							video: {
+								url: 'https://raw.githubusercontent.com/asahichanID/Umaimage/main/uma/OguriCap.mp4'
+							},
+							gifPlayback: true,
+							caption: menunya,
+							mentions: mentionsList
+						},
+						{
+							quoted: m
+						}
+					);
+				}
+
+				await new Promise(resolve =>
+					setTimeout(resolve, 2000)
+				);
+
+				try {
+					await naze.sendMessage(
+						m.chat,
+						{
+							audio: oguriCapAudio,
+							mimetype: 'audio/mpeg'
+						},
+						{
+							quoted: m
+						}
+					);
+				} catch (audioErr) {
+					console.error('[ALLMENU] Gagal mengirim audio:', audioErr);
+				}
 			}
 			break
 			case 'botmenu': {
 				m.reply(`┌── ‹ 🤖 ʙᴏᴛ & ᴜᴛɪʟɪᴛʏ ›
-│ ▫ ${prefix}profile
-│ ▫ ${prefix}claim
+│ ▫ ${prefix}profile / ${prefix}me
+│ ▫ ${prefix}limit / ${prefix}ceklimit
+│ ▫ ${prefix}claim / ${prefix}daily
 │ ▫ ${prefix}buy ‹item› ‹nominal›
-│ ▫ ${prefix}transfer
+│ ▫ ${prefix}transfer ‹@tag/nominal›
 │ ▫ ${prefix}leaderboard
+│ ▫ ${prefix}leaderboardgame
 │ ▫ ${prefix}request ‹teks›
 │ ▫ ${prefix}react ‹emoji›
 │ ▫ ${prefix}tagme
 │ ▫ ${prefix}runtime
 │ ▫ ${prefix}totalfitur
-│ ▫ ${prefix}speed
-│ ▫ ${prefix}ping
-│ ▫ ${prefix}afk
+│ ▫ ${prefix}speed / ${prefix}speedtest
+│ ▫ ${prefix}ping / ${prefix}statusbot
+│ ▫ ${prefix}afk ‹alasan›
 │ ▫ ${prefix}rvo ‹reply viewone›
 │ ▫ ${prefix}inspect ‹link grup›
-│ ▫ ${prefix}addmsg
-│ ▫ ${prefix}delmsg
-│ ▫ ${prefix}getmsg
-│ ▫ ${prefix}listmsg
-│ ▫ ${prefix}setcmd
-│ ▫ ${prefix}delcmd
-│ ▫ ${prefix}listcmd
-│ ▫ ${prefix}lockcmd
 │ ▫ ${prefix}q ‹reply pesan›
 │ ▫ ${prefix}menfes ‹62xxx|pesan›
-│ ▫ ${prefix}confes ‹62xxx|pesan›
-│ ▫ ${prefix}roomai
+│ ▫ ${prefix}delmenfes
+│ ▫ ${prefix}roomai / ${prefix}cai
+│ ▫ ${prefix}delroomai / ${prefix}delcai
 │ ▫ ${prefix}jadibot
 │ ▫ ${prefix}stopjadibot
 │ ▫ ${prefix}listjadibot
 │ ▫ ${prefix}donasi
+│ ▫ ${prefix}script / ${prefix}sc
+│ ▫ ${prefix}addmsg ‹nama›
+│ ▫ ${prefix}delmsg ‹nama›
+│ ▫ ${prefix}getmsg ‹nama›
+│ ▫ ${prefix}listmsg
+│ ▫ ${prefix}setcmd ‹reply stiker›
+│ ▫ ${prefix}delcmd ‹reply stiker›
+│ ▫ ${prefix}listcmd
+│ ▫ ${prefix}lockcmd / ${prefix}unlockcmd
 │ ▫ ${prefix}addsewa
 │ ▫ ${prefix}delsewa
 │ ▫ ${prefix}listsewa
@@ -6162,25 +6358,29 @@ await naze.sendMessage(
 │ ▫ ${prefix}setdesc ‹deskripsi›
 │ ▫ ${prefix}setppgc ‹reply foto›
 │ ▫ ${prefix}delete ‹reply pesan›
-│ ▫ ${prefix}linkgrup
-│ ▫ ${prefix}revoke
+│ ▫ ${prefix}linkgrup / ${prefix}linkgc
+│ ▫ ${prefix}revoke / ${prefix}newlink
 │ ▫ ${prefix}tagall
-│ ▫ ${prefix}pin
-│ ▫ ${prefix}unpin
+│ ▫ ${prefix}pin / ${prefix}unpin
 │ ▫ ${prefix}hidetag ‹teks›
 │ ▫ ${prefix}totag ‹reply pesan›
 │ ▫ ${prefix}listonline
+│ ▫ ${prefix}totalpesan / ${prefix}totalchat
 │ ▫ ${prefix}group ‹open/close›
 │ ▫ ${prefix}group set
+│ ▫ ${prefix}kunci / ${prefix}buka
 │ ▫ ${prefix}sholat ‹on/off›
 │ ▫ ${prefix}aktifkansholat
 │ ▫ ${prefix}matikhansholat
+│ ▫ ${prefix}sholatsetgrup
 │ ▫ ${prefix}tessholat
 └───────────────`)
 			}
 			break
 			case 'searchmenu': {
 				m.reply(`┌── ‹ 🔎 sᴇᴀʀᴄʜ & ᴇxᴘʟᴏʀᴇ ›
+│ ▫ ${prefix}play ‹judul lagu›
+│ ▫ ${prefix}play2 ‹judul lagu›
 │ ▫ ${prefix}ytsearch ‹query›
 │ ▫ ${prefix}spotify ‹query›
 │ ▫ ${prefix}pixiv ‹query›
@@ -6189,6 +6389,7 @@ await naze.sendMessage(
 │ ▫ ${prefix}ringtone ‹query›
 │ ▫ ${prefix}google ‹query›
 │ ▫ ${prefix}gimage ‹query›
+│ ▫ ${prefix}bingimg ‹query›
 │ ▫ ${prefix}npm ‹query›
 │ ▫ ${prefix}style ‹query›
 │ ▫ ${prefix}cuaca ‹kota›
@@ -6199,12 +6400,16 @@ await naze.sendMessage(
 			break
 			case 'downloadmenu': {
 				m.reply(`┌── ‹ 📥 ᴍᴇᴅɪᴀ ᴅᴏᴡɴʟᴏᴀᴅᴇʀ ›
-│ ▫ ${prefix}ytmp3 ‹link›
-│ ▫ ${prefix}ytmp4 ‹link›
+│ ▫ ${prefix}play ‹judul lagu›
+│ ▫ ${prefix}play2 ‹judul lagu›
+│ ▫ ${prefix}ytmp3 / ${prefix}yta ‹link›
+│ ▫ ${prefix}ytmp4 / ${prefix}ytv ‹link›
 │ ▫ ${prefix}instagram ‹link›
-│ ▫ ${prefix}tiktok ‹link›
-│ ▫ ${prefix}tiktokmp3 ‹link›
-│ ▫ ${prefix}facebook ‹link›
+│ ▫ ${prefix}igvideo ‹link›
+│ ▫ ${prefix}igimage ‹link›
+│ ▫ ${prefix}tiktok / ${prefix}tt ‹link›
+│ ▫ ${prefix}tiktokmp3 / ${prefix}ttmp3 ‹link›
+│ ▫ ${prefix}facebook / ${prefix}fb ‹link›
 │ ▫ ${prefix}spotifydl ‹link›
 │ ▫ ${prefix}mediafire ‹link›
 └───────────────`)
@@ -6226,10 +6431,13 @@ await naze.sendMessage(
 				m.reply(`┌── ‹ 🛠️ ᴛᴏᴏʟs & ᴄᴏɴᴠᴇʀᴛᴇʀ ›
 │ ▫ ${prefix}get ‹link›
 │ ▫ ${prefix}hd ‹reply foto›
+│ ▫ ${prefix}remini ‹reply foto›
 │ ▫ ${prefix}toaudio ‹reply video›
 │ ▫ ${prefix}tomp3 ‹reply video›
 │ ▫ ${prefix}tovn ‹reply audio›
+│ ▫ ${prefix}togif ‹reply stiker/video›
 │ ▫ ${prefix}toimage ‹reply stiker›
+│ ▫ ${prefix}tovid ‹reply stiker gerak›
 │ ▫ ${prefix}toptv ‹reply video›
 │ ▫ ${prefix}tourl ‹reply media›
 │ ▫ ${prefix}tts ‹teks›
@@ -6240,17 +6448,25 @@ await naze.sendMessage(
 │ ▫ ${prefix}sticker ‹send/reply foto›
 │ ▫ ${prefix}colong ‹reply stiker›
 │ ▫ ${prefix}smeme ‹atas|bawah›
+│ ▫ ${prefix}smemec ‹warna|atas|bawah›
 │ ▫ ${prefix}dehaze ‹reply foto›
 │ ▫ ${prefix}colorize ‹reply foto›
 │ ▫ ${prefix}hitamkan ‹reply foto›
 │ ▫ ${prefix}emojimix ‹emoji+emoji›
 │ ▫ ${prefix}nulis ‹teks›
+│ ▫ ${prefix}nuliskanan ‹teks›
+│ ▫ ${prefix}nuliskiri ‹teks›
+│ ▫ ${prefix}foliokanan ‹teks›
+│ ▫ ${prefix}foliokiri ‹teks›
 │ ▫ ${prefix}readmore ‹teks1|teks2›
 │ ▫ ${prefix}qc ‹pesan›
+│ ▫ ${prefix}iqc ‹pesan›
+│ ▫ ${prefix}fakechat ‹pesan›
 │ ▫ ${prefix}translate ‹kode teks›
 │ ▫ ${prefix}wasted ‹reply foto›
 │ ▫ ${prefix}triggered ‹reply foto›
 │ ▫ ${prefix}shorturl ‹link›
+│ ▫ ${prefix}tinyurl ‹link›
 │ ▫ ${prefix}gitclone ‹repo url›
 │ ▫ ${prefix}fat / ${prefix}fast / ${prefix}bass
 │ ▫ ${prefix}slow / ${prefix}tupai / ${prefix}deep
@@ -6262,20 +6478,29 @@ await naze.sendMessage(
 			break
 			case 'aimenu': {
 				m.reply(`┌── ‹ 🧠 ᴀɪ & ɪɴᴛᴇʟʟɪɢᴇɴᴄᴇ ›
+│ ▫ ${prefix}mahiru ‹pesan/on/off›
+│ ▫ ${prefix}mahiru setrelasi ‹@tag pacar›
+│ ▫ ${prefix}mahiru delrelasi ‹@tag›
+│ ▫ ${prefix}mahiru listrelasi
+│ ▫ ${prefix}mahiru clearmemory
+│ ▫ ${prefix}oguriai ‹on/off›
 │ ▫ ${prefix}ai ‹pertanyaan›
 │ ▫ ${prefix}gemini ‹pertanyaan›
+│ ▫ ${prefix}bard ‹pertanyaan›
 │ ▫ ${prefix}glm ‹pertanyaan›
 │ ▫ ${prefix}grok ‹pertanyaan›
 │ ▫ ${prefix}claude ‹pertanyaan›
 │ ▫ ${prefix}archipelago ‹pertanyaan›
 │ ▫ ${prefix}deepseek ‹pertanyaan›
+│ ▫ ${prefix}r1 ‹pertanyaan›
+│ ▫ ${prefix}roomai / ${prefix}cai
 │ ▫ ${prefix}txt2img ‹prompt deskripsi›
 └───────────────`)
 			}
 			break
 			case 'randommenu': {
 				m.reply(`┌── ‹ 🎁 ʀᴀɴᴅᴏᴍ & ᴍɪsᴄ ›
-│ ▫ ${prefix}coffe
+│ ▫ ${prefix}coffe / ${prefix}kopi
 └───────────────`)
 			}
 			break
@@ -6296,10 +6521,10 @@ await naze.sendMessage(
 			case 'economymenu': {
 				m.reply(`┌── ‹ 🏦 ᴛʀᴀᴄᴇɴ ᴇᴄᴏɴᴏᴍʏ ›
 │ ▫ ${prefix}bank
-│ ▫ ${prefix}cekbank
+│ ▫ ${prefix}cekbank / ${prefix}cb
 │ ▫ ${prefix}audit
 │ ▫ ${prefix}bansos
-│ ▫ ${prefix}daily
+│ ▫ ${prefix}daily / ${prefix}claim
 │ ▫ ${prefix}transfer ‹@tag/nominal›
 │ ▫ ${prefix}buy ‹item› ‹jumlah›
 └───────────────`)
@@ -6307,12 +6532,24 @@ await naze.sendMessage(
 			break
 			case 'gamemenu': {
 				m.reply(`┌── ‹ 🎮 ɢᴀᴍᴇs & ᴀʀᴄᴀᴅᴇ ›
-│ ▫ ${prefix}catur ‹3D Multiplayer›
+│ ▫ ${prefix}catur ‹3D & Inline›
 │ ▫ ${prefix}tebakbom ‹3D Arcade›
+│ ▫ ${prefix}deltebakbom
+│ ▫ ${prefix}claimr ‹kode tebakbom›
 │ ▫ ${prefix}ulartangga ‹3D Classic›
+│ ▫ ${prefix}family100
 │ ▫ ${prefix}sonic
+│ ▫ ${prefix}angrybirds
+│ ▫ ${prefix}balap
+│ ▫ ${prefix}dino
+│ ▫ ${prefix}snake
+│ ▫ ${prefix}stickman
+│ ▫ ${prefix}supermario
+│ ▫ ${prefix}tetris
 │ ▫ ${prefix}tictactoe
-│ ▫ ${prefix}suit
+│ ▫ ${prefix}delttc
+│ ▫ ${prefix}suit ‹@tag›
+│ ▫ ${prefix}delsuit
 │ ▫ ${prefix}math ‹level 1-11›
 │ ▫ ${prefix}begal
 │ ▫ ${prefix}rampok ‹@tag›
@@ -6320,8 +6557,6 @@ await naze.sendMessage(
 │ ▫ ${prefix}tekateki
 │ ▫ ${prefix}tebaklirik
 │ ▫ ${prefix}tebakkata
-│ ▫ ${prefix}claimr ‹kode tebakbom›
-│ ▫ ${prefix}leaderboard game
 │ ▫ ${prefix}susunkata
 │ ▫ ${prefix}colorblind
 │ ▫ ${prefix}tebakkimia
@@ -6330,6 +6565,7 @@ await naze.sendMessage(
 │ ▫ ${prefix}tebaknegara
 │ ▫ ${prefix}tebakgambar
 │ ▫ ${prefix}tebakbendera
+│ ▫ ${prefix}leaderboardgame
 └───────────────`)
 			}
 			break
@@ -6356,16 +6592,24 @@ await naze.sendMessage(
 			break
 			case 'ownermenu': {
 				m.reply(`┌── ‹ 👑 ᴏᴡɴᴇʀ & ᴄᴏɴᴛʀᴏʟ ›
+│ ▫ ${prefix}stop bot ‹jam/status/cancel/now›
+│ ▫ ${prefix}shutdown
+│ ▫ ${prefix}update / ${prefix}upgrade
+│ ▫ ${prefix}monsterstats / ${prefix}monsterinfo
+│ ▫ ${prefix}byq ‹reply pesan›
 │ ▫ ${prefix}bot ‹on/off›
+│ ▫ ${prefix}mode ‹public/self›
 │ ▫ ${prefix}setbio ‹teks›
 │ ▫ ${prefix}setppbot ‹reply foto›
+│ ▫ ${prefix}delppbot
+│ ▫ ${prefix}version
 │ ▫ ${prefix}join ‹link gc›
 │ ▫ ${prefix}leave
 │ ▫ ${prefix}block / ${prefix}unblock
 │ ▫ ${prefix}listblock
 │ ▫ ${prefix}listpc / ${prefix}listgc
 │ ▫ ${prefix}ban / ${prefix}unban
-│ ▫ ${prefix}kunci / ${prefix}kuncigrup
+│ ▫ ${prefix}kunci / ${prefix}buka
 │ ▫ ${prefix}creategc ‹nama›
 │ ▫ ${prefix}clearchat
 │ ▫ ${prefix}addprem / ${prefix}delprem
@@ -6386,9 +6630,10 @@ await naze.sendMessage(
 │ ▫ ${prefix}getmsgstore
 │ ▫ ${prefix}bot settings
 │ ▫ ${prefix}getsession / ${prefix}delsession
-│ ▫ ${prefix}delsampah
+│ ▫ ${prefix}delsampah / ${prefix}deltemp
+│ ▫ ${prefix}backup ‹all/auto/session/database›
+│ ▫ ${prefix}addcase / ${prefix}getcase / ${prefix}delcase
 │ ▫ ${prefix}upsw
-│ ▫ ${prefix}backup
 │ ▫ $ / > / <
 └───────────────`)
 			}

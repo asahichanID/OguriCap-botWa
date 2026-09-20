@@ -5,6 +5,8 @@
 import fs from 'fs';
 import path from 'path';
 import { CaturManager } from './caturWs.js';
+import { CATUR_HTML } from './catur_repo.js';
+import { kirimForwardSigned } from './richHelper.js';
 
 const TUTORIAL_STORAGE_PATH = path.join(process.cwd(), 'database', 'catur_tutorial_users.json');
 
@@ -87,38 +89,42 @@ export async function kirimCatur(sock, chatId, senderJid, args = []) {
       });
     }
 
-    // Generate room catur 4 digit baru (jika ingin beralih ke 2-player)
-    const { code } = CaturManager.createRoomDirect('Pemain 1');
-    const playUrl = `${baseUrl.replace(/\/$/, '')}/?tab=catur`;
+    // Jika user meminta mode 3D Web Multiplayer
+    if (subCmd === '3d' || subCmd === 'room' || subCmd === 'web' || subCmd === 'multiplayer') {
+      const { code } = CaturManager.createRoomDirect('Pemain 1');
+      const playUrl = `${baseUrl.replace(/\/$/, '')}/?tab=catur`;
 
-    let caption = [
-      "♟️ *CATUR 3D KLASIK REALTIME*",
-      "━━━━━━━━━━━━━━━━━━━━━━",
-      "🤖 *Otomatis Mode Lawan Bot (Normal)*",
-      "Papan catur 3D langsung aktif dan siap dimainkan!",
-      "Tingkat tantangan (*Easy, Normal, Hard, Extreme*) bisa kamu pilih langsung di *bagian atas papan catur*.",
-      "",
-      `🌐 *Tautan Langsung Main:*`,
-      `${playUrl}`,
-      "",
-      "👥 *Mau Tanding 2-Player Bareng Teman?*",
-      `🔑 *Kode Room:* \`${code}\` *(4 Digit)*`,
-      `Cukup klik tombol *[👥 2-Player]* di bagian atas papan catur dan bagikan kode di atas ke temanmu!`
-    ];
+      let caption = [
+        "♟️ *CATUR 3D KLASIK REALTIME*",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "🤖 *Otomatis Mode Lawan Bot (Normal)*",
+        "Papan catur 3D langsung aktif dan siap dimainkan!",
+        "Tingkat tantangan (*Easy, Normal, Hard, Extreme*) bisa kamu pilih langsung di *bagian atas papan catur*.",
+        "",
+        `🌐 *Tautan Langsung Main:*`,
+        `${playUrl}`,
+        "",
+        "👥 *Mau Tanding 2-Player Bareng Teman?*",
+        `🔑 *Kode Room:* \`${code}\` *(4 Digit)*`,
+        `Cukup klik tombol *[👥 2-Player]* di bagian atas papan catur dan bagikan kode di atas ke temanmu!`
+      ];
 
-    // Jika pengguna BARU pertama kali menjalankan .catur, lampirkan tutorialnya sekali doang
-    if (!hasSeenTutorial) {
-      caption.push("");
-      caption.push(TEKS_TUTORIAL_CATUR);
-      markTutorialShown(sender);
-    } else {
-      caption.push("");
-      caption.push("💡 *Tips:* Ketik *.catur tutorial* kapan saja jika ingin membaca ulang gerakan bidak & strategi catur.");
+      if (!hasSeenTutorial) {
+        caption.push("");
+        caption.push(TEKS_TUTORIAL_CATUR);
+        markTutorialShown(sender);
+      } else {
+        caption.push("");
+        caption.push("💡 *Tips:* Ketik *.catur tutorial* untuk panduan, atau *.catur* untuk main game catur interaktif langsung di chat!");
+      }
+
+      return sock.sendMessage(chatId, {
+        text: caption.join("\n")
+      });
     }
 
-    await sock.sendMessage(chatId, {
-      text: caption.join("\n")
-    });
+    // DEFAULT: Kirim Rich Response Interactive Rimuru Chess langsung di chat WhatsApp!
+    return await kirimForwardSigned(sock, chatId, CATUR_HTML, '♟️ RIMURU CHESS v1');
 
   } catch (err) {
     console.error('[CATUR]', err?.message || err);
@@ -157,5 +163,5 @@ async function handler(m, options = {}) {
   }
 }
 
-export { pluginConfig as config, handler };
+export { pluginConfig as config, handler, CATUR_HTML, kirimForwardSigned };
 export default handler;

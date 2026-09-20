@@ -1,5 +1,5 @@
 // ======================================================
-// GROUP LOCK MANAGER V3 (Permanent Persistent Storage)
+// GROUP LOCK MANAGER V4 (Independent & Resilient Storage)
 // ======================================================
 import fs from "fs"
 import path from "path"
@@ -23,8 +23,7 @@ export const botLock = {
 }
 
 /**
- * Muat data penguncian dari disk secara permanen
- * Menjamin status terkunci tidak pernah hilang meski bot mati / sesi login reset
+ * Muat data penguncian dari disk secara permanen & mandiri
  */
 export function loadLockStorage() {
   try {
@@ -34,13 +33,15 @@ export function loadLockStorage() {
 
     if (fs.existsSync(DB_FILE)) {
       const raw = fs.readFileSync(DB_FILE, "utf-8")
-      const data = JSON.parse(raw)
-      botLock.allLocked = Boolean(data.allLocked)
-      botLock.lockedAt = data.lockedAt || null
-      botLock.groups = (data.groups && typeof data.groups === "object") ? data.groups : {}
-      botLock.aktif = botLock.allLocked || Object.values(botLock.groups).some(g => g.locked)
-      console.log(`🔒 [KUNCI] Berhasil memuat ${Object.keys(botLock.groups).length} grup dari penyimpanan permanen. Status AllLocked: ${botLock.allLocked}`)
-      return
+      if (raw && raw.trim().length > 0) {
+        const data = JSON.parse(raw)
+        botLock.allLocked = Boolean(data.allLocked)
+        botLock.lockedAt = data.lockedAt || null
+        botLock.groups = (data.groups && typeof data.groups === "object") ? data.groups : {}
+        botLock.aktif = botLock.allLocked || Object.values(botLock.groups).some(g => g.locked === true)
+        console.log(`🔒 [KUNCI] Berhasil memuat ${Object.keys(botLock.groups).length} grup dari database. AllLocked: ${botLock.allLocked}`)
+        return
+      }
     }
   } catch (e) {
     console.error("🔒 [KUNCI] Gagal membaca locked_groups.json:", e.message)
@@ -69,7 +70,9 @@ export function saveLockStorage() {
       groups: botLock.groups || {}
     }
 
-    fs.writeFileSync(DB_FILE, JSON.stringify(payload, null, 2), "utf-8")
+    const tmpFile = `${DB_FILE}.tmp`
+    fs.writeFileSync(tmpFile, JSON.stringify(payload, null, 2), "utf-8")
+    fs.renameSync(tmpFile, DB_FILE)
   } catch (e) {
     console.error("🔒 [KUNCI] Gagal menulis locked_groups.json:", e.message)
   }
@@ -78,6 +81,9 @@ export function saveLockStorage() {
 // Inisialisasi awal saat modul dimuat
 loadLockStorage()
 
+/**
+ * Normalisasi JID WhatsApp agar seragam di semua event
+ */
 export const cleanJid = (jid) => {
   if (!jid || typeof jid !== "string") return ""
   let clean = jid.trim().toLowerCase()
@@ -99,7 +105,7 @@ export const setKunci = (status = false) => {
   return botLock.aktif
 }
 
-const ensureGroup = (id, name = "Unknown Group") => {
+export const ensureGroup = (id, name = "Unknown Group") => {
   const cleanId = cleanJid(id)
   if (!cleanId) return null
 
@@ -137,17 +143,18 @@ export const removeGroup = (id) => {
 
 /**
  * Memeriksa apakah suatu grup sedang dikunci
- * 1. Jika grup tercatat di database/memory:
- *    - Jika locked === false -> PASTI DIBUKA (return false)
- *    - Jika locked === true  -> PASTI DIKUNCI (return true)
- * 2. Jika grup belum pernah tercatat, ikuti botLock.allLocked
+ * 1. Hanya grup (@g.us) yang bisa dikunci (Private chat tidak pernah dikunci).
+ * 2. Jika grup tercatat di database:
+ *    - Jika locked === false atau explicitlyUnlocked === true -> PASTI DIBUKA (return false)
+ *    - Jika locked === true -> PASTI DIKUNCI (return true)
+ * 3. Jika grup belum terdaftar di database:
+ *    - Ikuti botLock.allLocked
  */
 export const isLocked = (chat) => {
   if (!chat) return false
   const cleanId = cleanJid(chat)
-  if (!cleanId.endsWith('@g.us')) return false // Kunci hanya berlaku untuk grup
+  if (!cleanId || !cleanId.endsWith('@g.us')) return false // Kunci hanya berlaku untuk grup
 
-  // 1. Cek langsung status grup yang tercatat
   const g = botLock.groups[cleanId] || botLock.groups[chat]
   if (g) {
     if (g.locked === false || g.explicitlyUnlocked === true) {
@@ -158,7 +165,7 @@ export const isLocked = (chat) => {
     }
   }
 
-  // 2. Jika grup belum terdaftar, ikuti allLocked
+  // Jika belum ada di catatan, ikuti mode allLocked
   if (botLock.allLocked) {
     return true
   }
@@ -177,12 +184,14 @@ export const lockGroup = (chat, name) => {
   delete group.explicitlyUnlocked
   group.lockedAt = Date.now()
   group.updatedAt = Date.now()
+  
   if (botLock.groups[chat] && chat !== cleanId) {
     botLock.groups[chat].locked = true
     delete botLock.groups[chat].explicitlyUnlocked
     botLock.groups[chat].lockedAt = Date.now()
     botLock.groups[chat].updatedAt = Date.now()
   }
+
   botLock.aktif = true
   saveLockStorage()
   return group
@@ -190,10 +199,9 @@ export const lockGroup = (chat, name) => {
 
 /**
  * Buka kunci satu grup tertentu
- * Ketika satu grup dibuka, mode beralih dari allLocked ke selektif per-grup:
- * - Grup yang dipilih menjadi locked = false (DIBUKA)
- * - Grup-grup lain yang terkunci TETAP terkunci
- * - allLocked diubah jadi false agar tidak ada kontradiksi status
+ * Ketika satu grup dibuka:
+ * - Grup yang dipilih menjadi locked = false & explicitlyUnlocked = true
+ * - Status disimpan seketika ke file penyimpanan permanen
  */
 export const unlockGroup = (chat) => {
   const cleanId = cleanJid(chat)
@@ -202,22 +210,20 @@ export const unlockGroup = (chat) => {
   group.locked = false
   group.explicitlyUnlocked = true
   group.updatedAt = Date.now()
+
   if (botLock.groups[chat] && chat !== cleanId) {
     botLock.groups[chat].locked = false
     botLock.groups[chat].explicitlyUnlocked = true
     botLock.groups[chat].updatedAt = Date.now()
   }
 
-  // Mengubah allLocked menjadi false karena sudah ada grup yang dibuka
-  botLock.allLocked = false
-  botLock.aktif = Object.values(botLock.groups).some(g => g.locked)
+  botLock.aktif = Object.values(botLock.groups).some(g => g.locked === true)
   saveLockStorage()
   return group
 }
 
 /**
- * MODE 1: Kunci SEMUA grup tanpa sisa!
- * Menandai botLock.allLocked = true dan seluruh grup yang tercatat menjadi locked = true
+ * Kunci SEMUA grup tanpa sisa
  */
 export const lockAllGroups = () => {
   botLock.allLocked = true
@@ -245,7 +251,7 @@ export const unlockAllGroups = () => {
 
   for (const id in botLock.groups) {
     botLock.groups[id].locked = false
-    delete botLock.groups[id].explicitlyUnlocked
+    botLock.groups[id].explicitlyUnlocked = true
     botLock.groups[id].updatedAt = Date.now()
   }
 
@@ -257,27 +263,26 @@ export const getAllGroups = () => Object.values(botLock.groups)
 
 export const getLockedGroups = () => {
   const all = Object.values(botLock.groups)
-  return all.filter(v => v.locked === true)
+  return all.filter(v => v.locked === true && !v.explicitlyUnlocked)
 }
 
 export const getUnlockedGroups = () => {
   const all = Object.values(botLock.groups)
-  return all.filter(v => !v.locked)
+  return all.filter(v => v.locked === false || v.explicitlyUnlocked === true)
 }
 
 /**
- * Sinkronisasi grup dari koneksi Baileys
- * CATATAN: Dilengkapi timeout 6 detik agar tidak pernah menggantung/blocking jika WA lambat
+ * Sinkronisasi grup dari koneksi Baileys secara non-blocking & aman
  */
 export const syncGroups = async (conn) => {
   try {
     if (!conn?.groupFetchAllParticipating) return getAllGroups()
     
-    // Timeout safeguard 6 detik
+    // Timeout safeguard 3 detik agar tidak menghalangi respons bot
     const fetchPromise = conn.groupFetchAllParticipating()
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout sync Baileys")), 6000))
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout sync Baileys")), 3000))
     const groups = await Promise.race([fetchPromise, timeoutPromise]).catch(err => {
-      console.warn("⚠️ [GroupLock Sync Timeout/Warning]:", err.message || err)
+      console.warn("⚠️ [GroupLock Sync Warning]:", err.message || err)
       return null
     })
 
@@ -318,3 +323,4 @@ export const syncGroups = async (conn) => {
     return getAllGroups()
   }
 }
+
