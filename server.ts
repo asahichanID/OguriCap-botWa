@@ -291,11 +291,11 @@ function startBot(options?: { botNumber?: string; customCode?: string }) {
         botState.status = 'stopped';
         isIntentionalStop = false;
         broadcastEvent('status', botState);
-      } else if (code !== 0 && (wasRunning || hadSession)) {
-        // Unexpected exit: auto-reconnect with 3s backoff to ensure long-running bot stability
+      } else if (wasRunning || hadSession) {
+        // Auto-reconnect 24/7 untuk memastikan bot selalu hidup sepanjang waktu
         botState.status = 'reconnecting';
         broadcastEvent('status', botState);
-        addLog('system', '[MANAGER] Terjadi penghentian proses tak terduga, mencoba menyambungkan ulang bot dalam 3 detik...');
+        addLog('system', `[MANAGER] Proses bot berhenti (code: ${code}, signal: ${signal}), auto-restart dalam 3 detik untuk menjaga uptime 24/7...`);
         setTimeout(() => {
           if (!botProcess && !isIntentionalStop) {
             startBot();

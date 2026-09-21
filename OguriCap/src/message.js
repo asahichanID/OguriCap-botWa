@@ -35,6 +35,57 @@ let nazeHandler = null;
 const botStartTime = Date.now();
 const groupMetadataTimers = {};
 
+// ============================================================
+// ⚡ FAST GROUP METADATA CACHE & IN-FLIGHT DEDUPLICATION
+// ============================================================
+const metadataFetchPromises = new Map();
+const metadataCacheTime = new Map();
+const METADATA_TTL_MS = 10 * 60 * 1000; // 10 menit TTL
+
+export async function getOrFetchGroupMetadata(naze, jid, store) {
+	if (!jid || !jid.endsWith('@g.us')) return {};
+	store.groupMetadata ??= {};
+	const now = Date.now();
+	const cached = store.groupMetadata[jid];
+	const lastFetched = metadataCacheTime.get(jid) || 0;
+
+	// Gunakan memori cache jika data lengkap (punya participants) dan masih fresh (< 10 menit)
+	if (cached && Array.isArray(cached.participants) && cached.participants.length > 0 && (now - lastFetched) < METADATA_TTL_MS) {
+		return cached;
+	}
+
+	// In-flight deduplication: jika sudah ada request berjalan untuk grup yang sama, gunakan Promise yang sama
+	if (metadataFetchPromises.has(jid)) {
+		return await metadataFetchPromises.get(jid);
+	}
+
+	const promise = (async () => {
+		try {
+			const data = await naze.groupMetadata(jid);
+			if (data && Array.isArray(data.participants) && data.participants.length > 0) {
+				store.groupMetadata[jid] = data;
+				metadataCacheTime.set(jid, Date.now());
+				return data;
+			}
+			return cached || data || {};
+		} catch (e) {
+			return cached || {};
+		} finally {
+			metadataFetchPromises.delete(jid);
+		}
+	})();
+
+	metadataFetchPromises.set(jid, promise);
+	return await promise;
+}
+
+export function invalidateGroupMetadataCache(jid) {
+	if (jid) {
+		metadataCacheTime.delete(jid);
+		metadataFetchPromises.delete(jid);
+	}
+}
+
 /*
 	* Create By Naze
 	* Follow https://github.com/nazedev
@@ -582,11 +633,10 @@ async function MessagesUpsert(naze, message, store) {
 		if (store.messages[remoteJid].keyId.has(msg.key.id)) return;
 		store.messages[remoteJid].array.push(msg);
 		store.messages[remoteJid].keyId.add(msg.key.id);
-		if (store.messages[remoteJid].array.length > 50) {
+		if (store.messages[remoteJid].array.length > 20) {
 			const old = store.messages[remoteJid].array.shift();
 			if (old?.key?.id) store.messages[remoteJid].keyId.delete(old.key.id);
 		}
-		if (!store.groupMetadata || Object.keys(store.groupMetadata).length === 0) store.groupMetadata ??= await naze.groupFetchAllParticipating().catch(e => ({}));
 		const type = msg.message ? (getContentType(msg.message) || Object.keys(msg.message)[0]) : '';
 		const m = await Serialize(naze, msg, store);
 		if (nazeHandler) {
@@ -1510,14 +1560,9 @@ async function Serialize(naze, msg, store) {
 		if (!m.isGroup && m.chat.endsWith('@lid')) m.chat = naze.findJidByLid(m.chat, store) || m.chat;
 		m.sender = naze.decodeJid(m.fromMe && naze.user.id || m.key.participantAlt || m.key.participant || m.chat || '')
 		if (m.isGroup) {
-			if (!store.groupMetadata) store.groupMetadata = await naze.groupFetchAllParticipating().catch(e => ({}));
-			let metadata = store.groupMetadata[m.chat] ? store.groupMetadata[m.chat] : (store.groupMetadata[m.chat] = await naze.groupMetadata(m.chat).catch(e => ({ ...store.groupMetadata[m.chat] })));
-			if (!metadata) {
-				metadata = await naze.groupMetadata(m.chat).catch(e => ({ ...store.groupMetadata[m.chat] }));
-				store.groupMetadata[m.chat] = metadata
-			}
-			m.metadata = metadata
-			m.metadata.size = (metadata.participants || []).length;
+			const metadata = await getOrFetchGroupMetadata(naze, m.chat, store);
+			m.metadata = metadata || {};
+			m.metadata.size = (m.metadata.participants || []).length;
 			if (metadata.addressingMode === 'lid') {
 				const participant = metadata.participants.find(a => a.id === m.sender || a.phoneNumber === m.sender)
 				m.sender = participant?.phoneNumber || m.key.participantAlt || m.sender;
@@ -1659,6 +1704,11 @@ async function Serialize(naze, msg, store) {
 	
 	m.reply = async (content, options = {}) => {
 		const { quoted = m, chat = m.chat, caption = '', mentions = [], ephemeralExpiration = m.expiration || m?.metadata?.ephemeralDuration || store?.messages[m.chat]?.array?.slice(-1)[0]?.metadata?.ephemeralDuration || 0, ...validate } = options;
+		// Non-blocking anti-ban presence & traffic heartbeat
+		if (naze?.sendPresenceUpdate && chat) {
+			naze.sendPresenceUpdate('composing', chat).catch(() => {});
+		}
+		global.__recordOguriTraffic?.();
 		const textBody = typeof content === 'string' ? content : (content.text || content.caption || '');
 		const providedMentions = Array.isArray(mentions) ? mentions : [];
 		const extractedMentions = [...textBody.matchAll(/@(\d{5,16})/g)].map(v => v[1] + '@s.whatsapp.net');

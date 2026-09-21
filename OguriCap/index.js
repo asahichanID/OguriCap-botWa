@@ -1,6 +1,14 @@
 import './settings.js';
 import { sanitizeSairidev } from './scripts/clean-sairidev.js';
 
+// Anti-crash global exception handlers untuk stabilitas 24/7
+process.on('uncaughtException', (err) => {
+	console.error('[GLOBAL UNCAUGHT EXCEPTION]', err?.stack || err?.message || err);
+});
+process.on('unhandledRejection', (reason) => {
+	console.error('[GLOBAL UNHANDLED REJECTION]', reason?.stack || reason?.message || reason);
+});
+
 // Jalankan sistem proteksi anti-ban sairidev sebelum inisialisasi socket Baileys
 try {
 	sanitizeSairidev();
@@ -209,7 +217,8 @@ global.fetchApi = async (endpoint = '/', data = {}, options = {}) => {
 
 const storeDB = dataBase(global.tempatStore);
 const database = dataBase(global.tempatDB);
-const msgRetryCounterCache = new NodeCache();
+// Cache counter retry pesan dengan TTL 5 menit & limit memori agar tidak bocor
+const msgRetryCounterCache = new NodeCache({ stdTTL: 300, checkperiod: 60, maxKeys: 2000 });
 
 if (fs.existsSync(tempDir)) {
 	fs.readdirSync(tempDir).forEach(file => {
@@ -246,7 +255,124 @@ server.listen(PORT, () => {
 	* Whatsapp : https://whatsapp.com/channel/0029VaWOkNm7DAWtkvkJBK43
 */
 
+// ============================================================================
+// 24/7 HIGH-AVAILABILITY & ANTI-BAN STABILITY ENGINE
+// ============================================================================
+let isReconnecting = false;
+let reconnectAttempts = 0;
+let reconnectTimer = null;
+let lastTrafficTimestamp = Date.now();
+
+global.__recordOguriTraffic = () => {
+	lastTrafficTimestamp = Date.now();
+};
+
+function scheduleReconnect(reasonCode = null, customDelay = null) {
+	if (global.isShuttingDown) return;
+	if (isReconnecting) return;
+	isReconnecting = true;
+
+	// Backoff bertingkat (exponential backoff + jitter) agar aman dari rate limit & ban WhatsApp
+	const baseDelay = customDelay || Math.min(30000, Math.pow(2, Math.min(reconnectAttempts, 5)) * 1500);
+	const jitter = Math.floor(Math.random() * 1000);
+	const delay = Math.max(1500, baseDelay + jitter);
+
+	reconnectAttempts++;
+	console.log(chalk.yellow(`[RECONNECT] Menyambungkan ulang bot dalam ${(delay / 1000).toFixed(1)}s (Percobaan #${reconnectAttempts}, reason: ${reasonCode || 'unknown'})...`));
+
+	if (reconnectTimer) clearTimeout(reconnectTimer);
+	reconnectTimer = setTimeout(async () => {
+		isReconnecting = false;
+		try {
+			await startNazeBot();
+		} catch (err) {
+			console.error(chalk.red('[RECONNECT ERROR] Gagal restart socket:'), err?.message || err);
+			scheduleReconnect('init_failed', 5000);
+		}
+	}, delay);
+}
+
+// Watchdog & Heartbeat Monitor (Mendeteksi zombie/silent dead TCP socket)
+if (!global._watchdogTimer) {
+	global._watchdogTimer = setInterval(() => {
+		if (global.isShuttingDown || isReconnecting) return;
+		if (!global.nazeSocket?.user?.id || !global.nazeSocket?.authState?.creds?.registered) return;
+
+		const now = Date.now();
+		const idleDuration = now - lastTrafficTimestamp;
+
+		// Jika 3 - 6 menit hening, kirim health ping & presence update ringan
+		if (idleDuration > 3 * 60 * 1000 && idleDuration < 6 * 60 * 1000) {
+			try {
+				if (global.nazeSocket.ws && global.nazeSocket.ws.readyState === 1) {
+					global.nazeSocket.ws.ping();
+					global.nazeSocket.sendPresenceUpdate('available').catch(() => {});
+				}
+			} catch (e) {}
+		} else if (idleDuration >= 6 * 60 * 1000) {
+			// Jika 6 menit tanpa respon/traffic dari WhatsApp, TCP socket freeze
+			console.log(chalk.yellow(`[WATCHDOG] Koneksi WhatsApp terdeteksi freeze/stalled (idle ${Math.round(idleDuration / 1000)}s). Menjalankan auto-reconnect mandiri...`));
+			lastTrafficTimestamp = Date.now();
+			scheduleReconnect('watchdog_freeze', 1000);
+		}
+	}, 60 * 1000);
+	if (global._watchdogTimer?.unref) global._watchdogTimer.unref();
+}
+
+// Memory & Temp Garbage Collection (Pencegah Memory Leak 24/7 setiap 15 Menit)
+if (!global._gcCleanupTimer) {
+	global._gcCleanupTimer = setInterval(() => {
+		try {
+			// 1. Pangkas riwayat chat messages (maksimal 20 pesan per chat)
+			if (global.store?.messages) {
+				const chats = Object.keys(global.store.messages);
+				for (const cid of chats) {
+					const c = global.store.messages[cid];
+					if (c?.array && c.array.length > 20) {
+						c.array = c.array.slice(-20);
+						if (c.keyId instanceof Set) {
+							c.keyId = new Set(c.array.map(m => m?.key?.id).filter(Boolean));
+						}
+					}
+				}
+			}
+			// 2. Bersihkan presence cache lama
+			if (global.store?.presences) {
+				global.store.presences = {};
+			}
+			// 3. Bersihkan file temp lama (> 15 menit)
+			if (fs.existsSync(tempDir)) {
+				const now = Date.now();
+				const files = fs.readdirSync(tempDir);
+				for (const file of files) {
+					try {
+						const fp = path.join(tempDir, file);
+						const stat = fs.statSync(fp);
+						if (now - stat.mtimeMs > 15 * 60 * 1000) {
+							fs.unlinkSync(fp);
+						}
+					} catch (e) {}
+				}
+			}
+			// 4. Panggil V8 garbage collection bila tersedia
+			if (global.gc) {
+				global.gc();
+			}
+		} catch (e) {}
+	}, 15 * 60 * 1000);
+	if (global._gcCleanupTimer?.unref) global._gcCleanupTimer.unref();
+}
+
 async function startNazeBot() {
+	// Bersihkan instance socket lama sebelum membuat yang baru agar event emitter tidak bertumpuk
+	if (global.nazeSocket) {
+		try {
+			global.nazeSocket.ev?.removeAllListeners();
+			global.nazeSocket.ws?.close();
+			global.nazeSocket.ws?.terminate();
+		} catch (e) {}
+		global.nazeSocket = null;
+	}
 	try {
 		global.database = database
 		const loadData = await database.read()
@@ -329,24 +455,23 @@ async function startNazeBot() {
 		logger: level,
 		getMessage,
 		syncFullHistory: false,
-		maxMsgRetryCount: 15,
+		maxMsgRetryCount: 5,
 		msgRetryCounterCache,
-		retryRequestDelayMs: 10,
-		defaultQueryTimeoutMs: 0,
+		retryRequestDelayMs: 250,
+		defaultQueryTimeoutMs: 60000,
 		connectTimeoutMs: 60000,
-		keepAliveIntervalMs: 30000,
+		keepAliveIntervalMs: 25000,
 		browser: Browsers.ubuntu('Chrome'),
 		generateHighQualityLinkPreview: false,
+		markOnlineOnConnect: true,
 		transactionOpts: {
-			maxCommitRetries: 10,
-			delayBetweenTriesMs: 10,
+			maxCommitRetries: 5,
+			delayBetweenTriesMs: 50,
 		},
 	// AUDIT (bug: interactive message tidak sampai ke anggota grup): Baileys
 	// mendokumentasikan bahwa mengirim pesan ke grup butuh daftar participant
 	// grup untuk enkripsi per-participant, dan merekomendasikan socket diberi
-	// `cachedGroupMetadata` untuk itu. Sebelumnya opsi ini TIDAK dikonfigurasi
-	// sama sekali di sini. Disambungkan ke cache `global.store.groupMetadata`
-	// yang memang sudah dipakai project ini di tempat lain (src/message.js).
+	// `cachedGroupMetadata` untuk itu. Disambungkan ke cache `global.store.groupMetadata`.
 	cachedGroupMetadata: async (jid) => global.store?.groupMetadata?.[jid],
 		appStateMacVerification: {
 			patch: true,
@@ -357,6 +482,8 @@ async function startNazeBot() {
 			keys: makeCacheableSignalKeyStore(state.keys, level),
 		},
 	})
+
+	global.nazeSocket = naze;
 	
 	if (pairingCode && !phoneNumber && !naze.authState.creds.registered) {
 		async function getPhoneNumber() {
@@ -435,39 +562,31 @@ async function startNazeBot() {
 				console.log(chalk.red('[SYSTEM] Connection closed during intentional shutdown. Aborting reconnect.'));
 				return;
 			}
-			const reason = new Boom(lastDisconnect?.error)?.output.statusCode
-			if (reason === DisconnectReason.connectionLost) {
-				console.log('Connection to Server Lost, Attempting to Reconnect...');
-				startNazeBot()
-			} else if (reason === DisconnectReason.connectionClosed) {
-				console.log('Connection closed, Attempting to Reconnect...');
-				startNazeBot()
-			} else if (reason === DisconnectReason.restartRequired) {
-				console.log('Restart Required...');
-				startNazeBot()
-			} else if (reason === DisconnectReason.timedOut) {
-				console.log('Connection Timed Out, Attempting to Reconnect...');
-				startNazeBot()
-			} else if (reason === DisconnectReason.badSession) {
-				console.log('Delete Session and Scan again...');
-				startNazeBot()
-			} else if (reason === DisconnectReason.connectionReplaced) {
-				console.log('Close current Session first...');
-			} else if (reason === DisconnectReason.loggedOut) {
-				console.log('Scan again and Run...');
-				process.exit(0)
+			const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
+			if (reason === DisconnectReason.loggedOut) {
+				console.log(chalk.redBright('[SYSTEM] Sesi WhatsApp Logout. Scan atau pairing ulang...'));
+				process.exit(0);
 			} else if (reason === DisconnectReason.forbidden) {
-				console.log('Connection Failure, Scan again and Run...');
-				process.exit(1)
+				console.log(chalk.redBright('[SYSTEM] Akses WhatsApp ditolak (Forbidden). Scan ulang...'));
+				process.exit(1);
 			} else if (reason === DisconnectReason.multideviceMismatch) {
-				console.log('Scan again...');
-				process.exit(0)
+				console.log(chalk.yellowBright('[SYSTEM] Multi-device mismatch. Scan ulang...'));
+				process.exit(0);
 			} else {
-				naze.end(`Unknown DisconnectReason : ${reason}|${connection}`)
+				// Semua alasan putus lainnya (408 connectionLost, 428 connectionClosed, 515 restartRequired, 408 timedOut, 500 badSession, 440 connectionReplaced, 503, socket error, dll)
+				console.log(chalk.yellow(`[DISCONNECT] Socket closed (Reason: ${reason || 'unknown'}). Menjadwalkan reconnect otomatis...`));
+				scheduleReconnect(reason);
 			}
 		}
 		if (connection == 'open') {
 			console.log('Connected to : ' + JSON.stringify(naze.user, null, 2));
+			reconnectAttempts = 0;
+			isReconnecting = false;
+			if (reconnectTimer) {
+				clearTimeout(reconnectTimer);
+				reconnectTimer = null;
+			}
+			lastTrafficTimestamp = Date.now();
 			let botNumber = naze.decodeJid(naze.user.id);
 			if (global.db?.set[botNumber] && !global.db?.set[botNumber]?.join) {
 				// [BAN PROTECTION] Auto-follow saluran dinonaktifkan secara permanen untuk mencegah ban WhatsApp
@@ -502,14 +621,17 @@ async function startNazeBot() {
 	});
 	
 	naze.ev.on('messages.upsert', async (message) => {
+		global.__recordOguriTraffic?.();
 		await MessagesUpsert(naze, message, global.store);
 	});
 	
 	naze.ev.on('group-participants.update', async (update) => {
+		global.__recordOguriTraffic?.();
 		await GroupParticipantsUpdate(naze, update, global.store);
 	});
 	
 	naze.ev.on('groups.update', (update) => {
+		global.__recordOguriTraffic?.();
 		for (const n of update) {
 			if (global.store.groupMetadata[n.id]) {
 				Object.assign(global.store.groupMetadata[n.id], n);
@@ -518,6 +640,7 @@ async function startNazeBot() {
 	});
 	
 	naze.ev.on('presence.update', (update) => {
+		global.__recordOguriTraffic?.();
 		const { id, presences } = update;
 		store.presences[id] = global.store.presences?.[id] || {};
 		Object.assign(global.store.presences[id], presences);
