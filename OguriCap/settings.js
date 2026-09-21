@@ -117,7 +117,7 @@ global.mahiruAI = {
 	customModel: 'gpt-4o-mini', // Model untuk endpoint pihak ketiga (contoh: 'gpt-4o', 'claude-3-5-sonnet', dll).
 
 	// [2] Google Gemini Resmi (Official API)
-	geminiKey: 'AIzaSyDyVcbniZLWNz9JAJD1iVLWrC9BK36SqoM', // API Key Gemini resmi hemat token & super responsif
+	geminiKey: process.env.GEMINI_API_KEY || '', // API Key Gemini resmi (diambil dari environment GEMINI_API_KEY atau isi di sini)
 	geminiModel: 'gemini-3.1-flash-lite', // Model Gemini resmi yang hemat token, cepat, dan percakapannya terasa seperti manusia nyata
 }
 

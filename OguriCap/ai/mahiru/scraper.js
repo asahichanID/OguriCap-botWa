@@ -16,14 +16,16 @@ let cachedGeminiClients = new Map();
 
 /**
  * Mengambil konfigurasi Mahiru AI dari global.mahiruAI (OguriCap/settings.js),
- * dengan fallback ke environment variables jika ada.
+ * dengan prioritas environment variables untuk deployment production.
  */
 export function getMahiruConfig() {
 	const conf = global.mahiruAI || {};
 	const apiUrl = (conf.apiUrl || global.mahiruApiUrl || global.mahiruUrl || '').trim();
 	const apiKey = (conf.apiKey || global.mahiruApiKey || '').trim();
 	const customModel = (conf.customModel || conf.model || global.mahiruModel || 'gpt-4o-mini').trim();
-	const geminiKey = (conf.geminiKey || global.mahiruGeminiKey || global.geminiKey || process.env.GEMINI_API_KEY || '').trim();
+
+	// Prioritaskan GEMINI_API_KEY dari environment untuk Cloud Run / production
+	const geminiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || conf.geminiKey || global.mahiruGeminiKey || global.geminiKey || '').trim();
 	const geminiModel = (conf.geminiModel || global.mahiruGeminiModel || 'gemini-3.1-flash-lite').trim();
 
 	return {
@@ -37,11 +39,21 @@ export function getMahiruConfig() {
 
 function getGeminiClient(customApiKey = '') {
 	const config = getMahiruConfig();
-	const apiKey = customApiKey || config.geminiKey || process.env.GEMINI_API_KEY || '';
+	const apiKey = (customApiKey || config.geminiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '').trim();
 	if (!apiKey) return null;
 
+	// Lewati jika key adalah placeholder atau key bocor yang diketahui diblokir Google
+	if (apiKey === 'AIzaSyDyVcbniZLWNz9JAJD1iVLWrC9BK36SqoM') return null;
+
 	if (!cachedGeminiClients.has(apiKey)) {
-		cachedGeminiClients.set(apiKey, new GoogleGenAI({ apiKey }));
+		cachedGeminiClients.set(apiKey, new GoogleGenAI({
+			apiKey,
+			httpOptions: {
+				headers: {
+					'User-Agent': 'aistudio-build'
+				}
+			}
+		}));
 	}
 	return cachedGeminiClients.get(apiKey);
 }
@@ -230,61 +242,96 @@ async function generateThirdPartyAI(messages = [], systemPrompt = '', config = {
  */
 async function generateGeminiDirect(messages = [], systemPrompt = '', timeoutMs = 12000, config = null) {
 	const conf = config || getMahiruConfig();
-	const ai = getGeminiClient(conf.geminiKey);
-	if (!ai) throw new Error('GEMINI_API_KEY tidak tersedia di settings.js maupun env');
+	const availableKeys = [
+		process.env.GEMINI_API_KEY,
+		process.env.GOOGLE_API_KEY,
+		conf.geminiKey
+	].filter(k => k && typeof k === 'string' && k.trim().length > 10 && k.trim() !== 'AIzaSyDyVcbniZLWNz9JAJD1iVLWrC9BK36SqoM');
 
-	// Format messages into Gemini multi-turn contents format
-	const contents = messages.slice(-10).map(m => ({
-		role: m.role === 'user' ? 'user' : 'model',
-		parts: [{ text: m.content }]
-	}));
-
-	if (contents.length === 0) throw new Error('No messages provided');
-
-	// If the first message in contents is from 'model', drop it to ensure valid alternation starting with 'user'
-	while (contents.length > 0 && contents[0].role !== 'user') {
-		contents.shift();
+	// Hapus duplikat key
+	const uniqueKeys = [...new Set(availableKeys.map(k => k.trim()))];
+	if (uniqueKeys.length === 0) {
+		throw new Error('GEMINI_API_KEY tidak tersedia atau tidak valid di environment/settings.js');
 	}
 
-	if (contents.length === 0) throw new Error('No user messages found');
+	// Format messages into Gemini multi-turn contents format strictly alternating user/model
+	const rawTurns = messages.slice(-10).map(m => ({
+		role: m.role === 'user' ? 'user' : 'model',
+		text: (m.content || '').trim()
+	})).filter(m => m.text.length > 0);
 
-	// Model prioritas: model hemat token yang dipilih di settings.js, lalu fallback resmi lainnya
+	const sanitizedContents = [];
+	for (const turn of rawTurns) {
+		const last = sanitizedContents[sanitizedContents.length - 1];
+		if (last && last.role === turn.role) {
+			last.parts[0].text += `\n${turn.text}`;
+		} else {
+			sanitizedContents.push({
+				role: turn.role,
+				parts: [{ text: turn.text }]
+			});
+		}
+	}
+
+	// Pastikan konten dimulai dari role user
+	while (sanitizedContents.length > 0 && sanitizedContents[0].role !== 'user') {
+		sanitizedContents.shift();
+	}
+
+	if (sanitizedContents.length === 0) {
+		sanitizedContents.push({
+			role: 'user',
+			parts: [{ text: 'Halo Mahiru' }]
+		});
+	}
+
+	// Model prioritas resmi Gemini 2025/2026:
+	// gemini-3.1-flash-lite (sangat cepat, hemat token, stabil)
+	// gemini-3.8-flash (kualitas percakapan tinggi)
+	// gemini-flash-latest (model flash terbaru)
 	const userModel = conf.geminiModel || 'gemini-3.1-flash-lite';
 	const candidateModels = [
 		userModel,
 		'gemini-3.1-flash-lite',
-		'gemini-2.5-flash',
-		'gemini-flash-latest',
-		'gemini-3.8-flash'
-	].filter((m, idx, arr) => m && arr.indexOf(m) === idx);
+		'gemini-3.8-flash',
+		'gemini-flash-latest'
+	].filter((m, idx, arr) => m && arr.indexOf(m) === idx && m !== 'gemini-2.5-flash');
 
-	for (const model of candidateModels) {
-		try {
-			const timeoutPromise = new Promise((_, reject) =>
-				setTimeout(() => reject(new Error(`Gemini Direct timeout (${model})`)), timeoutMs)
-			);
+	let lastError = null;
 
-			const apiPromise = ai.models.generateContent({
-				model,
-				contents,
-				config: {
-					systemInstruction: systemPrompt,
-					temperature: 0.85,
-					topP: 0.95,
-					maxOutputTokens: 450
+	for (const apiKey of uniqueKeys) {
+		const ai = getGeminiClient(apiKey);
+		if (!ai) continue;
+
+		for (const model of candidateModels) {
+			try {
+				const timeoutPromise = new Promise((_, reject) =>
+					setTimeout(() => reject(new Error(`Gemini Direct timeout (${model})`)), timeoutMs)
+				);
+
+				const apiPromise = ai.models.generateContent({
+					model,
+					contents: sanitizedContents,
+					config: {
+						systemInstruction: systemPrompt ? { parts: [{ text: systemPrompt }] } : undefined,
+						temperature: 0.85,
+						topP: 0.95,
+						maxOutputTokens: 500
+					}
+				});
+
+				const res = await Promise.race([apiPromise, timeoutPromise]);
+				if (res?.text && typeof res.text === 'string' && res.text.trim().length > 0) {
+					return res.text.trim();
 				}
-			});
-
-			const res = await Promise.race([apiPromise, timeoutPromise]);
-			if (res?.text && typeof res.text === 'string' && res.text.trim().length > 0) {
-				return res.text.trim();
+			} catch (err) {
+				lastError = err;
+				console.warn(`[MahiruAI:GeminiDirect] Model ${model} gagal (${err.message}). Mencoba opsi berikutnya...`);
 			}
-		} catch (err) {
-			console.warn(`[MahiruAI:GeminiDirect] Model ${model} failed: ${err.message}`);
 		}
 	}
 
-	throw new Error('All Gemini Direct models failed');
+	throw new Error(`Semua opsi Gemini Direct gagal: ${lastError?.message || 'Unknown error'}`);
 }
 
 /**
@@ -706,27 +753,25 @@ export async function scrapeMahiruChat(
 		}
 	}
 
-	// [3] Prioritas Ketiga: Multi-Provider Scraper AI Gratis
+	// [3] Prioritas Ketiga: Multi-Provider Scraper AI Gratis (Konkuren Cepat)
 	const freeProviders = [
-		() => scrapeGeminiFree(messages, systemPrompt, 6000),
-		() => scrapeGpt4oFree(messages, systemPrompt, 6000),
-		() => scrapeClaudeFree(messages, systemPrompt, 6000),
-		() => scrapeBlackboxFree(messages, systemPrompt, 6000),
-		() => scrapePollinationsOpenAI(messages, systemPrompt, 7000)
+		scrapePollinationsOpenAI(messages, systemPrompt, 3500),
+		scrapeGpt4oFree(messages, systemPrompt, 3500),
+		scrapeGeminiFree(messages, systemPrompt, 3500),
+		scrapeClaudeFree(messages, systemPrompt, 3500),
+		scrapeBlackboxFree(messages, systemPrompt, 3500)
 	];
 
-	for (const provider of freeProviders) {
-		try {
-			const rawResponse = await provider();
-			if (rawResponse && typeof rawResponse === 'string' && rawResponse.trim().length > 0) {
-				const sanitized = sanitizeMahiruResponse(rawResponse, userName, isOwner);
-				if (sanitized && sanitized.length > 5) {
-					return sanitized;
-				}
+	try {
+		const rawResponse = await Promise.any(freeProviders);
+		if (rawResponse && typeof rawResponse === 'string' && rawResponse.trim().length > 0) {
+			const sanitized = sanitizeMahiruResponse(rawResponse, userName, isOwner);
+			if (sanitized && sanitized.length > 5) {
+				return sanitized;
 			}
-		} catch (err) {
-			// Lanjut ke provider scraper gratis berikutnya
 		}
+	} catch {
+		// Semua scraper gratis gagal / timeout, lanjut ke fallback dialog kontekstual offline
 	}
 
 	// [4] Prioritas Keempat: Dialog Kontekstual Offline Mahiru (100% aman tanpa error)
