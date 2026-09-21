@@ -1027,24 +1027,15 @@ const naze = async (naze, m, msg, store) => {
 				global._dbDirty = true;
 
 				let reason = user.afkReason || 'Sedang beristirahat';
-				const afkuma = getUmaQuote(pickRandom);
 
 				await m.reply(`
-╭─❖「 🏇 𝐓𝐑𝐀𝐈𝐍𝐄𝐑 𝐁𝐑𝐄𝐀𝐊 🏇 」
+╭───❖「 💤 𝗧𝗥𝗔𝗜𝗡𝗘𝗥 𝗦𝗘𝗗𝗔𝗡𝗚 𝗔𝗙𝗞 」
 │
-├ 🐎 Runner
-│ ❍ @${jid.split('@')[0]}
+│ 👤 *Trainer* : @${jid.split('@')[0]}
+│ 📝 *Alasan*  : ${reason}
+│ ⏳ *Durasi*  : ${clockString(new Date - afkTime)}
 │
-├ 📝 Last Training
-│ ❍ ${reason}
-│
-├ ⏳ Rest Duration
-│ ❍ ${clockString(new Date - afkTime)}
-│
-╰─────────────❖
-
-💬 ${afkuma.name}
-"${afkuma.quote}"
+╰──────────────────────────────❖
 `.trim(), {
 					mentions: [jid]
 				});
