@@ -453,6 +453,12 @@ if (!Array.isArray(bank.aktivitas))
 		const defaultUser = {
 			vip: false,
 			ban: false,
+			name: m.pushName || 'Trainer',
+			customName: '',
+			age: '',
+			keterangan: '',
+			tagTitle: '',
+			exp: 0,
 			afkTime: -1,
 			afkReason: '',
 			afkMentioned: false,
@@ -464,19 +470,16 @@ if (!Array.isArray(bank.aktivitas))
 			lastclaim: 0,
 			lastbegal: 0,
 			lastrampok: 0,
-			lastBank: 0
+			lastBank: 0,
+			lastFeature: '-'
 		};
 		for (let key in defaultUser) {
 			if (!(key in user)) user[key] = defaultUser[key];
 		}
 
-		// 🛡️ Sinkronisasi limit untuk Free User (maksimal 5 limit default)
-		if (!user.vip && !isPremium) {
-			if (typeof user.limit !== 'number' || isNaN(user.limit)) {
-				user.limit = global.limit.free || 5;
-			} else if (user.limit > (global.limit.free || 5)) {
-				user.limit = global.limit.free || 5;
-			}
+		// 🛡️ Pastikan limit bertindak sebagai saldo yang aman & valid
+		if (typeof user.limit !== 'number' || isNaN(user.limit)) {
+			user.limit = limitUser;
 		}
 		user.limitNotified = Boolean(user.limitNotified);
 		

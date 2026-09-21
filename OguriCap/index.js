@@ -532,7 +532,9 @@ async function startNazeBot() {
 			let botNumber = naze.decodeJid(naze.user.id);
 			for (let jid of user) {
 				const limitUser = global.db.users[jid].vip ? global.limit.vip : checkStatus(jid, global.db.premium) ? global.limit.premium : global.limit.free
-				global.db.users[jid].limit = limitUser
+				if (typeof global.db.users[jid].limit !== 'number' || global.db.users[jid].limit < limitUser) {
+					global.db.users[jid].limit = limitUser
+				}
 				global.db.users[jid].limitNotified = false
 			}
 			global._dbDirty = true

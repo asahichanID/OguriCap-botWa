@@ -58,6 +58,7 @@ import { kirimSonic } from './game/sonic.js';
 import { kirimTebakBom } from './game/tebakbom.js';
 import { verifyAndClaimCode, renderLeaderboardCanvas, getTopLeaderboard } from './game/tebakbomData.js';
 import { kirimUlarTangga } from './game/ulartangga.js';
+import { getLevelInfo } from './lib/xpGlobal.js';
 import { kirimAngryBirds } from './game/angry_birds.js';
 import { kirimBalap } from './game/balap.js';
 import { kirimDino } from './game/dino.js';
@@ -137,11 +138,14 @@ import { banktracen, cekbank } from './lib/economy/banktracen.js'
 import { autoSound } from './downloader/sounds.js'
 import { mahiruAI, clearMahiruMemory, getMahiruRelationship, setMahiruRelationship, removeMahiruRelationship, listMahiruRelationships, isReplyToMahiru } from './ai/mahiru/index.js'
 import { isMahiruTrigger } from './ai/mahiru/trigger.js'
+import { itsukiAI, clearItsukiMemory, getItsukiRelationship, setItsukiRelationship, removeItsukiRelationship, listItsukiRelationships, isReplyToItsuki } from './ai/itsuki/index.js'
+import { isItsukiTrigger } from './ai/itsuki/trigger.js'
 import { tampilkanKunciGrup, prosesTombolKunci } from "./group/kuncigrup.js"
 import { tampilkanBukaGrup, prosesTombolBuka } from "./group/bukagrup.js"
 import { isLocked } from './group/kunci.js';
 import { absoluteGuard, GUARD_CONFIG } from './src/guard.js'
 import { getKhodam, buildKhodamText } from './game/khodamData.js'
+import { cekRandomHandler } from './random/cekrandom.js'
 import { smeme, smemec } from './lib/sticker/smeme.js'
 import { startMathGame, handleMathAnswer, mathSessionManager } from './game/math/math.js'
 import { renderBrat } from './lib/sticker/brat.js'
@@ -307,9 +311,10 @@ const naze = async (naze, m, msg, store) => {
 		);
 
 		const isMahiruInteraction = isMahiruTrigger(body || budy || m.text) || isReplyToMahiru(m, db);
+		const isItsukiInteraction = isItsukiTrigger(body || budy || m.text) || isReplyToItsuki(m, db);
 
-		// Jika pesan dari akun bot sendiri (fromMe) tapi bukan command ber-prefix resmi, eval owner, tombol kunci, kuis math, atau interaksi Mahiru AI, buang
-		if (!hasActiveMath && m.key.fromMe && !isCmd && !isOwnerEval && !isLockAction && !isMahiruInteraction) {
+		// Jika pesan dari akun bot sendiri (fromMe) tapi bukan command ber-prefix resmi, eval owner, tombol kunci, kuis math, atau interaksi Mahiru AI / Itsuki AI, buang
+		if (!hasActiveMath && m.key.fromMe && !isCmd && !isOwnerEval && !isLockAction && !isMahiruInteraction && !isItsukiInteraction) {
 			return;
 		}
 		
@@ -325,6 +330,9 @@ const naze = async (naze, m, msg, store) => {
 		const modeMassal = args[0]?.toLowerCase() || ''
 		db.game.playlist ??= {}
 		db.mahiruRelationships ??= {}
+		db.mahiruMemory ??= {}
+		db.itsukiRelationships ??= {}
+		db.itsukiMemory ??= {}
         if (m.type === 'interactiveResponseMessage' && db.game.playlist[m.sender]) {
           const { id } = JSON.parse(
             m.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson
@@ -339,6 +347,13 @@ const naze = async (naze, m, msg, store) => {
         }
 		const text = global.q = args.join(' ')
 		const pushName = m.pushName || 'Trainer'
+
+		// Catat command terakhir sebelum .profile / .me (.profile / .me sendiri tidak dihitung)
+		if (isCmd && command && !['profile', 'me'].includes(command)) {
+			if (db.users?.[m.sender]) {
+				db.users[m.sender].lastFeature = `${prefix}${command}`;
+			}
+		}
 		const mime = (quoted.msg || quoted).mimetype || ''
 		const qmsg = (quoted.msg || quoted)
 		const author = set.author = global.author || 'Nazedev';
@@ -1042,8 +1057,16 @@ const naze = async (naze, m, msg, store) => {
         	m
         )
 
+		// Pastikan m.text dan m.body terisi untuk AI handler
+		if (!m.text && (body || budy)) m.text = (body || budy);
+		if (!m.body && (body || budy)) m.body = (body || budy);
+
 		// ── Mahiru Shiina AI ─────────────────────────────────────
 		await mahiruAI(naze, m, db)
+		// ─────────────────────────────────────────────────────────
+
+		// ── Itsuki Nakano AI ─────────────────────────────────────
+		await itsukiAI(naze, m, db)
 		// ─────────────────────────────────────────────────────────
       
 // 🛡️ TANGGAPI TOMBOL KUNCI / BUKA DULUAN SEBELUM PERINTAH LAIN
@@ -1911,7 +1934,7 @@ break
 			break
 			case 'setapikey': case 'setbotapikey': {
 				if (!isCreator) return m.reply(global.mess.owner)
-				if (!text) return m.reply(`Mana apikey nya?\n\n*Pilihan Penggunaan:*\n• ${prefix + command} nz-xxxx (Naze API)\n• ${prefix + command} neo nsk_xxxx (Neosantara)\n• ${prefix + command} mahiru <GeminiApiKey> (Google Gemini Resmi Mahiru)\n• ${prefix + command} mahiruurl <UrlAPI> (URL API Pihak Ketiga Mahiru)\n• ${prefix + command} mahirumodel <nama_model> (Model pihak ketiga Mahiru)`)
+				if (!text) return m.reply(`Mana apikey nya?\n\n*Pilihan Penggunaan:*\n• ${prefix + command} nz-xxxx (Naze API)\n• ${prefix + command} neo nsk_xxxx (Neosantara)\n• ${prefix + command} mahiru <GeminiApiKey> (Google Gemini Resmi Mahiru)\n• ${prefix + command} mahiruurl <UrlAPI> (URL API Pihak Ketiga Mahiru)\n• ${prefix + command} mahirumodel <nama_model> (Model pihak ketiga Mahiru)\n• ${prefix + command} itsuki <GeminiApiKey> (Google Gemini Resmi Itsuki)\n• ${prefix + command} itsukiurl <UrlAPI> (URL API Pihak Ketiga Itsuki)\n• ${prefix + command} itsukimodel <nama_model> (Model pihak ketiga Itsuki)`)
 				const sub = args[0]?.toLowerCase();
 				if (sub == 'neo') {
 					if (!args[1]?.startsWith('nsk_')) return m.reply('Apikey Tidak Valid!\nAmbil Apikey di : https://app.neosantara.xyz/api-keys');
@@ -1944,6 +1967,29 @@ break
 						mahiruModel: newModel
 					});
 					m.reply(`*Model pihak ketiga Mahiru berhasil diubah ke: ${newModel}*`)
+				} else if (sub == 'itsuki') {
+					const newKey = (args[1] || '').trim();
+					let old_key = global.itsukiAI?.geminiKey || '(kosong)';
+					await updateSettings({
+						filePath: settingsPath,
+						itsukiGeminiKey: newKey
+					});
+					m.reply(`*Gemini API Key Itsuki Nakano berhasil diperbarui!*\n\n• Key Lama: ${old_key}\n• Key Baru: ${newKey || '(dikosongkan)'}\n\n_Jika apiUrl kosong, Itsuki AI otomatis memakai Google Gemini resmi._`)
+				} else if (sub == 'itsukiurl' || sub == 'urlitsuki') {
+					const newUrl = text.slice(sub.length).trim();
+					let old_url = global.itsukiAI?.apiUrl || '(kosong)';
+					await updateSettings({
+						filePath: settingsPath,
+						itsukiUrl: newUrl
+					});
+					m.reply(`*URL API Pihak Ketiga Itsuki Nakano berhasil diperbarui!*\n\n• URL Lama: ${old_url}\n• URL Baru: ${newUrl || '(dikosongkan)'}\n\n_Jika URL diisi, Itsuki AI akan mengutamakan endpoint ini._`)
+				} else if (sub == 'itsukimodel') {
+					const newModel = (args[1] || '').trim();
+					await updateSettings({
+						filePath: settingsPath,
+						itsukiModel: newModel
+					});
+					m.reply(`*Model pihak ketiga Itsuki berhasil diubah ke: ${newModel}*`)
 				} else {
 					if (!text.startsWith('nz-')) return m.reply('Apikey Tidak Valid!\nAmbil Apikey di : https://naze.biz.id/profile');
 					let old_key = global.APIKeys[global.APIs.naze];
@@ -2322,6 +2368,104 @@ break
 				// Info status
 				const status = db.groups[m.chat].mahiruAI.enable ? '🟢 Aktif' : '🔴 Nonaktif'
 				m.reply(`🎀 *Mahiru Shiina AI (The Angel Next Door) — Status Grup*\n\nStatus : ${status}\nOwner  : *Shiro-sama*\n\n*Perintah Pengaturan (Khusus Owner):*\n• ${prefix}mahiru on — Aktifkan interaksi di grup\n• ${prefix}mahiru off — Nonaktifkan interaksi di grup\n\n*Perintah Pengguna:*\n• ${prefix}mahiru clearmemory — Hapus ingatan obrolanmu\n• ${prefix}mahiru <pesan> — Tanya langsung ke Mahiru\n\n*Menu Khusus Shiro-sama (Owner):*\n• ${prefix}mahiru setrelasi @user pacar — Izinkan relasi pacar\n• ${prefix}mahiru delrelasi @user — Cabut relasi\n• ${prefix}mahiru listrelasi — Lihat daftar relasi\n\n_100% Free AI Scrape • Otentik Karakter Anime_ 🌸✨`)
+			}
+			break
+			case 'itsuki': case 'itsukiai': case 'eatsuki': case 'nakano': {
+				if (!m.isGroup) return m.reply(global.mess.group)
+
+				db.groups[m.chat].itsukiAI ??= { enable: false }
+				const sub = args[0]?.toLowerCase()
+
+				if (sub === 'on' || sub === 'enable' || sub === '1') {
+					if (!isCreator) return m.reply('⚠️ Fitur Itsuki Nakano AI hanya dapat diaktifkan oleh *Owner Bot (Shiro-sama)*.')
+					if (db.groups[m.chat].itsukiAI.enable) return m.reply('🟢 Itsuki Nakano AI sudah aktif di grup ini.')
+					db.groups[m.chat].itsukiAI.enable = true
+					global._dbDirty = true
+					return m.reply('⭐ *Itsuki Nakano AI diaktifkan oleh Shiro-sama!* 🥟✨\n\nKamu bisa mengajak Itsuki mengobrol dengan mengetik:\n• itsuki <pesanmu>\n• hai itsuki <pesanmu>\n• halo/pagi/siang/malam itsuki\n• eatsuki <pesanmu>\n\nAtau reply langsung pesan Itsuki untuk melanjutkan obrolan ⭐🥟')
+				}
+
+				if (sub === 'off' || sub === 'disable' || sub === '0') {
+					if (!isCreator) return m.reply('⚠️ Fitur Itsuki Nakano AI hanya dapat dinonaktifkan oleh *Owner Bot (Shiro-sama)*.')
+					if (!db.groups[m.chat].itsukiAI.enable) return m.reply('🔴 Itsuki Nakano AI sudah nonaktif di grup ini.')
+					db.groups[m.chat].itsukiAI.enable = false
+					global._dbDirty = true
+					return m.reply('🔴 *Itsuki Nakano AI dinonaktifkan.* Aku mau lanjut belajar dulu ya~ ⭐📖')
+				}
+
+				if (sub === 'clearmemory' || sub === 'clear' || sub === 'reset') {
+					clearItsukiMemory(db, `${m.chat}:${m.sender}`)
+					return m.reply('🗑️ *Memory obrolanmu dengan Itsuki di grup ini telah direset bersih.* ⭐')
+				}
+
+				// Perintah Pengelolaan Relasi Khusus oleh Shiro-sama (Owner)
+				if (['setrelasi', 'setpacar', 'jadikanpacar', 'setsuami', 'jadikansuami', 'relasi'].includes(sub)) {
+					if (!isCreator) return m.reply('⚠️ Hanya *Shiro-sama* (Owner) yang memiliki wewenang untuk menetapkan relasi khusus pada Itsuki.')
+
+					const targetJid = m.mentionedJid?.[0] || m.quoted?.sender || (args[1] ? args[1].replace(/[^0-9]/g, '') + '@s.whatsapp.net' : null)
+					if (!targetJid) {
+						return m.reply(`⭐ *Format Perintah Relasi Shiro-sama:*\n• ${prefix}itsuki setrelasi @user suami\n• ${prefix}itsuki setrelasi @user pacar\n• ${prefix}itsuki delrelasi @user\n• ${prefix}itsuki listrelasi\n\n_Atau cukup katakan di chat: "Itsuki, @user pacar kamu ya"_ ⭐`)
+					}
+
+					let role = 'pacar';
+					if (sub === 'setsuami' || sub === 'jadikansuami') role = 'suami';
+					else if (args[2]) role = args[2].toLowerCase();
+					else if (args[1] && ['suami', 'pacar', 'guru les', 'partner makan', 'sahabat'].includes(args[1].toLowerCase())) role = args[1].toLowerCase();
+
+					const targetNum = targetJid.split('@')[0]
+					const targetName = db.users?.[targetJid]?.name || `@${targetNum}`
+
+					setItsukiRelationship(db, targetJid, {
+						role,
+						targetName,
+						note: `Disetujui oleh Shiro-sama pada ${new Date().toLocaleDateString('id-ID')}`
+					})
+
+					return await naze.sendMessage(m.chat, {
+						text: `(tersipu malu sambil merapikan jepit bintang) B-Baiklah Shiro-sama... Perintah Anda telah tersimpan di ingatanku. Mulai sekarang aku akan memperlakukan @${targetNum} sebagai *${role}* ku atas izin resmi Shiro-sama! ⭐🥟💕`,
+						mentions: [targetJid, m.sender]
+					}, { quoted: m })
+				}
+
+				if (['delrelasi', 'hapusrelasi', 'cabutrelasi'].includes(sub)) {
+					if (!isCreator) return m.reply('⚠️ Hanya *Shiro-sama* (Owner) yang berhak menghapus relasi khusus Itsuki.')
+					const targetJid = m.mentionedJid?.[0] || m.quoted?.sender || (args[1] ? args[1].replace(/[^0-9]/g, '') + '@s.whatsapp.net' : null)
+					if (!targetJid) return m.reply(`⚠️ Harap tag atau reply pengguna yang ingin dihapus relasinya.\nContoh: ${prefix}itsuki delrelasi @user`)
+
+					const targetNum = targetJid.split('@')[0]
+					removeItsukiRelationship(db, targetJid)
+					return await naze.sendMessage(m.chat, {
+						text: `(mengangguk sopan) Baik Shiro-sama, status hubungan khusus dengan @${targetNum} telah kuhapus. Sekarang kami berteman biasa ⭐`,
+						mentions: [targetJid]
+					}, { quoted: m })
+				}
+
+				if (['listrelasi', 'daftarrelasi', 'cekrelasi'].includes(sub)) {
+					const allRel = listItsukiRelationships(db)
+					if (allRel.length === 0) {
+						return m.reply('⭐ Saat ini belum ada pengguna yang memiliki status relasi khusus dengan Itsuki atas izin Shiro-sama.')
+					}
+					let txt = `💖 *Daftar Relasi Khusus Itsuki Nakano (Izin Shiro-sama)* 💖\n\n`
+					allRel.forEach((r, idx) => {
+						txt += `${idx + 1}. @${r.number}\n   • Status : *${r.role.toUpperCase()}*\n   • Restu  : ${r.grantedBy}\n   • Waktu  : ${new Date(r.createdAt).toLocaleDateString('id-ID')}\n\n`
+					})
+					txt += `_Hanya Shiro-sama yang dapat menambah atau mencabut status hubungan ini._ ⭐`
+					return await naze.sendMessage(m.chat, {
+						text: txt,
+						mentions: allRel.map(r => r.jid || (r.number + '@s.whatsapp.net'))
+					}, { quoted: m })
+				}
+
+				// Jika user mengetik pesan langsung (misal: .itsuki halo apa kabar)
+				if (args.length > 0 && !['status', 'help', 'info'].includes(sub)) {
+					const directText = q || args.join(' ')
+					m.text = directText
+					m.body = directText
+					return await itsukiAI(naze, m, db)
+				}
+
+				// Info status
+				const status = db.groups[m.chat].itsukiAI.enable ? '🟢 Aktif' : '🔴 Nonaktif'
+				m.reply(`⭐ *Itsuki Nakano AI (The Quintessential Quintuplets) — Status Grup*\n\nStatus : ${status}\nOwner  : *Shiro-sama*\n\n*Perintah Pengaturan (Khusus Owner):*\n• ${prefix}itsuki on — Aktifkan interaksi di grup\n• ${prefix}itsuki off — Nonaktifkan interaksi di grup\n\n*Perintah Pengguna:*\n• ${prefix}itsuki clearmemory — Hapus ingatan obrolanmu\n• ${prefix}itsuki <pesan> — Tanya langsung ke Itsuki\n\n*Menu Khusus Shiro-sama (Owner):*\n• ${prefix}itsuki setrelasi @user pacar — Izinkan relasi pacar\n• ${prefix}itsuki delrelasi @user — Cabut relasi\n• ${prefix}itsuki listrelasi — Lihat daftar relasi\n\n_100% Free AI Scrape • Otentik Karakter Anime_ ⭐🥟✨`)
 			}
 			break
 			case 'group': case 'grup': case 'gc': {
@@ -3042,11 +3186,59 @@ ${sisaLimit <= 0 ? '❌ Energimu (limit) habis untuk hari ini.\nLimit akan otoma
 			break
 
 			case 'profile':
-            case 'cek':
             case 'me': {
                profile(naze,m,db,premium,checkStatus)
             }
             break
+			case 'setnama': {
+				if (!text || !text.trim()) {
+					return m.reply(`📝 *Format Penggunaan:*\n\nContoh: *${prefix}setnama Shiro*\n_Ubah nama panggilan/tampilan profil kamu._`);
+				}
+				const cleanName = text.trim().slice(0, 32);
+				if (!db.users[m.sender]) db.users[m.sender] = {};
+				db.users[m.sender].customName = cleanName;
+				db.users[m.sender].name = cleanName;
+				global._dbDirty = true;
+				return m.reply(`✅ *Nama profil berhasil diubah menjadi:*\n❝ *${cleanName}* ❞`);
+			}
+			break
+			case 'setumur': {
+				if (!text || !text.trim()) {
+					return m.reply(`🎂 *Format Penggunaan:*\n\nContoh: *${prefix}setumur 18*\n_Masukkan umur berupa angka yang valid (5 - 120 tahun)._`);
+				}
+				const ageNum = parseInt(text.trim(), 10);
+				if (isNaN(ageNum) || ageNum < 5 || ageNum > 120) {
+					return m.reply('❌ Umur harus berupa angka yang valid antara 5 hingga 120 tahun!');
+				}
+				if (!db.users[m.sender]) db.users[m.sender] = {};
+				db.users[m.sender].age = ageNum;
+				global._dbDirty = true;
+				return m.reply(`✅ *Umur profil berhasil diatur menjadi:*\n❝ *${ageNum} Tahun* ❞`);
+			}
+			break
+			case 'setket':
+			case 'setketerangan': {
+				if (!text || !text.trim()) {
+					return m.reply(`📝 *Format Penggunaan:*\n\nContoh: *${prefix}setket Pelari legendaris dari Kasamatsu*\n_Maksimal 120 karakter bio/keterangan._`);
+				}
+				const cleanKet = text.trim().slice(0, 120);
+				if (!db.users[m.sender]) db.users[m.sender] = {};
+				db.users[m.sender].keterangan = cleanKet;
+				global._dbDirty = true;
+				return m.reply(`✅ *Keterangan profil berhasil diperbarui:*\n❝ _${cleanKet}_ ❞`);
+			}
+			break
+			case 'settag': {
+				if (!text || !text.trim()) {
+					return m.reply(`🏷️ *Format Penggunaan:*\n\nContoh: *${prefix}settag RAJA IBLIS*\n_Tag gelar khusus profil kamu (maksimal 25 karakter)._`);
+				}
+				const cleanTag = text.trim().replace(/[\[\]]/g, '').slice(0, 25);
+				if (!db.users[m.sender]) db.users[m.sender] = {};
+				db.users[m.sender].tagTitle = cleanTag;
+				global._dbDirty = true;
+				return m.reply(`✅ *Tag khusus berhasil diubah menjadi:*\n❝ *[ ${cleanTag} ]* ❞`);
+			}
+			break
 			case 'leaderboard':
             case 'lb':
 			case 'leaderboardgame':
@@ -3118,11 +3310,20 @@ ${sisaLimit <= 0 ? '❌ Energimu (limit) habis untuk hari ini.\nLimit akan otoma
                 banktracen(naze,m,db,isCreator,owner)
             }
             break
-			case 'daily': case 'claim': {
+			case 'daily': {
 				daily(m, db)
 				global._dbDirty = true
 			}
 			break
+			case 'claim': {
+				if (text && (text.trim().toUpperCase().startsWith('TB-') || text.trim().toUpperCase().startsWith('UT-') || args[0]?.toLowerCase() === 'reward')) {
+					// Diteruskan ke handler claim reward kode di bawah
+				} else {
+					daily(m, db)
+					global._dbDirty = true
+					break
+				}
+			}
 			case 'transfer': case 'tf': {
 				transfer(m, args, db)
 				global._dbDirty = true
@@ -5101,6 +5302,16 @@ break
             	m.reply(buildKhodamText(nama, khodam))
             }
             break
+			case 'cek': {
+				await cekRandomHandler(naze, m, {
+					text,
+					args,
+					prefix,
+					command,
+					db
+				})
+			}
+			break
 			case 'rate': case 'nilai': {
 				m.reply(`Rate Bot : *${Math.floor(Math.random() * 100)}%*`)
 			}
@@ -5357,25 +5568,33 @@ break
 					return await naze.sendMessage(m.chat, { text: teksClaim, mentions: [m.sender] }, { quoted: m });
 				}
 
-				const claimRes = verifyAndClaimCode(kodeToClaim, m.sender, m.pushName || 'Player');
+				const userExp = db.users[m.sender]?.exp || 0;
+				const userLevel = getLevelInfo(userExp).level;
+				const claimRes = verifyAndClaimCode(kodeToClaim, m.sender, m.pushName || 'Player', userLevel);
 				if (!claimRes.success) {
 					return m.reply(`❌ *KLAIM GAGAL*\n\n${claimRes.message}`);
 				}
 				const moneyReward = claimRes.score * 15;
-				const expReward = Math.floor(claimRes.score * 2);
 				if (db.users[m.sender]) {
 					db.users[m.sender].money = (db.users[m.sender].money || 0) + moneyReward;
-					db.users[m.sender].exp = (db.users[m.sender].exp || 0) + expReward;
+					db.users[m.sender].exp = (db.users[m.sender].exp || 0) + claimRes.totalXp;
 				}
-				const teksClaim = `╭─❖「 🎁 𝐂𝐋𝐀𝐈𝐌 𝐑𝐄𝐖𝐀𝐑𝐃 𝐒𝐔𝐊𝐒𝐄𝐒 🎁 」
+				const teksClaim = `╭───❖「 🎁 𝐂𝐋𝐀𝐈𝐌 𝐑𝐄𝐖𝐀𝐑𝐃 𝐓𝐄𝐁𝐀𝐊 𝐁𝐎𝐌 🎁 」
 │
-│ 💣 *Game:* Tebak Bom Minesweeper
+│ 💣 *Game:* Tebak Bom Minesweeper (${claimRes.difficulty})
 │ 🔑 *Kode:* ${claimRes.code}
 │ 👤 *Penerima:* @${m.sender.split('@')[0]}
 │ 🏆 *Skor Ditambahkan:* +${claimRes.score.toLocaleString('id-ID')} PTS
-│ 💰 *Hadiah Uang:* +${moneyReward.toLocaleString('id-ID')} Money
-│ ✨ *Bonus EXP:* +${expReward.toLocaleString('id-ID')} EXP
-│ 📊 *Total Skor Tebak Bom:* ${claimRes.totalScore.toLocaleString('id-ID')} PTS
+│ 🥕 *Hadiah Carrot:* +${moneyReward.toLocaleString('id-ID')} Carats
+│
+├───❖「 🔮 𝗘𝗫𝗣 𝗚𝗟𝗢𝗕𝗔𝗟 」
+│
+│ ⚡ *Base XP*  : +${claimRes.baseXp} XP (Level ${userLevel})
+│ 🎁 *Bonus XP* : +${claimRes.bonusXp} XP (${claimRes.difficulty})
+│ ✨ *Total XP* : +${claimRes.totalXp} XP
+│
+├───❖「 📊 𝗟𝗘𝗔𝗗𝗘𝗥𝗕𝗢𝗔𝗥𝗗 」
+│ 📈 *Total Skor Tebak Bom:* ${claimRes.totalScore.toLocaleString('id-ID')} PTS
 │ 🎖️ *Peringkat Saat Ini:* #${claimRes.rank} di Leaderboard Nyata!
 │
 │ 📈 Cek papan peringkat lengkap:
@@ -5988,6 +6207,11 @@ break
 │ ▫ ${prefix}mahiru delrelasi ‹@tag›
 │ ▫ ${prefix}mahiru listrelasi
 │ ▫ ${prefix}mahiru clearmemory
+│ ▫ ${prefix}itsuki ‹pesan/on/off›
+│ ▫ ${prefix}itsuki setrelasi ‹@tag pacar›
+│ ▫ ${prefix}itsuki delrelasi ‹@tag›
+│ ▫ ${prefix}itsuki listrelasi
+│ ▫ ${prefix}itsuki clearmemory
 │ ▫ ${prefix}oguriai ‹on/off›
 │ ▫ ${prefix}ai ‹pertanyaan›
 │ ▫ ${prefix}gemini ‹pertanyaan›
@@ -6484,6 +6708,11 @@ break
 │ ▫ ${prefix}mahiru delrelasi ‹@tag›
 │ ▫ ${prefix}mahiru listrelasi
 │ ▫ ${prefix}mahiru clearmemory
+│ ▫ ${prefix}itsuki ‹pesan/on/off›
+│ ▫ ${prefix}itsuki setrelasi ‹@tag pacar›
+│ ▫ ${prefix}itsuki delrelasi ‹@tag›
+│ ▫ ${prefix}itsuki listrelasi
+│ ▫ ${prefix}itsuki clearmemory
 │ ▫ ${prefix}oguriai ‹on/off›
 │ ▫ ${prefix}ai ‹pertanyaan›
 │ ▫ ${prefix}gemini ‹pertanyaan›

@@ -17,6 +17,7 @@ import { generateQuestion } from './question.js';
 import { mathSessionManager } from './session.js';
 import { REWARD_CONFIG, calculateWrongReward, awardCarrot } from './reward.js';
 import { getWinTaunt, getTimeoutTaunt, getWrongTaunt } from './taunt.js';
+import { getLevelInfo, generateBaseXP, addExp } from '../../lib/xpGlobal.js';
 
 export { generateQuestion } from './question.js';
 export { MathBoard } from './board.js';
@@ -276,8 +277,12 @@ export async function handleMathAnswer(naze, m, budy = '', body = '', db = globa
         session.finish();
         mathSessionManager.deleteSession(chatId);
 
-        // Tambahkan reward kemenangan +8.500 carrot
+        // Tambahkan reward kemenangan +8.500 carrot & XP Global sesuai level
         awardCarrot(db, playerJid, REWARD_CONFIG.WIN_CARROT);
+        const userExp = db.users?.[playerJid]?.exp || 0;
+        const userLevel = getLevelInfo(userExp).level;
+        const baseXp = generateBaseXP(userLevel);
+        addExp(db, playerJid, baseXp);
 
         // Catat ke Attempt Board
         session.board.recordAttempt({
@@ -307,6 +312,7 @@ export async function handleMathAnswer(naze, m, budy = '', body = '', db = globa
 ┃ 📝 *Soal:* ${session.question} = *${session.answer}*
 ┃ ⏱️ *Waktu Menjawab:* ${elapsedSeconds} detik
 ┃ 🥕 *Reward:* +${REWARD_CONFIG.WIN_CARROT.toLocaleString('id-ID')} Carrot Coin
+┃ 🔮 *XP:* +${baseXp} XP (Level ${userLevel})
 ┃
 ┣━━━━━━━━━━━━━━━━━━━━━━
 ┃ 🐴 *Oguri Cap:*

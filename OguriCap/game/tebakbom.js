@@ -666,9 +666,12 @@ body{padding:10px 8px 30px;display:flex;justify-content:center;align-items:flex-
     return s;
   }
 
-  function makeClaimCode(score) {
+  function makeClaimCode(score, mode) {
     var safeScore = Math.max(10, Math.floor(score) || 10);
-    return 'TB-' + safeScore + '-' + makeHex(6) + makeHex(4);
+    var modeChar = 'E';
+    if (mode === 'normal') modeChar = 'N';
+    else if (mode === 'ekstrem' || mode === 'extreme') modeChar = 'X';
+    return 'TB-' + modeChar + '-' + safeScore + '-' + makeHex(6) + makeHex(4);
   }
 
   // Initialize Game Board
@@ -835,7 +838,7 @@ body{padding:10px 8px 30px;display:flex;justify-content:center;align-items:flex-
   // Floating Victory Claim Modal (Hanya muncul pas menang untuk hindari spam kode)
   window.openClaimModal = function() {
     if (!gameOver || safeFound < totalSafe || currentScore <= 0) return;
-    generatedCode = makeClaimCode(currentScore);
+    generatedCode = makeClaimCode(currentScore, currentMode);
     var mTitle = document.getElementById('modal-title');
     var mDesc = document.getElementById('modal-desc');
     var mCode = document.getElementById('modal-code');

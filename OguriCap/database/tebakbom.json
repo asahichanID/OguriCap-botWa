@@ -13,6 +13,13 @@
       "score": 1000,
       "gamesCount": 1,
       "lastUpdated": 1789741392751
+    },
+    "user1@s.whatsapp.net": {
+      "id": "user1@s.whatsapp.net",
+      "name": "Trainer",
+      "score": 1500,
+      "gamesCount": 3,
+      "lastUpdated": 1789969936772
     }
   },
   "claimedCodes": {
@@ -20,6 +27,33 @@
       "jid": "player@s.whatsapp.net",
       "score": 1500,
       "claimedAt": 1789177913120
+    },
+    "TB-E-150-121C73F602": {
+      "jid": "user1@s.whatsapp.net",
+      "score": 150,
+      "difficulty": "Easy",
+      "baseXp": 25,
+      "bonusXp": 0,
+      "totalXp": 25,
+      "claimedAt": 1789969936770
+    },
+    "TB-N-400-37DDB4D398": {
+      "jid": "user1@s.whatsapp.net",
+      "score": 400,
+      "difficulty": "Normal",
+      "baseXp": 40,
+      "bonusXp": 12,
+      "totalXp": 52,
+      "claimedAt": 1789969936771
+    },
+    "TB-X-950-6DCA30A614": {
+      "jid": "user1@s.whatsapp.net",
+      "score": 950,
+      "difficulty": "Extreme",
+      "baseXp": 21,
+      "bonusXp": 41,
+      "totalXp": 62,
+      "claimedAt": 1789969936772
     }
   },
   "activeCodes": {
@@ -28,6 +62,27 @@
       "createdAt": 1789741392750,
       "expiresAt": 1789827792750,
       "used": false
+    },
+    "TB-E-150-121C73F602": {
+      "score": 150,
+      "mode": "easy",
+      "createdAt": 1789969936762,
+      "expiresAt": 1790056336762,
+      "used": true
+    },
+    "TB-N-400-37DDB4D398": {
+      "score": 400,
+      "mode": "normal",
+      "createdAt": 1789969936771,
+      "expiresAt": 1790056336771,
+      "used": true
+    },
+    "TB-X-950-6DCA30A614": {
+      "score": 950,
+      "mode": "extreme",
+      "createdAt": 1789969936772,
+      "expiresAt": 1790056336772,
+      "used": true
     }
   }
 }

@@ -264,6 +264,7 @@ const getSizeMedia = async (path) => {
 async function updateSettings({
 	filePath, owner, author, apikey, botname, packname,
 	neosantara, mahiruUrl, mahiruGeminiKey, mahiruApiKey, mahiruModel,
+	itsukiUrl, itsukiGeminiKey, itsukiApiKey, itsukiModel,
 	locale, timezone, addPrefix, removePrefix, newMess,
 	addBadword, removeBadword, setLimitRole, setMoneyRole
 }) {
@@ -317,6 +318,22 @@ async function updateSettings({
 			if (mahiruModel !== undefined) {
 				content = content.replace(/(global\.mahiruAI\s*=\s*\{[\s\S]*?customModel\s*:\s*['"`]).*?(['"`])/, `$1${mahiruModel}$2`);
 				if (global.mahiruAI) global.mahiruAI.customModel = mahiruModel;
+			}
+			if (itsukiUrl !== undefined) {
+				content = content.replace(/(global\.itsukiAI\s*=\s*\{[\s\S]*?apiUrl\s*:\s*['"`]).*?(['"`])/, `$1${itsukiUrl}$2`);
+				if (global.itsukiAI) global.itsukiAI.apiUrl = itsukiUrl;
+			}
+			if (itsukiGeminiKey !== undefined) {
+				content = content.replace(/(global\.itsukiAI\s*=\s*\{[\s\S]*?geminiKey\s*:\s*['"`]).*?(['"`])/, `$1${itsukiGeminiKey}$2`);
+				if (global.itsukiAI) global.itsukiAI.geminiKey = itsukiGeminiKey;
+			}
+			if (itsukiApiKey !== undefined) {
+				content = content.replace(/(global\.itsukiAI\s*=\s*\{[\s\S]*?apiKey\s*:\s*['"`]).*?(['"`])/, `$1${itsukiApiKey}$2`);
+				if (global.itsukiAI) global.itsukiAI.apiKey = itsukiApiKey;
+			}
+			if (itsukiModel !== undefined) {
+				content = content.replace(/(global\.itsukiAI\s*=\s*\{[\s\S]*?customModel\s*:\s*['"`]).*?(['"`])/, `$1${itsukiModel}$2`);
+				if (global.itsukiAI) global.itsukiAI.customModel = itsukiModel;
 			}
 			if (setLimitRole) {
 				const { role, value } = setLimitRole;

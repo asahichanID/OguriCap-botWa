@@ -121,6 +121,15 @@ global.mahiruAI = {
 	geminiModel: 'gemini-3.1-flash-lite', // Model Gemini resmi yang hemat token, cepat, dan percakapannya terasa seperti manusia nyata
 }
 
+//~~~~~~~~~~~~< ITSUKI NAKANO AI (SETTINGS) >~~~~~~~~~~~~\\
+global.itsukiAI = {
+	apiUrl: '', // URL API pihak ketiga jika ingin custom
+	apiKey: '', // API Key pihak ketiga jika butuh auth
+	customModel: 'gpt-4o-mini',
+	geminiKey: process.env.GEMINI_API_KEY || '', // Menggunakan engine resmi Gemini bawaan
+	geminiModel: 'gemini-3.1-flash-lite'
+}
+
 // Lainnya
 global.jadwalSholat = {
 	Subuh: '04:30',

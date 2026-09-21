@@ -3,6 +3,7 @@ import path from 'path'
 import crypto from 'crypto'
 import { fileURLToPath } from 'url'
 import { createCanvas } from '@napi-rs/canvas'
+import { calculateTebakBomXP } from '../lib/xpGlobal.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DB_FILE = path.join(__dirname, '../database/tebakbom.json')
@@ -50,7 +51,7 @@ loadDB()
 /**
  * Menghasilkan kode claim yang memiliki signature anti-cheat
  */
-export function generateClaimCode(score) {
+export function generateClaimCode(score, mode = 'easy') {
 	const sanitizedScore = Math.max(10, Math.floor(Number(score) || 0))
 	const randomNonce = crypto.randomBytes(3).toString('hex').toUpperCase()
 	const timestamp = Math.floor(Date.now() / 1000)
@@ -59,11 +60,17 @@ export function generateClaimCode(score) {
 	const payload = `${sanitizedScore}-${randomNonce}-${timestamp}`
 	const hash = crypto.createHmac('sha256', SECRET_KEY).update(payload).digest('hex').slice(0, 4).toUpperCase()
 	
-	const code = `TB-${sanitizedScore}-${randomNonce}${hash}`
+	let modeChar = 'E'
+	const m = String(mode || '').toLowerCase()
+	if (m === 'normal' || m === 'n') modeChar = 'N'
+	else if (m === 'ekstrem' || m === 'extreme' || m === 'x') modeChar = 'X'
+
+	const code = `TB-${modeChar}-${sanitizedScore}-${randomNonce}${hash}`
 	
 	// Simpan juga ke cache active codes selama 24 jam
 	data.activeCodes[code] = {
 		score: sanitizedScore,
+		mode: m || 'easy',
 		createdAt: Date.now(),
 		expiresAt: Date.now() + 24 * 60 * 60 * 1000,
 		used: false
@@ -72,21 +79,22 @@ export function generateClaimCode(score) {
 	
 	return {
 		code,
-		score: sanitizedScore
+		score: sanitizedScore,
+		mode: m || 'easy'
 	}
 }
 
 /**
  * Verifikasi dan klaim kode reward
  */
-export function verifyAndClaimCode(codeStr, jid, userName = 'Player') {
+export function verifyAndClaimCode(codeStr, jid, userName = 'Player', userLevel = 0) {
 	if (!codeStr || typeof codeStr !== 'string') {
 		return { success: false, message: 'Format kode tidak valid.' }
 	}
 
 	const cleanCode = codeStr.trim().toUpperCase()
 
-	// Cek apakah sudah pernah diklaim
+	// Cek apakah sudah pernah diklaim (cegah double claim)
 	if (data.claimedCodes[cleanCode]) {
 		return {
 			success: false,
@@ -96,6 +104,7 @@ export function verifyAndClaimCode(codeStr, jid, userName = 'Player') {
 
 	// Cek apakah ada di active codes
 	let scoreToAward = 0
+	let detectedMode = 'easy'
 	if (data.activeCodes[cleanCode]) {
 		const record = data.activeCodes[cleanCode]
 		if (record.used) {
@@ -105,24 +114,43 @@ export function verifyAndClaimCode(codeStr, jid, userName = 'Player') {
 			return { success: false, message: `Kode *${cleanCode}* telah kedaluwarsa!` }
 		}
 		scoreToAward = record.score
+		detectedMode = record.mode || 'easy'
 		record.used = true
 	} else {
-		// Verifikasi dengan format regex TB-<SCORE>-<NONCE><HASH>
-		const match = cleanCode.match(/^TB-(\d+)-([A-F0-9]{6})([A-F0-9]{4})$/)
+		// Verifikasi dengan format regex TB-<MODE?>-<SCORE>-<NONCE><HASH> atau TB-<SCORE>-<NONCE><HASH>
+		const match = cleanCode.match(/^TB-(?:([ENX]|EASY|NORMAL|EKSTREM|EXTREME)-)?(\d+)-([A-F0-9]{6})([A-F0-9]{4})$/i)
 		if (!match) {
-			return { success: false, message: 'Kode tidak valid atau format salah! Contoh: *TB-500-A1B2C3D4*' }
+			return { success: false, message: 'Kode tidak valid atau format salah! Contoh: *TB-500-A1B2C3D4* atau *TB-E-500-A1B2C3D4*' }
 		}
-		const [ , scoreStr, , ] = match
+		const [ , modeTag, scoreStr, , ] = match
 		scoreToAward = parseInt(scoreStr, 10)
 		if (isNaN(scoreToAward) || scoreToAward <= 0) {
 			return { success: false, message: 'Nilai skor pada kode tidak valid!' }
 		}
+		if (modeTag) {
+			const mt = modeTag.toLowerCase()
+			if (mt === 'x' || mt === 'ekstrem' || mt === 'extreme') detectedMode = 'extreme'
+			else if (mt === 'n' || mt === 'normal') detectedMode = 'normal'
+			else detectedMode = 'easy'
+		} else {
+			// Deteksi otomatis berdasarkan perolehan skor tebak bom jika tanpa tag mode eksplisit
+			if (scoreToAward >= 600) detectedMode = 'extreme'
+			else if (scoreToAward >= 250) detectedMode = 'normal'
+			else detectedMode = 'easy'
+		}
 	}
 
-	// Catat claim
+	// Hitung XP Global berdasarkan difficulty & level pemain
+	const xpInfo = calculateTebakBomXP(detectedMode, userLevel)
+
+	// Catat claim (mencegah double claim)
 	data.claimedCodes[cleanCode] = {
 		jid,
 		score: scoreToAward,
+		difficulty: xpInfo.difficulty,
+		baseXp: xpInfo.baseXp,
+		bonusXp: xpInfo.bonusXp,
+		totalXp: xpInfo.totalXp,
 		claimedAt: Date.now()
 	}
 
@@ -154,7 +182,11 @@ export function verifyAndClaimCode(codeStr, jid, userName = 'Player') {
 		score: scoreToAward,
 		totalScore: data.leaderboard[jid].score,
 		rank: currentRank,
-		code: cleanCode
+		code: cleanCode,
+		difficulty: xpInfo.difficulty,
+		baseXp: xpInfo.baseXp,
+		bonusXp: xpInfo.bonusXp,
+		totalXp: xpInfo.totalXp
 	}
 }
 
