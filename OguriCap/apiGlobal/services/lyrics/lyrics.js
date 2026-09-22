@@ -13,14 +13,20 @@
  *   3. Hapus NotImplementedError setelah provider terpasang
  */
 
-import { NotImplementedError } from '../../core/errors.js';
+import { apiSpotifyLyrics } from '../downloader/spotify-scrap.js';
+import { envelope } from '../../core/normalizer.js';
+import { ValidationError } from '../../core/errors.js';
 
 /**
+ * Cari lirik lagu berdasarkan judul dan artis (multi-tier LRCLIB + fallback).
+ *
  * @param {string} title - Judul lagu yang dicari liriknya.
- * @throws {NotImplementedError} Selalu — layanan ini belum memiliki provider aktif.
+ * @param {string} [artist] - Nama penyanyi (opsional untuk mempercepat akurasi).
  */
-export async function apiLyricsSearch(title) {
-	throw new NotImplementedError('lyrics.search');
+export async function apiLyricsSearch(title, artist = '') {
+	if (!title) throw new ValidationError('apiLyricsSearch: parameter "title" wajib diisi.');
+	const result = await apiSpotifyLyrics(title, artist);
+	return envelope(result, result.source || 'lrclib', result);
 }
 
 export default { apiLyricsSearch };

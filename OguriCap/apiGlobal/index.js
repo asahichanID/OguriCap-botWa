@@ -32,6 +32,13 @@ export { apiInstagramDownload } from './services/downloader/instagram.js';
 export { apiFacebookDownload } from './services/downloader/facebook.js';
 export { apiMediafireDownload } from './services/downloader/mediafire.js';
 export { apiSpotifySearch, apiSpotifyDownload } from './services/downloader/spotify.js';
+export {
+	apiSpotifyScrapSearch,
+	apiSpotifyLyrics,
+	apiSpotifyScrapTrack,
+	apiSpotifyScrapAudio,
+	extractSpotifyTrackId
+} from './services/downloader/spotify-scrap.js';
 
 // ---- AI ---------------------------------------------------------------
 export { apiAiChat4, apiAiQuick, apiAiPremiumChat, apiOguriChat } from './services/ai/ai.js';

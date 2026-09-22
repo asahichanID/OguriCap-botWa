@@ -58,7 +58,7 @@ import { kirimSonic } from './game/sonic.js';
 import { kirimTebakBom } from './game/tebakbom.js';
 import { verifyAndClaimCode, renderLeaderboardCanvas, getTopLeaderboard } from './game/tebakbomData.js';
 import { kirimUlarTangga } from './game/ulartangga.js';
-import { getLevelInfo } from './lib/xpGlobal.js';
+import { getLevelInfo, generateBaseXP, addExp } from './lib/xpGlobal.js';
 import { kirimAngryBirds } from './game/angry_birds.js';
 import { kirimBalap } from './game/balap.js';
 import { kirimDino } from './game/dino.js';
@@ -617,11 +617,18 @@ const naze = async (naze, m, msg, store) => {
 				isWin = true
 			}
 			let winner = isSurrender ? room.game.currentTurn : room.game.winner
+			let bonusExpTtc = 0
 			if (isWin) {
-				db.users[m.sender].limit += 3
-				db.users[m.sender].money += 3000
+				const winnerJid = isSurrender ? room.game.currentTurn : m.sender
+				if (db.users[winnerJid]) {
+					db.users[winnerJid].limit += 3
+					db.users[winnerJid].money += 3000
+					const uLevel = getLevelInfo(db.users[winnerJid]?.exp || 0).level
+					bonusExpTtc = generateBaseXP(uLevel)
+					addExp(db, winnerJid, bonusExpTtc)
+				}
 			}
-			let str = `Room ID: ${room.id}\n\n${arr.slice(0, 3).join('')}\n${arr.slice(3, 6).join('')}\n${arr.slice(6).join('')}\n\n${isWin ? `@${winner.split('@')[0]} Menang!` : isTie ? `Game berakhir` : `Giliran ${['❌', '⭕'][1 * room.game._currentTurn]} (@${room.game.currentTurn.split('@')[0]})`}\n❌: @${room.game.playerX.split('@')[0]}\n⭕: @${room.game.playerO.split('@')[0]}\n\nKetik *nyerah* untuk menyerah dan mengakui kekalahan`
+			let str = `Room ID: ${room.id}\n\n${arr.slice(0, 3).join('')}\n${arr.slice(3, 6).join('')}\n${arr.slice(6).join('')}\n\n${isWin ? `@${winner.split('@')[0]} Menang! 🎉\n🎁 Hadiah: +3.000 Money • +3 Limit • +${bonusExpTtc} EXP` : isTie ? `Game berakhir (Seri)` : `Giliran ${['❌', '⭕'][1 * room.game._currentTurn]} (@${room.game.currentTurn.split('@')[0]})`}\n❌: @${room.game.playerX.split('@')[0]}\n⭕: @${room.game.playerO.split('@')[0]}\n\nKetik *nyerah* untuk menyerah dan mengakui kekalahan`
 			if ((room.game._currentTurn ^ isSurrender ? room.x : room.o) !== m.chat)
 			room[room.game._currentTurn ^ isSurrender ? 'x' : 'o'] = m.chat
 			if (room.x !== room.o) await naze.sendMessage(room.x, { text: str, mentions: parseMention(str) }, { quoted: m })
@@ -677,9 +684,18 @@ const naze = async (naze, m, msg, store) => {
 				else if (k.test(stage) && b.test(stage2)) win = roof.p
 				else if (k.test(stage) && g.test(stage2)) win = roof.p2
 				else if (stage == stage2) tie = true
-				db.users[roof.p == win ? roof.p : roof.p2].limit += tie ? 0 : 3
-				db.users[roof.p == win ? roof.p : roof.p2].money += tie ? 0 : 3000
-				naze.sendMessage(roof.asal, { text: `_*Hasil Suit*_${tie ? '\nSERI' : ''}\n\n@${roof.p.split('@')[0]} (${roof.text}) ${tie ? '' : roof.p == win ? ` Menang \n` : ` Kalah \n`}\n@${roof.p2.split('@')[0]} (${roof.text2}) ${tie ? '' : roof.p2 == win ? ` Menang \n` : ` Kalah \n`}\n\nPemenang Mendapatkan\n*Hadiah :* Uang(3000) & Limit(3)`.trim(), mentions: [roof.p, roof.p2] }, { quoted: m })
+				let bonusExpSuit = 0
+				if (!tie) {
+					const winnerJid = roof.p == win ? roof.p : roof.p2
+					if (db.users[winnerJid]) {
+						db.users[winnerJid].limit += 3
+						db.users[winnerJid].money += 3000
+						const uLevel = getLevelInfo(db.users[winnerJid]?.exp || 0).level
+						bonusExpSuit = generateBaseXP(uLevel)
+						addExp(db, winnerJid, bonusExpSuit)
+					}
+				}
+				naze.sendMessage(roof.asal, { text: `_*Hasil Suit*_${tie ? '\nSERI' : ''}\n\n@${roof.p.split('@')[0]} (${roof.text}) ${tie ? '' : roof.p == win ? ` Menang \n` : ` Kalah \n`}\n@${roof.p2.split('@')[0]} (${roof.text2}) ${tie ? '' : roof.p2 == win ? ` Menang \n` : ` Kalah \n`}\n\nPemenang Mendapatkan\n*Hadiah :* Uang(3000), Limit(3)${!tie ? ` & EXP(+${bonusExpSuit})` : ''}`.trim(), mentions: [roof.p, roof.p2] }, { quoted: m })
 				delete suit[roof.id]
 			}
 		}
@@ -734,63 +750,98 @@ const naze = async (naze, m, msg, store) => {
 		}
 
 		// ============================================================
-		// GAME — SISTEM JAWABAN BARU (audit fix)
-		// - Tidak lagi wajib reply/quoted ke pesan soal (pakai session per chat)
-		// - Jawaban salah: DIAM, tidak reply, tidak spam
-		// - Jawaban benar: baru reply + reward
-		// - Normalisasi jawaban lebih fleksibel (lowercase, trim, unicode, simbol)
+		// GAME — SISTEM JAWABAN REAL-TIME (Audit & Fix)
+		// - Bebas tanpa harus reply/quoted ke pesan soal bot (sesi terdeteksi per chat/grup)
+		// - Jawaban benar: langsung merespons pemenang + reward Money & EXP Global
+		// - Jawaban salah / obrolan biasa: 100% DIAM (tidak reply, tidak spam)
+		// - Normalisasi fleksibel (trim, lowercase, hapus tanda baca, toleransi spasi & typo)
 		// ============================================================
-		const games = { tebaklirik, tekateki, tebaklagu, tebakkata, susunkata, tebakkimia, caklontong, tebakangka, tebaknegara, tebakgambar, tebakbendera }
-		for (let gameName in games) {
-			let game = games[gameName];
-			let id = iGame(game, m.chat);
-			// Sesi game aktif di chat ini? (tidak lagi butuh m.quoted / reply)
-			if ((!isCmd || isCreator) && id && budy && budy.trim() !== '') {
-				if (game[m.chat + id]?.jawaban) {
-					if (gameName == 'kuismath') {
-						let jawaban = normalizeAnswer(game[m.chat + id].jawaban)
-						const difficultyMap = { 'noob': 1, 'easy': 1.5, 'medium': 2.5, 'hard': 4, 'extreme': 5, 'impossible': 6, 'impossible2': 7 };
-						let randMoney = difficultyMap[kuismath[m.chat + id].mode]
-						if (!isNaN(budy) && normalizeAnswer(budy) === jawaban) {
-							db.users[m.sender].money += randMoney * 1000
-							await m.reply(`Jawaban Benar 🎉\nBonus Money 💰 *+${randMoney * 1000}*`)
-							delete kuismath[m.chat + id]
+		const userGuess = (budy || body || m.body || m.text || '').trim();
+		if (userGuess) {
+			const games = { tebaklirik, tekateki, tebaklagu, tebakkata, susunkata, tebakkimia, caklontong, tebakangka, tebaknegara, tebakgambar, tebakbendera };
+			for (let gameName in games) {
+				let game = games[gameName];
+				if (!game || typeof game !== 'object') continue;
+				// Cari sesi game aktif di chat ini (bisa diawali m.chat atau persis m.chat)
+				let sessionKey = Object.keys(game).find(k => k === m.chat || k.startsWith(m.chat));
+				if (sessionKey && game[sessionKey]?.jawaban) {
+					let gameData = game[sessionKey];
+					let targetAnswer = String(gameData.jawaban).trim();
+					let targetNorm = normalizeAnswer(targetAnswer);
+					let guessNorm = normalizeAnswer(userGuess);
+					
+					let jawabBenar = false;
+					if (guessNorm && targetNorm) {
+						// 1. Exact match setelah normalisasi
+						if (guessNorm === targetNorm) {
+							jawabBenar = true;
 						}
-						// Jawaban salah -> diam, tidak reply, tidak mengurangi performa
-					} else {
-						let jawaban = normalizeAnswer(game[m.chat + id].jawaban)
-						let tebakan = normalizeAnswer(budy)
-						let jawabBenar = /tekateki|tebaklirik|tebaklagu|tebakkata|tebaknegara|tebakbendera/.test(gameName) ? (similarity(tebakan, jawaban) >= almost) : (tebakan === jawaban)
-						let bonus = gameName == 'caklontong' ? 9999 : gameName == 'tebaklirik' ? 4299 : gameName == 'susunkata' ? 2989 : 3499
-						if (jawabBenar) {
-							db.users[m.sender].money += bonus * 1
-							await m.reply(`Jawaban Benar 🎉\nBonus Money 💰 *+${bonus}*`)
-							delete game[m.chat + id]
+						// 2. Match tanpa spasi (misal "karbon dioksida" vs "karbondioksida")
+						else if (guessNorm.replace(/\s+/g, '') === targetNorm.replace(/\s+/g, '')) {
+							jawabBenar = true;
 						}
-						// Jawaban salah -> diam, tidak reply, tidak mengurangi performa
+						// 3. Similarity check (Levenshtein) dengan toleransi typo cerdas
+						else {
+							let sim = similarity(guessNorm, targetNorm);
+							if (sim >= 0.75) {
+								jawabBenar = true;
+							} else if (/tekateki|tebaklirik|tebaklagu|tebakkata|tebaknegara|tebakbendera|tebakgambar|susunkata|caklontong/.test(gameName) && sim >= 0.65) {
+								jawabBenar = true;
+							}
+						}
 					}
+
+					if (jawabBenar) {
+						let bonus = gameName === 'caklontong' ? 9999 : gameName === 'tebaklirik' ? 4299 : gameName === 'susunkata' ? 2989 : 3499;
+						if (db.users[m.sender]) {
+							db.users[m.sender].money = (db.users[m.sender].money || 0) + bonus;
+							const userLevel = getLevelInfo(db.users[m.sender]?.exp || 0).level;
+							const bonusExpGame = generateBaseXP(userLevel);
+							addExp(db, m.sender, bonusExpGame);
+							await m.reply(`Jawaban Benar 🎉\nBonus Money 💰 *+${bonus.toLocaleString('id-ID')}*\nBonus EXP 🌟 *+${bonusExpGame.toLocaleString('id-ID')}*`);
+						} else {
+							await m.reply(`Jawaban Benar 🎉\nBonus Money 💰 *+${bonus.toLocaleString('id-ID')}*`);
+						}
+						delete game[sessionKey];
+						break;
+					}
+					// JIKA SALAH: BOT DIAM TOTAL (tidak merespons apapun)
 				}
 			}
 		}
 		
 		// Family 100
-		if (m.chat in family100) {
-			if (!isCmd && budy && budy.trim() !== '') {
-				let room = family100[m.chat]
-				let teks = normalizeAnswer(budy)
-				let isSurender = /^((me)?nyerah|surr?ender)$/i.test(teks)
-				let index = -1
+		if (m.chat in family100 && userGuess) {
+			let room = family100[m.chat];
+			let teks = normalizeAnswer(userGuess);
+			let isSurender = /^((me)?nyerah|surr?ender)$/i.test(teks);
+			let index = -1;
+			if (!isSurender && Array.isArray(room.jawaban)) {
+				index = room.jawaban.findIndex(v => {
+					const jNorm = normalizeAnswer(v);
+					if (jNorm === teks) return true;
+					if (jNorm.replace(/\s+/g, '') === teks.replace(/\s+/g, '')) return true;
+					if (similarity(teks, jNorm) >= 0.8) return true;
+					return false;
+				});
+			}
+			// Jawaban salah / tidak cocok / sudah pernah dijawab -> diam total, tidak reply
+			if (isSurender || (index !== -1 && !room.terjawab[index])) {
+				let bonusExpFam = 0;
 				if (!isSurender) {
-					index = room.jawaban.findIndex(v => normalizeAnswer(v) === teks)
+					room.terjawab[index] = m.sender;
+					if (db.users[m.sender]) {
+						db.users[m.sender].money = (db.users[m.sender].money || 0) + 3499;
+						const userLevel = getLevelInfo(db.users[m.sender]?.exp || 0).level;
+						bonusExpFam = generateBaseXP(userLevel);
+						addExp(db, m.sender, bonusExpFam);
+					}
 				}
-				// Jawaban salah / tidak cocok / sudah pernah dijawab -> diam total, tidak reply
-				if (isSurender || (index !== -1 && !room.terjawab[index])) {
-					if (!isSurender) room.terjawab[index] = m.sender
-					let isWin = room.terjawab.length === room.terjawab.filter(v => v).length
-					let caption = `Jawablah Pertanyaan Berikut :\n${room.soal}\n\n\nTerdapat ${room.jawaban.length} Jawaban ${room.jawaban.find(v => v.includes(' ')) ? `(beberapa Jawaban Terdapat Spasi)` : ''}\n${isWin ? `Semua Jawaban Terjawab` : isSurender ? 'Menyerah!' : ''}\n${Array.from(room.jawaban, (jawaban, index) => { return isSurender || room.terjawab[index] ? `(${index + 1}) ${jawaban} ${room.terjawab[index] ? '@' + room.terjawab[index].split('@')[0] : ''}`.trim() : false }).filter(v => v).join('\n')}\n${isSurender ? '' : `Perfect Player`}`.trim()
-					m.reply(caption)
-					if (isWin || isSurender) delete family100[m.chat]
-				}
+				let isWin = room.terjawab.length === room.terjawab.filter(v => v).length;
+				let rewardText = !isSurender ? `\n\n🎁 Hadiah untuk @${m.sender.split('@')[0]}: +3.499 Money • +${bonusExpFam} EXP` : '';
+				let caption = `Jawablah Pertanyaan Berikut :\n${room.soal}\n\n\nTerdapat ${room.jawaban.length} Jawaban ${room.jawaban.find(v => v.includes(' ')) ? `(beberapa Jawaban Terdapat Spasi)` : ''}\n${isWin ? `Semua Jawaban Terjawab 🎉` : isSurender ? 'Menyerah!' : ''}\n${Array.from(room.jawaban, (jawaban, idx) => { return isSurender || room.terjawab[idx] ? `(${idx + 1}) ${jawaban} ${room.terjawab[idx] ? '@' + room.terjawab[idx].split('@')[0] : ''}`.trim() : false }).filter(v => v).join('\n')}${rewardText}\n\n${isSurender ? '' : isWin ? `🏆 Game Selesai!` : `Perfect Player`}`.trim();
+				await naze.sendMessage(m.chat, { text: caption, mentions: parseMention(caption) }, { quoted: m });
+				if (isWin || isSurender) delete family100[m.chat];
 			}
 		}
 		
@@ -921,9 +972,12 @@ const naze = async (naze, m, msg, store) => {
 					}
 					const newMap = await ulartangga[m.chat].drawBoard(ulartangga[m.chat].map.url, ulartangga[m.chat].players);
 					if (ulartangga[m.chat].players[player].move === 100) {
-						teks += `@${m.sender.split('@')[0]} Menang\nHadiah:\n- Limit + 50\n- Money + 100.000`;
+						const userLevel = getLevelInfo(db.users[m.sender]?.exp || 0).level
+						const bonusExpUt = generateBaseXP(userLevel) * 2
 						addLimit(50, m.sender, db);
 						addMoney(100000, m.sender, db);
+						addExp(db, m.sender, bonusExpUt);
+						teks += `@${m.sender.split('@')[0]} Menang 🎉\nHadiah:\n- Limit + 50\n- Money + 100.000\n- EXP + ${bonusExpUt}`;
 						delete ulartangga[m.chat];
 						return m.reply({ image: newMap, caption: teks, mentions: [m.sender] });
 					}
@@ -5025,32 +5079,13 @@ break
 			case 'spotifydl': {
 				if (!isLimit) return m.reply(global.mess.limit)
 				if (!text) return m.reply(`Example: ${prefix + command} https://open.spotify.com/track/0JiVRyTJcJnmlwCZ854K4p`)
-				if (!isUrl(args[0]) && !args[0].includes('open.spotify.com/track')) return m.reply('Url Invalid!')
+				if (!isUrl(args[0]) && !args[0].includes('spotify.com/track')) return m.reply('Url Invalid!')
 				try {
-					const { result: hasil } = await apiSpotifyDownload(text);
-					m.react('⏳')
-					const judul = hasil.metadata
-						? `${hasil.metadata.artists[0].name} • ${hasil.metadata.name}`
-						: (hasil.title || 'Spotify Track');
-					await m.reply({
-						audio: { url: hasil.url || hasil.download },
-						mimetype: 'audio/mpeg',
-						contextInfo: {
-							externalAdReply: {
-								title: judul,
-								body: hasil.metadata ? clockString(hasil.metadata.duration_ms) : '',
-								previewType: 'PHOTO',
-								thumbnailUrl: hasil.metadata?.album?.images?.[0]?.url || hasil.thumbnail || hasil.image,
-								mediaType: 1,
-								renderLargerThumbnail: true,
-								sourceUrl: text
-							}
-						}
-					})
-					setLimit(m, db)
+					await unduhSpotify(naze, m, text.trim());
+					setLimit(m, db);
 				} catch (e) {
-					console.log(e)
-					return handleOguriError({ err: e, m, naze, command: 'spotifydl', text })
+					console.log(e);
+					return handleOguriError({ err: e, m, naze, command: 'spotifydl', text });
 				}
 			}
 			break
@@ -5597,170 +5632,180 @@ break
 			case 'tekateki': {
 				if (iGame(tekateki, m.chat)) return m.reply('Masih Ada Sesi Yang Belum Diselesaikan!')
 				const { result: hasil } = await apiGameTekaTeki();
-				let { key } = await m.reply(`🎮 Teka Teki Berikut :\n\n${hasil.soal}\n\nWaktu : 60s\nHadiah *+3499*`)
-				tekateki[m.chat + key.id] = {
-					jawaban: hasil.jawaban.toLowerCase(),
-					id: key.id
-				}
+				let resMsg = await m.reply(`🎮 Teka Teki Berikut :\n\n${hasil.soal}\n\nWaktu : 60s\nHadiah *+3499 Money & +EXP*`);
+				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
+				tekateki[m.chat + sId] = {
+					jawaban: String(hasil.jawaban).toLowerCase(),
+					id: sId
+				};
 				setTimeout(() => {
-				if (rdGame(tekateki, m.chat, key.id)) {
-					m.reply('Waktu Habis\nJawaban: ' + tekateki[m.chat + key.id].jawaban)
-					delete tekateki[m.chat + key.id]
-				}
-				}, 60000)
+					if (tekateki[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + tekateki[m.chat + sId].jawaban);
+						delete tekateki[m.chat + sId];
+					}
+				}, 60000);
 			}
 			break
 			case 'tebaklirik': {
 				if (iGame(tebaklirik, m.chat)) return m.reply('Masih Ada Sesi Yang Belum Diselesaikan!')
 				const { result: hasil } = await apiGameTebakLirik();
-				let { key } = await m.reply(`🎮 Tebak Lirik Berikut :\n\n${hasil.soal}\n\nWaktu : 90s\nHadiah *+4299*`)
-				tebaklirik[m.chat + key.id] = {
-					jawaban: hasil.jawaban.toLowerCase(),
-					id: key.id
-				}
+				let resMsg = await m.reply(`🎮 Tebak Lirik Berikut :\n\n${hasil.soal}\n\nWaktu : 90s\nHadiah *+4299 Money & +EXP*`);
+				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
+				tebaklirik[m.chat + sId] = {
+					jawaban: String(hasil.jawaban).toLowerCase(),
+					id: sId
+				};
 				setTimeout(() => {
-				if (rdGame(tebaklirik, m.chat, key.id)) {
-					m.reply('Waktu Habis\nJawaban: ' + tebaklirik[m.chat + key.id].jawaban)
-					delete tebaklirik[m.chat + key.id]
-				}
-				}, 90000)
+					if (tebaklirik[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + tebaklirik[m.chat + sId].jawaban);
+						delete tebaklirik[m.chat + sId];
+					}
+				}, 90000);
 			}
 			break
 			case 'tebakkata': {
 				if (iGame(tebakkata, m.chat)) return m.reply('Masih Ada Sesi Yang Belum Diselesaikan!')
 				const { result: hasil } = await apiGameTebakKata();
-				let { key } = await m.reply(`🎮 Tebak Kata Berikut :\n\n${hasil.soal}\n\nWaktu : 60s\nHadiah *+3499*`)
-				tebakkata[m.chat + key.id] = {
-					jawaban: hasil.jawaban.toLowerCase(),
-					id: key.id
-				}
+				let resMsg = await m.reply(`🎮 Tebak Kata Berikut :\n\n${hasil.soal}\n\nWaktu : 60s\nHadiah *+3499 Money & +EXP*`);
+				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
+				tebakkata[m.chat + sId] = {
+					jawaban: String(hasil.jawaban).toLowerCase(),
+					id: sId
+				};
 				setTimeout(() => {
-				if (rdGame(tebakkata, m.chat, key.id)) {
-					m.reply('Waktu Habis\nJawaban: ' + tebakkata[m.chat + key.id].jawaban)
-					delete tebakkata[m.chat + key.id]
-				}
-				}, 60000)
+					if (tebakkata[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + tebakkata[m.chat + sId].jawaban);
+						delete tebakkata[m.chat + sId];
+					}
+				}, 60000);
 			}
 			break
 			case 'family100': {
 				if (family100.hasOwnProperty(m.chat)) return m.reply('Masih Ada Sesi Yang Belum Diselesaikan!')
 				const { result: hasil } = await apiGameFamily100();
-				let { key } = await m.reply(`🎮 Tebak Kata Berikut :\n\n${hasil.soal}\n\nWaktu : 5m\nHadiah *+3499*`)
+				let resMsg = await m.reply(`🎮 Family 100 Berikut :\n\n${hasil.soal}\n\nWaktu : 5m\nHadiah *+3499 Money & +EXP per jawaban*`);
+				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
 				family100[m.chat] = {
 					soal: hasil.soal,
 					jawaban: hasil.jawaban,
 					terjawab: Array.from(hasil.jawaban, () => false),
-					id: key.id
-				}
+					id: sId
+				};
 				setTimeout(() => {
-				if (family100.hasOwnProperty(m.chat)) {
-					m.reply('Waktu Habis\nJawaban:\n- ' + family100[m.chat].jawaban.join('\n- '))
-					delete family100[m.chat]
-				}
-				}, 300000)
+					if (family100.hasOwnProperty(m.chat)) {
+						m.reply('Waktu Habis\nJawaban:\n- ' + family100[m.chat].jawaban.join('\n- '));
+						delete family100[m.chat];
+					}
+				}, 300000);
 			}
 			break
 			case 'susunkata': {
 				if (iGame(susunkata, m.chat)) return m.reply('Masih Ada Sesi Yang Belum Diselesaikan!')
 				const { result: hasil } = await apiGameSusunKata();
-				let { key } = await m.reply(`🎮 Susun Kata Berikut :\n\n${hasil.soal}\nTipe : ${hasil.tipe}\n\nWaktu : 60s\nHadiah *+2989*`)
-				susunkata[m.chat + key.id] = {
-					jawaban: hasil.jawaban.toLowerCase(),
-					id: key.id
-				}
+				let resMsg = await m.reply(`🎮 Susun Kata Berikut :\n\n${hasil.soal}\nTipe : ${hasil.tipe}\n\nWaktu : 60s\nHadiah *+2989 Money & +EXP*`);
+				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
+				susunkata[m.chat + sId] = {
+					jawaban: String(hasil.jawaban).toLowerCase(),
+					id: sId
+				};
 				setTimeout(() => {
-				if (rdGame(susunkata, m.chat, key.id)) {
-					m.reply('Waktu Habis\nJawaban: ' + susunkata[m.chat + key.id].jawaban)
-					delete susunkata[m.chat + key.id]
-				}
-				}, 60000)
+					if (susunkata[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + susunkata[m.chat + sId].jawaban);
+						delete susunkata[m.chat + sId];
+					}
+				}, 60000);
 			}
 			break
 			case 'tebakkimia': {
 				if (iGame(tebakkimia, m.chat)) return m.reply('Masih Ada Sesi Yang Belum Diselesaikan!')
 				const { result: hasil } = await apiGameTebakKimia();
-				let { key } = await m.reply(`🎮 Tebak Kimia Berikut :\n\n${hasil.unsur}\n\nWaktu : 60s\nHadiah *+3499*`)
-				tebakkimia[m.chat + key.id] = {
-					jawaban: hasil.lambang.toLowerCase(),
-					id: key.id
-				}
+				let resMsg = await m.reply(`🎮 Tebak Kimia Berikut :\n\n${hasil.unsur}\n\nWaktu : 60s\nHadiah *+3499 Money & +EXP*`);
+				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
+				tebakkimia[m.chat + sId] = {
+					jawaban: String(hasil.lambang).toLowerCase(),
+					id: sId
+				};
 				setTimeout(() => {
-				if (rdGame(tebakkimia, m.chat, key.id)) {
-					m.reply('Waktu Habis\nJawaban: ' + tebakkimia[m.chat + key.id].jawaban)
-					delete tebakkimia[m.chat + key.id]
-				}
-				}, 60000)
+					if (tebakkimia[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + tebakkimia[m.chat + sId].jawaban);
+						delete tebakkimia[m.chat + sId];
+					}
+				}, 60000);
 			}
 			break
 			case 'caklontong': {
 				if (iGame(caklontong, m.chat)) return m.reply('Masih Ada Sesi Yang Belum Diselesaikan!')
 				const { result: hasil } = await apiGameCakLontong();
-				let { key } = await m.reply(`🎮 Jawab Pertanyaan Berikut :\n\n${hasil.soal}\n\nWaktu : 60s\nHadiah *+9999*`)
-				caklontong[m.chat + key.id] = {
+				let resMsg = await m.reply(`🎮 Jawab Pertanyaan Berikut :\n\n${hasil.soal}\n\nWaktu : 60s\nHadiah *+9999 Money & +EXP*`);
+				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
+				caklontong[m.chat + sId] = {
 					...hasil,
-					jawaban: hasil.jawaban.toLowerCase(),
-					id: key.id
-				}
+					jawaban: String(hasil.jawaban).toLowerCase(),
+					id: sId
+				};
 				setTimeout(() => {
-				if (rdGame(caklontong, m.chat, key.id)) {
-					m.reply(`Waktu Habis\nJawaban: ${caklontong[m.chat + key.id].jawaban}\n"${caklontong[m.chat + key.id].deskripsi}"`)
-					delete caklontong[m.chat + key.id]
-				}
-				}, 60000)
+					if (caklontong[m.chat + sId]) {
+						m.reply(`Waktu Habis\nJawaban: ${caklontong[m.chat + sId].jawaban}\n"${caklontong[m.chat + sId].deskripsi || ''}"`);
+						delete caklontong[m.chat + sId];
+					}
+				}, 60000);
 			}
 			break
 			case 'tebaknegara': {
 				if (iGame(tebaknegara, m.chat)) return m.reply('Masih Ada Sesi Yang Belum Diselesaikan!')
 				const { result: hasil } = await apiGameTebakNegara();
-				let { key } = await m.reply(`🎮 Tebak Negara Dari Tempat Berikut :\n\n*Tempat : ${hasil.tempat}*\n\nWaktu : 60s\nHadiah *+3499*`)
-				tebaknegara[m.chat + key.id] = {
-					jawaban: hasil.negara.toLowerCase(),
-					id: key.id
-				}
+				let resMsg = await m.reply(`🎮 Tebak Negara Dari Tempat Berikut :\n\n*Tempat : ${hasil.tempat}*\n\nWaktu : 60s\nHadiah *+3499 Money & +EXP*`);
+				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
+				tebaknegara[m.chat + sId] = {
+					jawaban: String(hasil.negara).toLowerCase(),
+					id: sId
+				};
 				setTimeout(() => {
-				if (rdGame(tebaknegara, m.chat, key.id)) {
-					m.reply('Waktu Habis\nJawaban: ' + tebaknegara[m.chat + key.id].jawaban)
-					delete tebaknegara[m.chat + key.id]
-				}
-				}, 60000)
+					if (tebaknegara[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + tebaknegara[m.chat + sId].jawaban);
+						delete tebaknegara[m.chat + sId];
+					}
+				}, 60000);
 			}
 			break
 			case 'tebakgambar': {
 				if (iGame(tebakgambar, m.chat)) return m.reply('Masih Ada Sesi Yang Belum Diselesaikan!')
 				const { result: hasil } = await apiGameTebakGambar();
-				let { key } = await naze.sendFileUrl(m.chat, hasil.img, `🎮 Tebak Gambar Berikut :\n\n${hasil.deskripsi}\n\nWaktu : 60s\nHadiah *+3499*`, m)
-				tebakgambar[m.chat + key.id] = {
-					jawaban: hasil.jawaban.toLowerCase(),
-					id: key.id
-				}
+				let resMsg = await naze.sendFileUrl(m.chat, hasil.img, `🎮 Tebak Gambar Berikut :\n\n${hasil.deskripsi}\n\nWaktu : 60s\nHadiah *+3499 Money & +EXP*`, m);
+				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
+				tebakgambar[m.chat + sId] = {
+					jawaban: String(hasil.jawaban).toLowerCase(),
+					id: sId
+				};
 				setTimeout(() => {
-				if (rdGame(tebakgambar, m.chat, key.id)) {
-					m.reply('Waktu Habis\nJawaban: ' + tebakgambar[m.chat + key.id].jawaban)
-					delete tebakgambar[m.chat + key.id]
-				}
-				}, 60000)
+					if (tebakgambar[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + tebakgambar[m.chat + sId].jawaban);
+						delete tebakgambar[m.chat + sId];
+					}
+				}, 60000);
 			}
 			break
 			case 'tebakbendera': {
 				if (iGame(tebakbendera, m.chat)) return m.reply('Masih Ada Sesi Yang Belum Diselesaikan!')
 				const { result: hasil } = await apiGameTebakBendera();
-				let { key } = await m.reply(`🎮 Tebak Bendera Berikut :\n\n*Bendera : ${hasil.bendera}*\n\nWaktu : 60s\nHadiah *+3499*`)
-				tebakbendera[m.chat + key.id] = {
-					jawaban: hasil.negara.toLowerCase(),
-					id: key.id
-				}
+				let resMsg = await m.reply(`🎮 Tebak Bendera Berikut :\n\n*Bendera : ${hasil.bendera}*\n\nWaktu : 60s\nHadiah *+3499 Money & +EXP*`);
+				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
+				tebakbendera[m.chat + sId] = {
+					jawaban: String(hasil.negara).toLowerCase(),
+					id: sId
+				};
 				setTimeout(() => {
-				if (rdGame(tebakbendera, m.chat, key.id)) {
-					m.reply('Waktu Habis\nJawaban: ' + tebakbendera[m.chat + key.id].jawaban)
-					delete tebakbendera[m.chat + key.id]
-				}
-				}, 60000)
+					if (tebakbendera[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + tebakbendera[m.chat + sId].jawaban);
+						delete tebakbendera[m.chat + sId];
+					}
+				}, 60000);
 			}
 			break
 			case 'tebakangka': case 'butawarna': case 'colorblind': {
 				if (iGame(tebakangka, m.chat)) return m.reply('Masih Ada Sesi Yang Belum Diselesaikan!')
 				const { result: hasil } = await apiRandomColorBlind();
-				let { key } = await m.reply({
+				let resMsg = await m.reply({
 					text: `Pilih Jawaban Yang Benar!\nPilihan: ${[hasil.number, ...hasil.similar].sort(() => Math.random() - 0.5).join(', ')}`,
 					contextInfo: {
 						externalAdReply: {
@@ -5772,16 +5817,17 @@ break
 						}
 					}
 				});
-				tebakangka[m.chat + key.id] = {
-					jawaban: hasil.number,
-					id: key.id
-				}
+				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
+				tebakangka[m.chat + sId] = {
+					jawaban: String(hasil.number),
+					id: sId
+				};
 				setTimeout(() => {
-				if (rdGame(tebakangka, m.chat, key.id)) {
-					m.reply('Waktu Habis\nJawaban: ' + tebakangka[m.chat + key.id].jawaban)
-					delete tebakangka[m.chat + key.id]
-				}
-				}, 60000)
+					if (tebakangka[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + tebakangka[m.chat + sId].jawaban);
+						delete tebakangka[m.chat + sId];
+					}
+				}, 60000);
 			}
 			break
 			case 'kuismath': case 'math': {
@@ -5982,7 +6028,13 @@ break
 							session.leader = '';
 							session.submitCard = [];
 							session.players = session.players.filter(p => p.id !== player.id);
-							await naze.sendText(session.id, `@${m.sender.split('@')[0]} memenangkan permainan!\nSisa Kartu: 0`, m);
+							let bonusExpBj = 0;
+							if (db.users[m.sender]) {
+								const userLevel = getLevelInfo(db.users[m.sender]?.exp || 0).level;
+								bonusExpBj = generateBaseXP(userLevel) * 2;
+								addExp(db, m.sender, bonusExpBj);
+							}
+							await naze.sendText(session.id, `@${m.sender.split('@')[0]} memenangkan permainan! 🎉\nSisa Kartu: 0\n🎁 Bonus EXP: +${bonusExpBj}`, m);
 							if (session.players.length === 1) {
 								await naze.sendText(session.id, `Pemain Tersisa 1 (@${session.players[0].id.split('@')[0]}), sesi Blackjack selesai.`, m);
 								delete blackjack[session.id];

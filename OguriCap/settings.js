@@ -84,11 +84,11 @@ Limit harianmu (5 limit) akan terisi kembali besok pukul 00:00 WIB, atau Trainer
 }
 
 global.APIs = {
-	naze: 'https://api.naze.biz.id',
+	naze: 'https://naze.dev/api/v1',
 	neosantara: 'https://api.neosantara.xyz/v1',
 }
 global.APIKeys = {
-	'https://api.naze.biz.id': 'nz-880c23d4fd',
+	'https://naze.dev/api/v1': 'nz-880c23d4fd',
 	'https://api.neosantara.xyz/v1': 'API_KEY_NEOSANTARA_AI',
 }
 

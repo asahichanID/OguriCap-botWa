@@ -1,6 +1,8 @@
 import { pickRandom, getUmaQuote } from '../lib/helperquotes.js'
 import { getYtmp4Thumb } from '../lib/mediahelper.js'
 import { handleOguriError } from '../lib/oguri-error.js'
+import { convertToMp3 } from './convertManager.js'
+import axios from 'axios'
 
 import {
   apiYoutubeDownload,
@@ -9,6 +11,10 @@ import {
   apiTiktokScrapDownload,
   apiSpotifySearch,
   apiSpotifyDownload,
+  apiSpotifyScrapSearch,
+  apiSpotifyLyrics,
+  apiSpotifyScrapTrack,
+  apiSpotifyScrapAudio,
   apiInstagramDownload
 } from '../apiGlobal/index.js'
 // ==============================================
@@ -28,18 +34,32 @@ export const ytmp3 = async (naze, m, text) => {
     const { result } = await apiYoutubeScrapDownload(text, 'mp3')
 
     if (!result?.download) {
+      await m.react('❌')
       return m.reply('❌ Audio tidak ditemukan')
     }
 
+    const audio = await convertToMp3(result.download, `${result.title || 'audio'}.mp3`)
+
+    if (audio?.buffer && audio.buffer.length > 30 * 1024 * 1024) {
+      await m.react('⚠️')
+      return m.reply(`❌ Ukuran audio (${(audio.buffer.length / (1024 * 1024)).toFixed(1)} MB) melebihi batas maksimal 30MB`)
+    }
+
     await naze.sendMessage(m.chat, {
-      audio: { url: result.download },
+      audio: audio.buffer,
       mimetype: 'audio/mpeg',
-      fileName: `${result.title || 'audio'}.mp3`
+      fileName: audio.filename || `${result.title || 'audio'}.mp3`,
+      ptt: false
     }, { quoted: m })
 
+    await m.react('🎧')
     console.log('🎧 YTMP3')
   } catch (err) {
     console.log('❌ YTMP3', err)
+    if (err?.message?.includes('30MB')) {
+      await m.react('⚠️')
+      return m.reply('❌ Ukuran audio melebihi batas maksimal 30MB')
+    }
     return handleOguriError({ err, m, naze, command: 'ytmp3', text })
   }
 }
@@ -752,121 +772,71 @@ export const cariSpotify = async (conn, m, text) => {
   if (!text) return m.reply(`🎵 Contoh: .spotify yoasobi idol`)
 
   try {
+    m.react('🔍')
     let hasilAkhir = []
     let sumberDipakai = ''
 
     try {
+      const res = await apiSpotifyScrapSearch(text)
+      hasilAkhir = res.result || []
+      sumberDipakai = res.provider || 'Scraper'
+      console.log(`🎵 SPOTIFY SEARCH: Berhasil lewat ${sumberDipakai} (${hasilAkhir.length} lagu)`)
+    } catch (errScrap) {
+      console.log(`⚠️ SPOTIFY SCRAP SEARCH fallback ke apiSpotifySearch:`, errScrap.message)
       const res = await apiSpotifySearch(text)
-      hasilAkhir = res.result
-      sumberDipakai = res.provider || ''
-      console.log(`🎵 SPOTIFY: Berhasil lewat ${sumberDipakai}`)
-    } catch {
-      // Seluruh provider gagal / tidak menemukan hasil yang cukup —
-      // pesan spesifik ini dipertahankan persis seperti sebelum migrasi.
+      hasilAkhir = res.result || []
+      sumberDipakai = res.provider || 'Backup API'
+    }
+
+    if (!hasilAkhir.length) {
       return m.reply('❌ Oguri tidak menemukan lagu tersebut! Coba ganti kata kunci ya~')
     }
 
-    // Susun Tombol List
-    console.log(hasilAkhir)
-    console.log(hasilAkhir[0])
-    const rows = hasilAkhir.map((lagu, urut) => {
-    const title =
-        String(
-            lagu.title ??
-            lagu.name ??
-            lagu.track ??
-            lagu.song ??
-            'Tanpa Judul'
-        ).trim()
+    // Susun Tombol List yang Estetik dan Informatif
+    const rows = hasilAkhir.slice(0, 10).map((lagu, urut) => {
+      const title = String(lagu.title || lagu.name || 'Tanpa Judul').trim()
+      const artist = String(lagu.artist || lagu.author || 'Spotify Artist').trim()
+      const duration = String(lagu.duration || '--:--').trim()
+      const url = lagu.url || (lagu.id ? `https://open.spotify.com/track/${lagu.id}` : '')
 
-    const info =
-    String(
-        lagu.artist ??
-        lagu.artists?.map(v => v.name).join(', ') ??
-        lagu.artists?.[0]?.name ??
-        lagu.author ??
-        lagu.uploader ??
-        lagu.channel ??
-        lagu.channelTitle ??
-        lagu.duration ??
-        lagu.duration_ms ??
-        'Tidak diketahui'
-    ).trim()
-
-    const url =
-        lagu.url ??
-        lagu.link ??
-        lagu.uri ??
-        ''
-    
-    return {
-        header: `🎵 #${urut + 1}`,
-        title: title.length > 40
-            ? `${title.slice(0, 37)}...`
-            : title,
-        description: `${
-            lagu.artist ||
-            lagu.artists?.length ||
-            lagu.author ||
-            lagu.uploader ||
-            lagu.channel ||
-            lagu.channelTitle
-                ? '🎤'
-                : '⏱️'
-        } ${
-            info.length > 50
-                ? `${info.slice(0, 47)}...`
-                : info
-        }`,
+      return {
+        header: `🎵 Track #${urut + 1}`,
+        title: title.length > 40 ? `${title.slice(0, 37)}...` : title,
+        description: `🎤 ${artist.length > 25 ? artist.slice(0, 22) + '...' : artist} • ⏱️ ${duration}`,
         id: `.spotify_pilih ${url}`
-    }
-})
+      }
+    })
 
-    // Teks Tampilan Utama Tema Uma Musume
-  const shortTitle = (title, max = 42) =>
-  title?.length > max
-    ? title.slice(0, max) + '…'
-    : (title || '-')
-
-const teks = [
-  `🎶 𝗦𝗘𝗔𝗥𝗖𝗛 𝗦𝗣𝗢𝗧𝗜𝗙𝗬 — 𝗢𝗚𝗨𝗥𝗜 𝗖𝗔𝗣`,
-  `━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
-  `🔎 Pencarian : ${text}`,
-  `📊 Ditemukan : ${hasilAkhir.length} lagu`,
-  `📡 Provider    : ${sumberDipakai || 'Cadangan'}`,
-  ``,
-  `💡 Lagu #1 dikirim otomatis. Pilih nomor lain lewat tombol di bawah.`
-].join('\n')
+    const teks = [
+      `╭───「 🎵 ＳＰＯＴＩＦＹ ＳＥＡＲＣＨ 」`,
+      `│ 🔎 *Kata Kunci* : ${text}`,
+      `│ 📊 *Ditemukan*  : ${hasilAkhir.length} Lagu`,
+      `│ 📡 *Engine*     : ${sumberDipakai.toUpperCase()}`,
+      `│ 🐎 *Station*    : Oguri Cap Music Station`,
+      `╰──────────────────────────────`,
+      ``,
+      `💡 *Silakan ketuk tombol di bawah untuk memilih lagu favoritmu!*`
+    ].join('\n')
 
     const thumb = hasilAkhir[0]?.thumbnail || hasilAkhir[0]?.image || 'https://telegra.ph/file/95670d63378f7f4210f03.png'
-    const linkLaguPertama = hasilAkhir[0]?.url || hasilAkhir[0]?.link || ''
 
-    // Kirim Teks + Tombol Dulu
     await conn.sendListMsg(m.chat, {
       text: teks,
       image: { url: thumb },
-      footer: `🛡️ Oguri Cap Music System • ${global.botname}`,
+      footer: `🛡️ Oguri Cap Music System • ${global.botname || 'Oguri Cap'}`,
       buttons: [{
         name: 'single_select',
         buttonParamsJson: {
           title: '🎵 PILIH LAGU DISINI',
           sections: [{
-            title: '📋 Hasil Pencarian',
-            highlight_label: 'TERBARU',
+            title: '📋 Rekomendasi Lagu Spotify',
+            highlight_label: 'PILIHAN UTAMA',
             rows: rows
           }]
         }
       }]
     }, { quoted: m })
 
-    // Kirim Audio Lagu Pertama Di Latar Belakang
-    /*
-    if (linkLaguPertama) {
-      setTimeout(async () => {
-        await unduhSpotify(conn, m, linkLaguPertama)
-      }, 500)
-    }
-*/
   } catch (e) {
     console.error('💥 ERROR CARI SPOTIFY →', e)
     return handleOguriError({ err: e, m, naze: conn, command: 'spotify', text })
@@ -874,95 +844,178 @@ const teks = [
 }
 
 // ============================================================
-// ✅ FUNGSI PENGUNDUH & TAMPILKAN HASIL PILIHAN
+// ✅ FUNGSI PENGUNDUH SPOTIFY DENGAN LIRIK, FOTO, STATS & AUDIO
 // ============================================================
 export const unduhSpotify = async (conn, m, urlLagu) => {
   try {
+    m.react('⏳')
     const mulai = Date.now()
 
-    let data
-    let provider = 'Unknown'
+    // 1. Eksekusi paralel: Track Metadata + Lirik + Cover Buffer sekaligus Audio Scraper
+    const metaLyricsPromise = (async () => {
+      let meta = await apiSpotifyScrapTrack(urlLagu)
+      // Jika oEmbed / embed belum dapat detail artist, coba fallback ke download API untuk metadata cadangan
+      if (!meta.artist || meta.artist === 'Spotify Artist' || !meta.title || meta.title === 'Spotify Track') {
+        try {
+          const directMeta = await apiSpotifyDownload(urlLagu)
+          if (directMeta?.result) {
+            meta = {
+              ...meta,
+              title: directMeta.result.title || meta.title,
+              artist: directMeta.result.artist || meta.artist,
+              thumbnail: directMeta.result.thumbnail || meta.thumbnail,
+              duration: directMeta.result.duration || meta.duration
+            }
+          }
+        } catch (_) {}
+      }
 
-    try {
-      const res = await apiSpotifyDownload(urlLagu)
-      data = res.result
-      provider = res.provider || 'Unknown'
-      console.log(`🎵 SPOTIFY DL: Berhasil lewat ${provider}`)
-    } catch (errDl) {
-      return handleOguriError({ err: errDl, m, naze: conn, command: 'spotify', text: urlLagu })
-    }
+      const coverUrl = meta.thumbnail || 'https://telegra.ph/file/95670d63378f7f4210f03.png'
 
-    if (!data?.url) {
-      return handleOguriError({ err: new Error('Audio Spotify tidak ditemukan'), m, naze: conn, command: 'spotify', text: urlLagu })
-    }
-
-      const meta = data.metadata || data
-
-      const artist =
-      meta.artist?.map(v => v.name).join(', ') ||
-      meta.artists?.map(v => v.name).join(', ') ||
-      'Masih Misteri'
-  
-    const duration = meta.duration_ms
-      ? (() => {
-          const sec = Math.floor(meta.duration_ms / 1000)
-          const m = String(Math.floor(sec / 60)).padStart(2, '0')
-          const s = String(sec % 60).padStart(2, '0')
-          return `${m}:${s}`
+      // Ambil lirik & unduh cover image buffer secara paralel
+      const [lyricsData, coverBuffer] = await Promise.all([
+        apiSpotifyLyrics(meta.title, meta.artist, `${meta.title} ${meta.artist}`),
+        (async () => {
+          try {
+            if (coverUrl && coverUrl.startsWith('http')) {
+              const imgRes = await axios.get(coverUrl, {
+                responseType: 'arraybuffer',
+                timeout: 5000,
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+              })
+              if (imgRes.data && imgRes.data.length > 0) {
+                return Buffer.from(imgRes.data)
+              }
+            }
+          } catch (eThumb) {
+            console.log('⚠️ Gagal unduh cover Spotify buffer:', eThumb.message)
+          }
+          return (global.fake?.thumbnail && Buffer.isBuffer(global.fake.thumbnail) && global.fake.thumbnail.length > 0)
+            ? global.fake.thumbnail
+            : null
         })()
-      : 'Tidak tersedia'
+      ])
 
+      return { meta, lyricsData, coverUrl, coverBuffer }
+    })()
+
+    const audioPromise = (async () => {
+      const stream = await apiSpotifyScrapAudio(urlLagu)
+      const filename = stream.filename || 'spotify_track.mp3'
+      const audioData = await convertToMp3(stream.download || stream.url, filename)
+      return { stream, audioData }
+    })()
+
+    // 2. Tunggu metadata, lirik & cover buffer selesai terlebih dahulu (muncul duluan teks + foto)
+    const { meta, lyricsData, coverUrl, coverBuffer } = await metaLyricsPromise
     const speed = `${Date.now() - mulai}ms`
 
-    const caption = [
-    '🎵 *𝗦𝗣𝗢𝗧𝗜𝗙𝗬 𝗗𝗢𝗪𝗡𝗟𝗢𝗔𝗗*',
-    '━━━━━━━━━━━━━━━━━━━━━━',
-    `🎶 *Judul*`,
-    `➜ ${meta.name || 'Tidak diketahui'}`,
-    `🎤 *Artist*`,
-    `➜ ${artist}`,
-    `⏱️ *Durasi*`,
-    `➜ ${duration}`,
-    `📡 *Provider*`,
-    `➜ ${provider} • ${speed}`,
-    `🔗 *Source URL*`,
-    `➜ ${meta.url || meta.external_urls?.spotify || urlLagu}`
-].join('\n')
+    let lyricsDisplay = '_(Lirik tidak tersedia atau lagu berupa instrumen)_'
+    if (lyricsData?.hasLyrics && lyricsData.lyrics) {
+      // Rapikan lirik menjadi bait-bait yang nyaman dibaca dengan jeda dan penanda bagian
+      const rawLines = lyricsData.lyrics
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .split('\n')
+        .map(l => l.trim())
 
-    // Thumbnail + Caption
-    await conn.sendButtonMsg(
-  m.chat,
-  {
-    image: {
-      url: meta.album?.images?.[0]?.url || 'https://telegra.ph/file/95670d63378f7f4210f03.png'
-    },
-    text: caption,
-    footer: `🎵 Spotify Downloader • ${global.botname}`,
-    buttons: [
-      {
-        name: 'quick_reply',
-        buttonParamsJson: {
-          display_text: '🗿 Jangan Dipencet',
-          id: '.iseng_spotify'
+      const stanzas = []
+      let currentStanza = []
+      const hasExistingBlankLines = rawLines.some(l => l === '')
+
+      for (const line of rawLines) {
+        if (line === '') {
+          if (currentStanza.length > 0) {
+            stanzas.push(currentStanza)
+            currentStanza = []
+          }
+        } else {
+          currentStanza.push(line)
+          // Jika dari sumber asli lirik tidak memiliki jeda baris kosong sama sekali (numpuk),
+          // pisahkan secara proporsional tiap 4 baris agar tidak menumpuk dan mata tidak lelah
+          if (!hasExistingBlankLines && currentStanza.length >= 4) {
+            stanzas.push(currentStanza)
+            currentStanza = []
+          }
         }
       }
-    ]
-  },
-  { quoted: m }
-)
+      if (currentStanza.length > 0) stanzas.push(currentStanza)
 
+      if (stanzas.length > 0) {
+        lyricsDisplay = stanzas.map((stanza, idx) => {
+          const lines = stanza.map(l => `> ${l}`).join('\n')
+          return `🎶 *[ Bait ${idx + 1} ]*\n${lines}`
+        }).join('\n\n')
+      } else {
+        lyricsDisplay = lyricsData.lyrics.trim()
+      }
+    }
 
-    // Audio
+    const caption = [
+      `╭───「 🎧 ＳＰＯＴＩＦＹ ＰＬＡＹＥＲ 」`,
+      `│ 🎶 *Judul*       : ${meta.title}`,
+      `│ 🎤 *Penyanyi*    : ${meta.artist}`,
+      `│ 💿 *Album*       : ${meta.album || meta.title}`,
+      `│ ⏱️ *Durasi*      : ${meta.duration || '--:--'}`,
+      `│ 📅 *Rilis*       : ${meta.releaseDate || 'Official Track'}`,
+      `│ 📊 *Statistik*   : HQ 192kbps • ${speed}`,
+      `│ 📡 *Lirik*       : ${lyricsData.source || 'Auto'}`,
+      `╰──────────────────────────────`,
+      ``,
+      `╭───「 📜 ＬＩＲＩＫ  ＬＡＧＵ 」`,
+      lyricsDisplay,
+      `╰──────────────────────────────`,
+      ``,
+      `🔗 *Source* : ${urlLagu}`,
+      `🐎 *Oguri Cap Track Player* • Mengirim audio...`
+    ].join('\n')
+
+    // Kirim Tampilan Foto Cover + Statistik + Lirik Full (Tanpa tombol agar kompatibel di semua client WhatsApp)
+    try {
+      await conn.sendMessage(
+        m.chat,
+        {
+          image: coverBuffer || { url: coverUrl },
+          caption: caption
+        },
+        { quoted: m }
+      )
+    } catch (eMsg) {
+      console.log('Fallback kirim pesan info Spotify ke text:', eMsg.message)
+      await conn.sendMessage(
+        m.chat,
+        { text: caption },
+        { quoted: m }
+      )
+    }
+
+    // 3. Audio selesai diproses (audio dikirim setelah teks & foto)
+    const { stream, audioData } = await audioPromise
+
+    if (!audioData?.buffer && !stream?.download && !stream?.url) {
+      throw new Error('Gagal mengekstrak berkas audio Spotify.')
+    }
+
+    // Enforce 30MB file size limit
+    if (audioData?.buffer && audioData.buffer.length > 30 * 1024 * 1024) {
+      await m.react('⚠️')
+      return m.reply(`❌ Ukuran audio (${(audioData.buffer.length / (1024 * 1024)).toFixed(1)} MB) melebihi batas maksimal 30MB`)
+    }
+
+    // Kirim Audio Spotify (Audio Only agar kompatibel & bisa dilihat oleh semua client)
     await conn.sendMessage(
       m.chat,
       {
-        audio: { url: data.download || data.url },
+        audio: audioData?.buffer ? audioData.buffer : { url: stream.download || stream.url },
         mimetype: 'audio/mpeg',
-        fileName: `${meta.name || 'Spotify'}.mp3`,
+        fileName: `${meta.title} - ${meta.artist}.mp3`,
         ptt: false
       },
       { quoted: m }
     )
+
+    await m.react('🎧')
+    console.log(`✅ Spotify track '${meta.title}' berhasil dikirim (${Date.now() - mulai}ms total)`)
 
   } catch (e) {
     console.error('💥 ERROR UNDUH SPOTIFY →', e)

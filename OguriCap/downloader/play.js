@@ -139,11 +139,21 @@ ${prefix + command} bloodline`
 		if (!laguPertama?.videoId) return
 
 		const { result } = await apiYoutubeScrapAudio(laguPertama.url)
+		if (!result?.download) return
 
 		const audio = await convertToMp3(
 			result.download,
 			result.filename || `${result.title}.mp3`
 		)
+
+		if (audio?.buffer && audio.buffer.length > 30 * 1024 * 1024) {
+			console.log(`⚠️ Background: Audio ${result.title} melebihi batas 30MB`)
+			return naze.sendMessage(
+				m.chat,
+				{ text: `⚠️ Audio "${result.title}" melebihi batas maksimal 30MB.` },
+				{ quoted: m }
+			)
+		}
 
 		await naze.sendMessage(
 			m.chat,
@@ -158,7 +168,10 @@ ${prefix + command} bloodline`
 
 		console.log("✅ Background: Audio pertama berhasil dikirim")
 	} catch (error) {
-		console.error("❌ Background: Gagal kirim audio pertama", error)
+		console.error("❌ Background: Gagal kirim audio pertama", error?.message || error)
+		if (error?.message?.includes('30MB')) {
+			naze.sendMessage(m.chat, { text: '❌ Ukuran audio melebihi batas maksimal 30MB.' }, { quoted: m }).catch(() => {})
+		}
 	}
 })()
 
@@ -286,6 +299,12 @@ ${music.quote}`
 			result.filename || `${hasil.title}.mp3`
 		)
 
+    if (audio?.buffer && audio.buffer.length > 30 * 1024 * 1024) {
+      await m.react('⚠️')
+      delete db.game.play?.[m.sender]
+      return m.reply(`❌ Ukuran audio (${(audio.buffer.length / (1024 * 1024)).toFixed(1)} MB) melebihi batas maksimal 30MB`)
+    }
+
     await naze.sendMessage(
 			m.chat,
 			{
@@ -307,6 +326,9 @@ ${music.quote}`
     console.log(e)
     await m.react('❌')
     delete db.game.play?.[m.sender]
+    if (e.message?.includes('30MB')) {
+      return m.reply('❌ Ukuran audio melebihi batas maksimal 30MB')
+    }
     return m.reply('❌ Gagal mengirim audio')
   }
 }

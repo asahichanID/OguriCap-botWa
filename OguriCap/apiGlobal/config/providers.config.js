@@ -29,7 +29,7 @@
  */
 const DEFAULTS = {
 	naze: {
-		baseUrl: 'https://api.naze.biz.id',
+		baseUrl: 'https://naze.dev/api/v1',
 		key: 'nz-880c23d4fd'
 	},
 	neosantara: {

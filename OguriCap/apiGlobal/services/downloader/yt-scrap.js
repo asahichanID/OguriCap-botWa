@@ -50,15 +50,32 @@ const DEFAULT_HEADERS = {
 const METADATA_DECRYPTION_KEY = Buffer.from('C5D58EF67A7584E4A29F6C35BBC4EB12', 'hex');
 
 // -----------------------------------------------------------------------
-// In-Memory Lightweight Cache (Search & Stream URL)
+// In-Memory Lightweight Cache (Search & Stream URL) - 5 Menit TTL
 // -----------------------------------------------------------------------
 const searchCache = new Map();
 const streamCache = new Map();
 const MAX_CACHE_ENTRIES = 200;
-const SEARCH_TTL_MS = 15 * 60 * 1000; // 15 menit
-const STREAM_TTL_MS = 30 * 60 * 1000; // 30 menit
+const SEARCH_TTL_MS = 5 * 60 * 1000; // 5 menit
+const STREAM_TTL_MS = 5 * 60 * 1000; // 5 menit
+
+function pruneExpiredCache() {
+  const now = Date.now();
+  for (const [key, item] of searchCache.entries()) {
+    if (now > item.expires) searchCache.delete(key);
+  }
+  for (const [key, item] of streamCache.entries()) {
+    if (now > item.expires) streamCache.delete(key);
+  }
+}
+
+// Bersihkan cache kedaluwarsa secara otomatis setiap 1 menit (Auto-Cleanup)
+const cacheCleanerTimer = setInterval(pruneExpiredCache, 60 * 1000);
+if (typeof cacheCleanerTimer?.unref === 'function') {
+  cacheCleanerTimer.unref();
+}
 
 function getFromCache(cacheMap, key) {
+  pruneExpiredCache();
   const item = cacheMap.get(key);
   if (!item) return null;
   if (Date.now() > item.expires) {
@@ -69,6 +86,7 @@ function getFromCache(cacheMap, key) {
 }
 
 function saveToCache(cacheMap, key, data, ttlMs) {
+  pruneExpiredCache();
   if (cacheMap.size >= MAX_CACHE_ENTRIES) {
     const firstKey = cacheMap.keys().next().value;
     if (firstKey) cacheMap.delete(firstKey);

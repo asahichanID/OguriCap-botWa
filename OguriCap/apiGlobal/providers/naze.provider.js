@@ -1,7 +1,7 @@
 /**
  * apiGlobal/providers/naze.provider.js
  * -----------------------------------------------------------------------
- * Provider: Naze API (https://api.naze.biz.id)
+ * Provider: Naze API (https://naze.dev/api/v1)
  *
  * Ini adalah provider yang SUDAH TERBUKTI berjalan di hampir seluruh
  * fitur project ini sebelum migrasi (dulu diakses lewat global.fetchApi

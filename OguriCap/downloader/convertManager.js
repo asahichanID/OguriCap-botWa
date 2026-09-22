@@ -21,7 +21,8 @@ if (!fs.existsSync(CACHE_DIR))
         recursive: true
     })
 
-const CACHE_TIME = 1000 * 60 * 30 
+const CACHE_TIME = 1000 * 60 * 5 // 5 Menit Cache TTL
+const MAX_AUDIO_SIZE = 30 * 1024 * 1024 // Batas Maksimal 30MB
 
 function detectExt(url = '') {
 
@@ -48,9 +49,11 @@ function hash(url) {
         .digest('hex')
 }
 
-function cleanupCache() {
+export function cleanupCache() {
 
     const now = Date.now()
+
+    if (!fs.existsSync(CACHE_DIR)) return
 
     for (const file of fs.readdirSync(CACHE_DIR)) {
 
@@ -59,16 +62,13 @@ function cleanupCache() {
             file
         )
 
-        const stat = fs.statSync(lokasi)
+        try {
+            const stat = fs.statSync(lokasi)
 
-        if (
-            now - stat.mtimeMs >
-            CACHE_TIME
-        ) {
-
-            fs.unlinkSync(lokasi)
-
-        }
+            if (now - stat.mtimeMs > CACHE_TIME) {
+                fs.unlinkSync(lokasi)
+            }
+        } catch (_) {}
 
     }
 
@@ -78,14 +78,14 @@ function cleanupCache() {
 // Bersihkan cache saat startup
 cleanupCache()
 
-// Bersihkan setiap 10 menit
+// Bersihkan cache secara otomatis setiap 1 menit (Auto Garbage Collection)
 const cacheTimer = setInterval(() => {
     try {
         cleanupCache()
     } catch (e) {
         console.error('❌ Cleanup MP3 Cache:', e)
     }
-}, 10 * 60 * 1000)
+}, 60 * 1000)
 if (typeof cacheTimer?.unref === 'function') {
     cacheTimer.unref()
 }
@@ -95,6 +95,8 @@ export async function convertToMp3(
     url,
     filename = 'Audio.mp3'
 ) {
+    cleanupCache()
+
     const id = hash(url)
     const cacheFile = path.join(
         CACHE_DIR,
@@ -102,9 +104,22 @@ export async function convertToMp3(
     )
 
     if (fs.existsSync(cacheFile)) {
-        return {
-            buffer: fs.readFileSync(cacheFile),
-            filename: filename.replace(/\.\w+$/i, '.mp3')
+        try {
+            const stat = fs.statSync(cacheFile)
+            if (Date.now() - stat.mtimeMs <= CACHE_TIME) {
+                if (stat.size > MAX_AUDIO_SIZE) {
+                    try { fs.unlinkSync(cacheFile) } catch (_) {}
+                    throw new Error('Ukuran file audio melebihi batas maksimal 30MB')
+                }
+                return {
+                    buffer: fs.readFileSync(cacheFile),
+                    filename: filename.replace(/\.\w+$/i, '.mp3')
+                }
+            } else {
+                try { fs.unlinkSync(cacheFile) } catch (_) {}
+            }
+        } catch (e) {
+            if (e.message?.includes('30MB')) throw e
         }
     }
 
@@ -120,8 +135,18 @@ export async function convertToMp3(
     try {
         // Coba download buffer secara langsung dengan fast keep-alive stream
         try {
-            const buffer = await getBuffer(url)
+            const headRes = await axios.head(url, { timeout: 5000, maxRedirects: 5 }).catch(() => null)
+            const contentLength = Number(headRes?.headers?.['content-length'] || 0)
+            if (contentLength > MAX_AUDIO_SIZE) {
+                throw new Error('Ukuran file audio melebihi batas maksimal 30MB')
+            }
+
+            const buffer = await getBuffer(url, { timeout: 25000 })
             if (buffer && Buffer.isBuffer(buffer) && buffer.length > 5000) {
+                if (buffer.length > MAX_AUDIO_SIZE) {
+                    throw new Error('Ukuran file audio melebihi batas maksimal 30MB')
+                }
+
                 const isId3 = buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33
                 const isMp3Sync = buffer[0] === 0xFF && (buffer[1] & 0xE0) === 0xE0
                 const isAac = buffer[0] === 0xFF && (buffer[1] & 0xF6) === 0xF0
@@ -129,7 +154,7 @@ export async function convertToMp3(
                 const isM4a = buffer.subarray(4, 8).toString() === 'ftyp'
                 const isAudioName = filename.toLowerCase().endsWith('.mp3') || filename.toLowerCase().endsWith('.m4a')
 
-                // Jika sudah merupakan audio stream yang valid, kirim langsung tanpa re-encode
+                // Jika sudah merupakan audio stream yang valid, simpan ke cache 5 menit & kirim langsung tanpa re-encode
                 if (isId3 || isMp3Sync || isAac || isOgg || isM4a || isAudioName) {
                     fs.writeFileSync(cacheFile, buffer)
                     return {
@@ -138,11 +163,12 @@ export async function convertToMp3(
                     }
                 }
             }
-        } catch (_) {
+        } catch (err) {
+            if (err.message?.includes('30MB')) throw err
             /* Lanjut ke FFmpeg fallback */
         }
 
-        // Jika memerlukan transcoding / stream kompleks, gunakan FFmpeg
+        // Jika memerlukan transcoding / stream kompleks, gunakan FFmpeg kualitas tinggi 192k secepat kilat
         await execAsync(
             `ffmpeg -hide_banner -loglevel error -y \
 -user_agent "Mozilla/5.0" \
@@ -151,12 +177,18 @@ export async function convertToMp3(
 -i "${url}" \
 -vn \
 -c:a libmp3lame \
--b:a 128k \
+-b:a 192k \
+-ar 44100 \
 "${output}"`
         )
 
         if (!fs.existsSync(output))
-            throw new Error('FFmpeg gagal.')
+            throw new Error('FFmpeg gagal mengonversi audio.')
+
+        const outStat = fs.statSync(output)
+        if (outStat.size > MAX_AUDIO_SIZE) {
+            throw new Error('Ukuran file audio melebihi batas maksimal 30MB')
+        }
 
         fs.copyFileSync(output, cacheFile)
         fs.unlinkSync(output)

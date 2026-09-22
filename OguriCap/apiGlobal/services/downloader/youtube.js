@@ -29,18 +29,26 @@ const SERVICE_GROUP = 'youtube';
  *           (lihat `mergeNeoxr()` di bawah), supaya pickField bisa menemukan
  *           kedua kelompok field sekaligus.
  */
-function normalize(raw) {
+function normalize(raw, isAudio = true) {
 	if (!raw) return null;
 	const rawViews = pickField(raw, ['views']);
+	const title = pickField(raw, ['title']) || 'YouTube Media';
+	let filename = pickField(raw, ['filename', 'title']) || title;
+	const ext = isAudio ? '.mp3' : '.mp4';
+	if (!filename.toLowerCase().endsWith('.mp3') && !filename.toLowerCase().endsWith('.mp4')) {
+		filename = `${filename}${ext}`;
+	}
+	const download = pickField(raw, ['download', 'url']);
 	return {
-		title: pickField(raw, ['title']),
-		download: pickField(raw, ['download', 'url']),
-		filename: pickField(raw, ['filename', 'title']),
-		author: pickField(raw, ['author', 'channel']),
+		title,
+		download,
+		url: download,
+		filename,
+		author: pickField(raw, ['author', 'channel']) || 'YouTube Creator',
 		thumbnail: pickField(raw, ['thumbnail', 'image', 'cover']),
 		views: rawViews ? Number(String(rawViews).replace(/[^\d]/g, '')) || 0 : 0,
-		ago: pickField(raw, ['ago', 'publish']),
-		size: pickField(raw, ['size']),
+		ago: pickField(raw, ['ago', 'publish']) || '',
+		size: pickField(raw, ['size']) || '',
 		direct: Boolean(raw.direct)
 	};
 }
@@ -95,15 +103,13 @@ export async function apiYoutubeSearch(query) {
   const timeout = getTimeout(SERVICE_GROUP)
 
   const providers = [
-    neoxrRequest(
-      '/yts',
-      { q: query },
-      { timeout }
+    validated(
+      nazeRequest('/search/youtube', { query }, { timeout }),
+      raw => Array.isArray(raw?.result?.items) ? raw.result.items.length > 0 : false
     ),
-    nazeRequest(
-      '/search/youtube',
-      { query },
-      { timeout }
+    validated(
+      neoxrRequest('/yts', { q: query }, { timeout }),
+      raw => Array.isArray(raw?.data) ? raw.data.length > 0 : false
     )
   ]
 
@@ -158,34 +164,36 @@ export async function apiYoutubeSearch(query) {
       raw?.data?.items ??
       []
 
-    items = rawList.map(v => ({
-      type: 'video',
-      title: v.snippet?.title || '',
-      url: `https://youtu.be/${v.id?.videoId}`,
-      videoId: v.id?.videoId || '',
-      thumbnail:
-        v.snippet?.thumbnails?.high?.url ??
-        v.snippet?.thumbnails?.medium?.url ??
-        v.snippet?.thumbnails?.default?.url ??
-        '',
-      image:
-        v.snippet?.thumbnails?.high?.url ??
-        v.snippet?.thumbnails?.medium?.url ??
-        '',
-      timestamp: '--:--',
-      ago: v.snippet?.publishedAt || '',
-      views: 0,
-      author: {
-        name: v.snippet?.channelTitle || 'YouTube Music'
-      }
-    }))
+    items = rawList
+      .filter(v => v.id?.videoId)
+      .map(v => ({
+        type: 'video',
+        title: v.snippet?.title || '',
+        url: `https://youtube.com/watch?v=${v.id.videoId}`,
+        videoId: v.id.videoId,
+        thumbnail:
+          v.snippet?.thumbnails?.high?.url ??
+          v.snippet?.thumbnails?.medium?.url ??
+          v.snippet?.thumbnails?.default?.url ??
+          `https://i.ytimg.com/vi/${v.id.videoId}/hqdefault.jpg`,
+        image:
+          v.snippet?.thumbnails?.high?.url ??
+          v.snippet?.thumbnails?.medium?.url ??
+          `https://i.ytimg.com/vi/${v.id.videoId}/hqdefault.jpg`,
+        timestamp: '--:--',
+        ago: v.snippet?.publishedAt || '',
+        views: 0,
+        author: {
+          name: v.snippet?.channelTitle || 'YouTube Music'
+        }
+      }))
   }
 
   return envelope(items, providerName, raw)
 }
 /**
  * Unduh AUDIO YouTube berdasarkan URL video (dipakai oleh layanan `play`
- * setelah judul lagu ditemukan lewat pencarian). Prioritas: Neoxr → Naze.
+ * setelah judul lagu ditemukan lewat pencarian). Prioritas: Naze -> Neoxr.
  *
  * @param {string} url - URL video YouTube (bukan kata kunci pencarian).
  * @returns {Promise<{result: object, provider: string, raw: any}>}
@@ -194,12 +202,12 @@ export async function apiYoutubeAudio(url) {
 	if (!url) throw new ValidationError('apiYoutubeAudio: parameter "url" wajib diisi.');
 
 	const timeout = getTimeout(SERVICE_GROUP);
-	const isValid = (raw) => Boolean(mergeNeoxr(raw)?.url || raw?.result?.download || raw?.data?.url);
+	const isValidNeoxr = (raw) => Boolean(mergeNeoxr(raw)?.url || raw?.data?.url);
+	const isValidNaze = (raw) => Boolean(raw?.result?.download || raw?.result?.url || raw?.data?.url);
 
 	const providers = [
-		validated(neoxrRequest('/youtube', { url, type: 'audio', quality: '128kbps' }, { timeout }), isValid),
-		validated(nazeRequest('/download/aio2', { url }, { timeout }), raw => Boolean(pickAio2Audio(raw)?.url)),	
-		nazeRequest('/download/youtube', { url, format: 'mp3' }, { timeout })
+		validated(nazeRequest('/download/youtube', { url, format: 'mp3' }, { timeout }), isValidNaze),
+		validated(neoxrRequest('/youtube', { url, type: 'audio', quality: '128kbps' }, { timeout }), isValidNeoxr)
 	];
 
 	const { raw, providerName } = await runProviders('youtube.audio', providers, {
@@ -208,26 +216,24 @@ export async function apiYoutubeAudio(url) {
 	});
 
 	let data;
-    if (raw?.result?.medias) {
-    	const media = pickAio2Audio(raw);
-    
-    	data = {
-    		title: raw.result.title,
-    		author: raw.result.author,
-    		thumbnail: raw.result.thumbnail,
-    		filename: `${raw.result.title}.${media.ext}`,
-    		size: '',
-    		url: media.url,
-    		download: media.url,
-    		direct: true
-    	};
-    } else {
-    	data = raw?.data ? mergeNeoxr(raw) : (raw?.result || raw);
-    	
-    	data.direct = false
-    }
-    
-    return envelope(normalize(data), providerName, raw);
+	if (raw?.result?.medias) {
+		const media = pickAio2Audio(raw);
+		data = {
+			title: raw.result.title,
+			author: raw.result.author,
+			thumbnail: raw.result.thumbnail,
+			filename: `${raw.result.title}.${media.ext}`,
+			size: '',
+			url: media.url,
+			download: media.url,
+			direct: true
+		};
+	} else {
+		data = raw?.data ? mergeNeoxr(raw) : (raw?.result || raw);
+		data.direct = Boolean(raw?.result?.download);
+	}
+
+	return envelope(normalize(data, true), providerName, raw);
 }
 
 /**
@@ -242,18 +248,14 @@ export async function apiYoutubeDownload(url, format = 'mp3') {
 	if (!url) throw new ValidationError('apiYoutubeDownload: parameter "url" wajib diisi.');
 
 	const timeout = getTimeout(SERVICE_GROUP);
-	const isAudio = format === 'mp3';
-	// NeoXR mengharapkan kualitas video seperti "720p" (contoh dari
-	// NEOXR_ENDPOINTS.md), sedangkan format internal project ini berupa
-	// angka polos ('360','720',dst) atau '2k'/'4k'/'8k'. Angka polos perlu
-	// akhiran 'p'; '2k'/'4k'/'8k' dibiarkan apa adanya.
+	const isAudio = format === 'mp3' || format === 'audio';
 	const neoxrQuality = isAudio ? '128kbps' : (/^\d+$/.test(format) ? `${format}p` : format);
-	const isValid = (raw) => Boolean(mergeNeoxr(raw)?.url);
+	const isValidNeoxr = (raw) => Boolean(mergeNeoxr(raw)?.url || raw?.data?.url);
+	const isValidNaze = (raw) => Boolean(raw?.result?.download || raw?.result?.url || raw?.data?.url);
 
 	const providers = [
-        validated(nazeRequest('/download/aio2', { url }, { timeout }), raw => Boolean(pickAio2Video(raw, format)?.url)),
-		validated(neoxrRequest('/youtube', { url, type: isAudio ? 'audio' : 'video', quality: neoxrQuality }, { timeout }), isValid),
-		nazeRequest('/download/youtube', { url, format }, { timeout })
+		validated(nazeRequest('/download/youtube', { url, format }, { timeout }), isValidNaze),
+		validated(neoxrRequest('/youtube', { url, type: isAudio ? 'audio' : 'video', quality: neoxrQuality }, { timeout }), isValidNeoxr)
 	];
 
 	const { raw, providerName } = await runProviders('youtube.download', providers, {
@@ -262,28 +264,26 @@ export async function apiYoutubeDownload(url, format = 'mp3') {
 	});
 
 	let data;
-    if (raw?.result?.medias) {
-    	const media = isAudio
-    		? pickAio2Audio(raw)
-    		: pickAio2Video(raw, format);
-    
-    	data = {
-    		title: raw.result.title,
-    		author: raw.result.author,
-    		thumbnail: raw.result.thumbnail,
-    		filename: `${raw.result.title}.${media.ext}`,
-    		size: '',
-    		url: media.url,
-    		download: media.url,
-    		direct: true
-    	};
-    } else {
-    	data = raw?.data ? mergeNeoxr(raw) : (raw?.result || raw);
-    	
-    	data.direct = false
-    }
-    
-    return envelope(normalize(data), providerName, raw);
+	if (raw?.result?.medias) {
+		const media = isAudio
+			? pickAio2Audio(raw)
+			: pickAio2Video(raw, format);
+		data = {
+			title: raw.result.title,
+			author: raw.result.author,
+			thumbnail: raw.result.thumbnail,
+			filename: `${raw.result.title}.${media.ext}`,
+			size: '',
+			url: media.url,
+			download: media.url,
+			direct: true
+		};
+	} else {
+		data = raw?.data ? mergeNeoxr(raw) : (raw?.result || raw);
+		data.direct = Boolean(raw?.result?.download);
+	}
+
+	return envelope(normalize(data, isAudio), providerName, raw);
 }
 
 export default { apiYoutubeAudio, apiYoutubeDownload, apiYoutubeSearch };
