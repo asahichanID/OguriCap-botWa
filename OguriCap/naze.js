@@ -58,7 +58,9 @@ import { kirimSonic } from './game/sonic.js';
 import { kirimTebakBom } from './game/tebakbom.js';
 import { verifyAndClaimCode, renderLeaderboardCanvas, getTopLeaderboard } from './game/tebakbomData.js';
 import { kirimUlarTangga } from './game/ulartangga.js';
-import { getLevelInfo, generateBaseXP, addExp } from './lib/xpGlobal.js';
+import { getLevelInfo, generateBaseXP, addExp, handleBackgroundCommandXp, checkAndNotifyLevelUp } from './lib/xpGlobal.js';
+import { hasAnyActiveGame, handleIncomingGameAnswer } from './lib/gameSessionManager.js';
+import { setLvl } from './plugins/cheat.js';
 import { kirimAngryBirds } from './game/angry_birds.js';
 import { kirimBalap } from './game/balap.js';
 import { kirimDino } from './game/dino.js';
@@ -173,6 +175,7 @@ const naze = async (naze, m, msg, store) => {
 	const cases = global.db.cases;
 
 	await LoadDataBase(naze, m);
+	const db = global.db || {};
 	
 	const botNumber = naze.decodeJid(naze.user.id);
 	
@@ -312,9 +315,10 @@ const naze = async (naze, m, msg, store) => {
 
 		const isMahiruInteraction = isMahiruTrigger(body || budy || m.text) || isReplyToMahiru(m, db);
 		const isItsukiInteraction = isItsukiTrigger(body || budy || m.text) || isReplyToItsuki(m, db);
+		const hasActiveGameSession = Boolean(hasAnyActiveGame(m.chat));
 
-		// Jika pesan dari akun bot sendiri (fromMe) tapi bukan command ber-prefix resmi, eval owner, tombol kunci, kuis math, atau interaksi Mahiru AI / Itsuki AI, buang
-		if (!hasActiveMath && m.key.fromMe && !isCmd && !isOwnerEval && !isLockAction && !isMahiruInteraction && !isItsukiInteraction) {
+		// Jika pesan dari akun bot sendiri (fromMe) tapi bukan command ber-prefix resmi, eval owner, tombol kunci, kuis math, game aktif, atau interaksi Mahiru AI / Itsuki AI, buang
+		if (!hasActiveMath && !hasActiveGameSession && m.key.fromMe && !isCmd && !isOwnerEval && !isLockAction && !isMahiruInteraction && !isItsukiInteraction) {
 			return;
 		}
 		
@@ -750,99 +754,15 @@ const naze = async (naze, m, msg, store) => {
 		}
 
 		// ============================================================
-		// GAME — SISTEM JAWABAN REAL-TIME (Audit & Fix)
-		// - Bebas tanpa harus reply/quoted ke pesan soal bot (sesi terdeteksi per chat/grup)
-		// - Jawaban benar: langsung merespons pemenang + reward Money & EXP Global
-		// - Jawaban salah / obrolan biasa: 100% DIAM (tidak reply, tidak spam)
-		// - Normalisasi fleksibel (trim, lowercase, hapus tanda baca, toleransi spasi & typo)
+		// GAME — SISTEM JAWABAN REAL-TIME TERPUSAT (Audit & Fix)
+		// - Bebas tanpa harus reply/quoted ke pesan soal bot
+		// - Jawaban benar: respon pemenang + reward Money & EXP Global
+		// - Jawaban salah / obrolan santai: 100% DIAM (tanpa spam)
+		// - Toleransi typo, variasi prefix, spasi & normalisasi NFKD
 		// ============================================================
-		const userGuess = (budy || body || m.body || m.text || '').trim();
-		if (userGuess) {
-			const games = { tebaklirik, tekateki, tebaklagu, tebakkata, susunkata, tebakkimia, caklontong, tebakangka, tebaknegara, tebakgambar, tebakbendera };
-			for (let gameName in games) {
-				let game = games[gameName];
-				if (!game || typeof game !== 'object') continue;
-				// Cari sesi game aktif di chat ini (bisa diawali m.chat atau persis m.chat)
-				let sessionKey = Object.keys(game).find(k => k === m.chat || k.startsWith(m.chat));
-				if (sessionKey && game[sessionKey]?.jawaban) {
-					let gameData = game[sessionKey];
-					let targetAnswer = String(gameData.jawaban).trim();
-					let targetNorm = normalizeAnswer(targetAnswer);
-					let guessNorm = normalizeAnswer(userGuess);
-					
-					let jawabBenar = false;
-					if (guessNorm && targetNorm) {
-						// 1. Exact match setelah normalisasi
-						if (guessNorm === targetNorm) {
-							jawabBenar = true;
-						}
-						// 2. Match tanpa spasi (misal "karbon dioksida" vs "karbondioksida")
-						else if (guessNorm.replace(/\s+/g, '') === targetNorm.replace(/\s+/g, '')) {
-							jawabBenar = true;
-						}
-						// 3. Similarity check (Levenshtein) dengan toleransi typo cerdas
-						else {
-							let sim = similarity(guessNorm, targetNorm);
-							if (sim >= 0.75) {
-								jawabBenar = true;
-							} else if (/tekateki|tebaklirik|tebaklagu|tebakkata|tebaknegara|tebakbendera|tebakgambar|susunkata|caklontong/.test(gameName) && sim >= 0.65) {
-								jawabBenar = true;
-							}
-						}
-					}
-
-					if (jawabBenar) {
-						let bonus = gameName === 'caklontong' ? 9999 : gameName === 'tebaklirik' ? 4299 : gameName === 'susunkata' ? 2989 : 3499;
-						if (db.users[m.sender]) {
-							db.users[m.sender].money = (db.users[m.sender].money || 0) + bonus;
-							const userLevel = getLevelInfo(db.users[m.sender]?.exp || 0).level;
-							const bonusExpGame = generateBaseXP(userLevel);
-							addExp(db, m.sender, bonusExpGame);
-							await m.reply(`Jawaban Benar 🎉\nBonus Money 💰 *+${bonus.toLocaleString('id-ID')}*\nBonus EXP 🌟 *+${bonusExpGame.toLocaleString('id-ID')}*`);
-						} else {
-							await m.reply(`Jawaban Benar 🎉\nBonus Money 💰 *+${bonus.toLocaleString('id-ID')}*`);
-						}
-						delete game[sessionKey];
-						break;
-					}
-					// JIKA SALAH: BOT DIAM TOTAL (tidak merespons apapun)
-				}
-			}
-		}
-		
-		// Family 100
-		if (m.chat in family100 && userGuess) {
-			let room = family100[m.chat];
-			let teks = normalizeAnswer(userGuess);
-			let isSurender = /^((me)?nyerah|surr?ender)$/i.test(teks);
-			let index = -1;
-			if (!isSurender && Array.isArray(room.jawaban)) {
-				index = room.jawaban.findIndex(v => {
-					const jNorm = normalizeAnswer(v);
-					if (jNorm === teks) return true;
-					if (jNorm.replace(/\s+/g, '') === teks.replace(/\s+/g, '')) return true;
-					if (similarity(teks, jNorm) >= 0.8) return true;
-					return false;
-				});
-			}
-			// Jawaban salah / tidak cocok / sudah pernah dijawab -> diam total, tidak reply
-			if (isSurender || (index !== -1 && !room.terjawab[index])) {
-				let bonusExpFam = 0;
-				if (!isSurender) {
-					room.terjawab[index] = m.sender;
-					if (db.users[m.sender]) {
-						db.users[m.sender].money = (db.users[m.sender].money || 0) + 3499;
-						const userLevel = getLevelInfo(db.users[m.sender]?.exp || 0).level;
-						bonusExpFam = generateBaseXP(userLevel);
-						addExp(db, m.sender, bonusExpFam);
-					}
-				}
-				let isWin = room.terjawab.length === room.terjawab.filter(v => v).length;
-				let rewardText = !isSurender ? `\n\n🎁 Hadiah untuk @${m.sender.split('@')[0]}: +3.499 Money • +${bonusExpFam} EXP` : '';
-				let caption = `Jawablah Pertanyaan Berikut :\n${room.soal}\n\n\nTerdapat ${room.jawaban.length} Jawaban ${room.jawaban.find(v => v.includes(' ')) ? `(beberapa Jawaban Terdapat Spasi)` : ''}\n${isWin ? `Semua Jawaban Terjawab 🎉` : isSurender ? 'Menyerah!' : ''}\n${Array.from(room.jawaban, (jawaban, idx) => { return isSurender || room.terjawab[idx] ? `(${idx + 1}) ${jawaban} ${room.terjawab[idx] ? '@' + room.terjawab[idx].split('@')[0] : ''}`.trim() : false }).filter(v => v).join('\n')}${rewardText}\n\n${isSurender ? '' : isWin ? `🏆 Game Selesai!` : `Perfect Player`}`.trim();
-				await naze.sendMessage(m.chat, { text: caption, mentions: parseMention(caption) }, { quoted: m });
-				if (isWin || isSurender) delete family100[m.chat];
-			}
+		if (hasAnyActiveGame(m.chat)) {
+			const gameHandled = await handleIncomingGameAnswer({ naze, m, budy, body, db });
+			if (gameHandled) return;
 		}
 		
 		// Chess
@@ -1139,6 +1059,11 @@ try {
 		if (isCmd && targetCmd && cases.includes(targetCmd)) {
 			const allowed = await handleUserLimit(naze, m, db, isCreator, targetCmd);
 			if (!allowed) return;
+
+			// 🔮 XP DIBALIK LAYAR UNTUK COMMAND VALID (1-7 XP)
+			if (!['setlvl', 'setlevel'].includes(targetCmd)) {
+				await handleBackgroundCommandXp({ db, jid: m.sender, command: targetCmd, naze, m }).catch(() => {});
+			}
 		}
 
 		switch(fileSha256 || command) {
@@ -1553,6 +1478,11 @@ break
 					addLimit(args[1], nmrnya, db)
 					m.reply(global.mess.done)
 				} else m.reply('User tidak terdaftar di database!')
+			}
+			break
+			case 'setlvl':
+			case 'setlevel': {
+				await setLvl({ naze, m, args, text, db, isCreator, prefix, command });
 			}
 			break
 			case 'listpc': {
@@ -5634,14 +5564,19 @@ break
 				const { result: hasil } = await apiGameTekaTeki();
 				let resMsg = await m.reply(`🎮 Teka Teki Berikut :\n\n${hasil.soal}\n\nWaktu : 60s\nHadiah *+3499 Money & +EXP*`);
 				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
-				tekateki[m.chat + sId] = {
-					jawaban: String(hasil.jawaban).toLowerCase(),
-					id: sId
+				const sessionData = {
+					jawaban: String(hasil.jawaban).trim(),
+					id: sId,
+					chat: m.chat,
+					soal: hasil.soal
 				};
+				tekateki[m.chat + sId] = sessionData;
+				(global.db.game.tekateki ??= {})[m.chat + sId] = sessionData;
 				setTimeout(() => {
-					if (tekateki[m.chat + sId]) {
-						m.reply('Waktu Habis\nJawaban: ' + tekateki[m.chat + sId].jawaban);
+					if (tekateki[m.chat + sId] || global.db?.game?.tekateki?.[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + (tekateki[m.chat + sId]?.jawaban || global.db?.game?.tekateki?.[m.chat + sId]?.jawaban));
 						delete tekateki[m.chat + sId];
+						if (global.db?.game?.tekateki) delete global.db.game.tekateki[m.chat + sId];
 					}
 				}, 60000);
 			}
@@ -5651,14 +5586,19 @@ break
 				const { result: hasil } = await apiGameTebakLirik();
 				let resMsg = await m.reply(`🎮 Tebak Lirik Berikut :\n\n${hasil.soal}\n\nWaktu : 90s\nHadiah *+4299 Money & +EXP*`);
 				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
-				tebaklirik[m.chat + sId] = {
-					jawaban: String(hasil.jawaban).toLowerCase(),
-					id: sId
+				const sessionData = {
+					jawaban: String(hasil.jawaban).trim(),
+					id: sId,
+					chat: m.chat,
+					soal: hasil.soal
 				};
+				tebaklirik[m.chat + sId] = sessionData;
+				(global.db.game.tebaklirik ??= {})[m.chat + sId] = sessionData;
 				setTimeout(() => {
-					if (tebaklirik[m.chat + sId]) {
-						m.reply('Waktu Habis\nJawaban: ' + tebaklirik[m.chat + sId].jawaban);
+					if (tebaklirik[m.chat + sId] || global.db?.game?.tebaklirik?.[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + (tebaklirik[m.chat + sId]?.jawaban || global.db?.game?.tebaklirik?.[m.chat + sId]?.jawaban));
 						delete tebaklirik[m.chat + sId];
+						if (global.db?.game?.tebaklirik) delete global.db.game.tebaklirik[m.chat + sId];
 					}
 				}, 90000);
 			}
@@ -5668,14 +5608,19 @@ break
 				const { result: hasil } = await apiGameTebakKata();
 				let resMsg = await m.reply(`🎮 Tebak Kata Berikut :\n\n${hasil.soal}\n\nWaktu : 60s\nHadiah *+3499 Money & +EXP*`);
 				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
-				tebakkata[m.chat + sId] = {
-					jawaban: String(hasil.jawaban).toLowerCase(),
-					id: sId
+				const sessionData = {
+					jawaban: String(hasil.jawaban).trim(),
+					id: sId,
+					chat: m.chat,
+					soal: hasil.soal
 				};
+				tebakkata[m.chat + sId] = sessionData;
+				(global.db.game.tebakkata ??= {})[m.chat + sId] = sessionData;
 				setTimeout(() => {
-					if (tebakkata[m.chat + sId]) {
-						m.reply('Waktu Habis\nJawaban: ' + tebakkata[m.chat + sId].jawaban);
+					if (tebakkata[m.chat + sId] || global.db?.game?.tebakkata?.[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + (tebakkata[m.chat + sId]?.jawaban || global.db?.game?.tebakkata?.[m.chat + sId]?.jawaban));
 						delete tebakkata[m.chat + sId];
+						if (global.db?.game?.tebakkata) delete global.db.game.tebakkata[m.chat + sId];
 					}
 				}, 60000);
 			}
@@ -5685,16 +5630,20 @@ break
 				const { result: hasil } = await apiGameFamily100();
 				let resMsg = await m.reply(`🎮 Family 100 Berikut :\n\n${hasil.soal}\n\nWaktu : 5m\nHadiah *+3499 Money & +EXP per jawaban*`);
 				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
-				family100[m.chat] = {
+				const sessionData = {
 					soal: hasil.soal,
 					jawaban: hasil.jawaban,
 					terjawab: Array.from(hasil.jawaban, () => false),
-					id: sId
+					id: sId,
+					chat: m.chat
 				};
+				family100[m.chat] = sessionData;
+				(global.db.game.family100 ??= {})[m.chat] = sessionData;
 				setTimeout(() => {
-					if (family100.hasOwnProperty(m.chat)) {
-						m.reply('Waktu Habis\nJawaban:\n- ' + family100[m.chat].jawaban.join('\n- '));
+					if (family100.hasOwnProperty(m.chat) || global.db?.game?.family100?.[m.chat]) {
+						m.reply('Waktu Habis\nJawaban:\n- ' + (family100[m.chat]?.jawaban || global.db?.game?.family100?.[m.chat]?.jawaban || []).join('\n- '));
 						delete family100[m.chat];
+						if (global.db?.game?.family100) delete global.db.game.family100[m.chat];
 					}
 				}, 300000);
 			}
@@ -5704,14 +5653,20 @@ break
 				const { result: hasil } = await apiGameSusunKata();
 				let resMsg = await m.reply(`🎮 Susun Kata Berikut :\n\n${hasil.soal}\nTipe : ${hasil.tipe}\n\nWaktu : 60s\nHadiah *+2989 Money & +EXP*`);
 				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
-				susunkata[m.chat + sId] = {
-					jawaban: String(hasil.jawaban).toLowerCase(),
-					id: sId
+				const sessionData = {
+					jawaban: String(hasil.jawaban).trim(),
+					id: sId,
+					chat: m.chat,
+					soal: hasil.soal,
+					tipe: hasil.tipe
 				};
+				susunkata[m.chat + sId] = sessionData;
+				(global.db.game.susunkata ??= {})[m.chat + sId] = sessionData;
 				setTimeout(() => {
-					if (susunkata[m.chat + sId]) {
-						m.reply('Waktu Habis\nJawaban: ' + susunkata[m.chat + sId].jawaban);
+					if (susunkata[m.chat + sId] || global.db?.game?.susunkata?.[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + (susunkata[m.chat + sId]?.jawaban || global.db?.game?.susunkata?.[m.chat + sId]?.jawaban));
 						delete susunkata[m.chat + sId];
+						if (global.db?.game?.susunkata) delete global.db.game.susunkata[m.chat + sId];
 					}
 				}, 60000);
 			}
@@ -5721,14 +5676,19 @@ break
 				const { result: hasil } = await apiGameTebakKimia();
 				let resMsg = await m.reply(`🎮 Tebak Kimia Berikut :\n\n${hasil.unsur}\n\nWaktu : 60s\nHadiah *+3499 Money & +EXP*`);
 				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
-				tebakkimia[m.chat + sId] = {
-					jawaban: String(hasil.lambang).toLowerCase(),
-					id: sId
+				const sessionData = {
+					jawaban: String(hasil.lambang).trim(),
+					id: sId,
+					chat: m.chat,
+					soal: hasil.unsur
 				};
+				tebakkimia[m.chat + sId] = sessionData;
+				(global.db.game.tebakkimia ??= {})[m.chat + sId] = sessionData;
 				setTimeout(() => {
-					if (tebakkimia[m.chat + sId]) {
-						m.reply('Waktu Habis\nJawaban: ' + tebakkimia[m.chat + sId].jawaban);
+					if (tebakkimia[m.chat + sId] || global.db?.game?.tebakkimia?.[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + (tebakkimia[m.chat + sId]?.jawaban || global.db?.game?.tebakkimia?.[m.chat + sId]?.jawaban));
 						delete tebakkimia[m.chat + sId];
+						if (global.db?.game?.tebakkimia) delete global.db.game.tebakkimia[m.chat + sId];
 					}
 				}, 60000);
 			}
@@ -5738,15 +5698,19 @@ break
 				const { result: hasil } = await apiGameCakLontong();
 				let resMsg = await m.reply(`🎮 Jawab Pertanyaan Berikut :\n\n${hasil.soal}\n\nWaktu : 60s\nHadiah *+9999 Money & +EXP*`);
 				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
-				caklontong[m.chat + sId] = {
+				const sessionData = {
 					...hasil,
-					jawaban: String(hasil.jawaban).toLowerCase(),
-					id: sId
+					jawaban: String(hasil.jawaban).trim(),
+					id: sId,
+					chat: m.chat
 				};
+				caklontong[m.chat + sId] = sessionData;
+				(global.db.game.caklontong ??= {})[m.chat + sId] = sessionData;
 				setTimeout(() => {
-					if (caklontong[m.chat + sId]) {
-						m.reply(`Waktu Habis\nJawaban: ${caklontong[m.chat + sId].jawaban}\n"${caklontong[m.chat + sId].deskripsi || ''}"`);
+					if (caklontong[m.chat + sId] || global.db?.game?.caklontong?.[m.chat + sId]) {
+						m.reply(`Waktu Habis\nJawaban: ${caklontong[m.chat + sId]?.jawaban || global.db?.game?.caklontong?.[m.chat + sId]?.jawaban}\n"${caklontong[m.chat + sId]?.deskripsi || global.db?.game?.caklontong?.[m.chat + sId]?.deskripsi || ''}"`);
 						delete caklontong[m.chat + sId];
+						if (global.db?.game?.caklontong) delete global.db.game.caklontong[m.chat + sId];
 					}
 				}, 60000);
 			}
@@ -5756,14 +5720,19 @@ break
 				const { result: hasil } = await apiGameTebakNegara();
 				let resMsg = await m.reply(`🎮 Tebak Negara Dari Tempat Berikut :\n\n*Tempat : ${hasil.tempat}*\n\nWaktu : 60s\nHadiah *+3499 Money & +EXP*`);
 				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
-				tebaknegara[m.chat + sId] = {
-					jawaban: String(hasil.negara).toLowerCase(),
-					id: sId
+				const sessionData = {
+					jawaban: String(hasil.negara).trim(),
+					id: sId,
+					chat: m.chat,
+					soal: hasil.tempat
 				};
+				tebaknegara[m.chat + sId] = sessionData;
+				(global.db.game.tebaknegara ??= {})[m.chat + sId] = sessionData;
 				setTimeout(() => {
-					if (tebaknegara[m.chat + sId]) {
-						m.reply('Waktu Habis\nJawaban: ' + tebaknegara[m.chat + sId].jawaban);
+					if (tebaknegara[m.chat + sId] || global.db?.game?.tebaknegara?.[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + (tebaknegara[m.chat + sId]?.jawaban || global.db?.game?.tebaknegara?.[m.chat + sId]?.jawaban));
 						delete tebaknegara[m.chat + sId];
+						if (global.db?.game?.tebaknegara) delete global.db.game.tebaknegara[m.chat + sId];
 					}
 				}, 60000);
 			}
@@ -5773,14 +5742,19 @@ break
 				const { result: hasil } = await apiGameTebakGambar();
 				let resMsg = await naze.sendFileUrl(m.chat, hasil.img, `🎮 Tebak Gambar Berikut :\n\n${hasil.deskripsi}\n\nWaktu : 60s\nHadiah *+3499 Money & +EXP*`, m);
 				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
-				tebakgambar[m.chat + sId] = {
-					jawaban: String(hasil.jawaban).toLowerCase(),
-					id: sId
+				const sessionData = {
+					jawaban: String(hasil.jawaban).trim(),
+					id: sId,
+					chat: m.chat,
+					deskripsi: hasil.deskripsi
 				};
+				tebakgambar[m.chat + sId] = sessionData;
+				(global.db.game.tebakgambar ??= {})[m.chat + sId] = sessionData;
 				setTimeout(() => {
-					if (tebakgambar[m.chat + sId]) {
-						m.reply('Waktu Habis\nJawaban: ' + tebakgambar[m.chat + sId].jawaban);
+					if (tebakgambar[m.chat + sId] || global.db?.game?.tebakgambar?.[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + (tebakgambar[m.chat + sId]?.jawaban || global.db?.game?.tebakgambar?.[m.chat + sId]?.jawaban));
 						delete tebakgambar[m.chat + sId];
+						if (global.db?.game?.tebakgambar) delete global.db.game.tebakgambar[m.chat + sId];
 					}
 				}, 60000);
 			}
@@ -5790,14 +5764,19 @@ break
 				const { result: hasil } = await apiGameTebakBendera();
 				let resMsg = await m.reply(`🎮 Tebak Bendera Berikut :\n\n*Bendera : ${hasil.bendera}*\n\nWaktu : 60s\nHadiah *+3499 Money & +EXP*`);
 				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
-				tebakbendera[m.chat + sId] = {
-					jawaban: String(hasil.negara).toLowerCase(),
-					id: sId
+				const sessionData = {
+					jawaban: String(hasil.negara).trim(),
+					id: sId,
+					chat: m.chat,
+					bendera: hasil.bendera
 				};
+				tebakbendera[m.chat + sId] = sessionData;
+				(global.db.game.tebakbendera ??= {})[m.chat + sId] = sessionData;
 				setTimeout(() => {
-					if (tebakbendera[m.chat + sId]) {
-						m.reply('Waktu Habis\nJawaban: ' + tebakbendera[m.chat + sId].jawaban);
+					if (tebakbendera[m.chat + sId] || global.db?.game?.tebakbendera?.[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + (tebakbendera[m.chat + sId]?.jawaban || global.db?.game?.tebakbendera?.[m.chat + sId]?.jawaban));
 						delete tebakbendera[m.chat + sId];
+						if (global.db?.game?.tebakbendera) delete global.db.game.tebakbendera[m.chat + sId];
 					}
 				}, 60000);
 			}
@@ -5818,14 +5797,18 @@ break
 					}
 				});
 				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
-				tebakangka[m.chat + sId] = {
-					jawaban: String(hasil.number),
-					id: sId
+				const sessionData = {
+					jawaban: String(hasil.number).trim(),
+					id: sId,
+					chat: m.chat
 				};
+				tebakangka[m.chat + sId] = sessionData;
+				(global.db.game.tebakangka ??= {})[m.chat + sId] = sessionData;
 				setTimeout(() => {
-					if (tebakangka[m.chat + sId]) {
-						m.reply('Waktu Habis\nJawaban: ' + tebakangka[m.chat + sId].jawaban);
+					if (tebakangka[m.chat + sId] || global.db?.game?.tebakangka?.[m.chat + sId]) {
+						m.reply('Waktu Habis\nJawaban: ' + (tebakangka[m.chat + sId]?.jawaban || global.db?.game?.tebakangka?.[m.chat + sId]?.jawaban));
 						delete tebakangka[m.chat + sId];
+						if (global.db?.game?.tebakangka) delete global.db.game.tebakangka[m.chat + sId];
 					}
 				}, 60000);
 			}

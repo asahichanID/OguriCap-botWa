@@ -21,6 +21,7 @@ const FileType = fileTypePkg.default || {
 import { checkStatus } from './database.js';
 import { isLocked } from '../group/kunci.js';
 import { acquireCommandSlot } from './guard.js';
+import { hasAnyActiveGame } from '../lib/gameSessionManager.js';
 import { installOutgoingGuard, isBotSentMessage, recordSentBotMessage } from './botGuard.js';
 import { createSticker } from '../lib/sticker/sticker.js';
 import { imageToWebp, videoToWebp, writeExif, gifToWebp } from '../lib/exif.js';
@@ -133,7 +134,8 @@ async function dispatchNazeHandler(naze, m, msg, store) {
 		m.key?.fromMe
 	);
 	const hasActiveMath = Boolean(global.__oguriMathSessionManager?.hasSession(m.chat));
-	if (!isOwner && !hasActiveMath && m.fromMe && isBotSentMessage(m.id || msg?.key?.id)) return;
+	const hasActiveGameSession = Boolean(hasAnyActiveGame(m.chat));
+	if (!isOwner && !hasActiveMath && !hasActiveGameSession && m.fromMe && isBotSentMessage(m.id || msg?.key?.id)) return;
 	const isButtonAction = Boolean(
 		m.interactiveId?.startsWith('lock_') ||
 		m.interactiveId?.startsWith('unlock_') ||
@@ -142,7 +144,7 @@ async function dispatchNazeHandler(naze, m, msg, store) {
 		m.text?.startsWith('lock_') ||
 		m.text?.startsWith('unlock_')
 	);
-	if (!hasActiveMath && m.fromMe && !m.isCmd && !isButtonAction && !isOwner) return;
+	if (!hasActiveMath && !hasActiveGameSession && m.fromMe && !m.isCmd && !isButtonAction && !isOwner) return;
 
 	const slot = await acquireCommandSlot(m.sender, m.chat, m);
 	if (!slot || slot.ok === false) return;
@@ -613,7 +615,8 @@ async function MessagesUpsert(naze, message, store) {
 		// Abaikan seluruh pesan yang dikirim oleh proses bot ini atau bot Baileys
 		if (isBotSentMessage(msg.key?.id)) return;
 		const hasActiveMath = Boolean(global.__oguriMathSessionManager?.hasSession(msg.key?.remoteJid));
-		if (!hasActiveMath && msg.key?.fromMe && (
+		const hasActiveGameSession = Boolean(hasAnyActiveGame(msg.key?.remoteJid));
+		if (!hasActiveMath && !hasActiveGameSession && msg.key?.fromMe && (
 			msg.key.id?.startsWith('3EB0') ||
 			msg.key.id?.includes('STARFALL') ||
 			msg.key.id?.startsWith('BAE5') ||
