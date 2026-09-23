@@ -1,32 +1,70 @@
 /**
- * OguriCap/itsuki/itsukiAI.js
+ * OguriCap/ai/itsuki/itsukiAI.js
  * -----------------------------------------------------------------------
- * Core Handler Itsuki Nakano AI (中野 五月) untuk Chat WhatsApp Baileys.
+ * Handler Asisten Itsuki Nakano AI (The Quintessential Quintuplets).
+ * 
+ * Menggunakan arsitektur AI Engine terpusat:
+ * - Scraper fleksibel tanpa hardcode karakter
+ * - Memori percakapan terisolasi dan fleksibel
+ * - Relasi permanen berbasis relationship.json
  */
 
 import chalk from 'chalk';
 import { buildItsukiPrompt } from './prompt.js';
-import { isItsukiTrigger } from './trigger.js';
-import { scrapeItsukiChat } from './scraper.js';
-import { getItsukiMemory, addItsukiMessage, clearItsukiMemory, recordItsukiSentMessage, isReplyToItsuki } from './memory.js';
-import { checkItsukiCooldown, cleanItsukiMessage, getTimeOfDay, sendItsukiTyping, sleep } from './helper.js';
-import { getItsukiRelationship, setItsukiRelationship, removeItsukiRelationship, parseOwnerItsukiRelationIntent, listItsukiRelationships } from './relationship.js';
+import { isItsukiTrigger, itsukiTrigger } from './trigger.js';
+import {
+	getItsukiRelationship,
+	setItsukiRelationship,
+	removeItsukiRelationship,
+	listItsukiRelationships,
+	parseOwnerItsukiRelationIntent
+} from './relationship.js';
+
+import {
+	callAiModel,
+	getMemory,
+	addMessage,
+	clearMemory,
+	recordSentMessage,
+	isReplyToAssistant,
+	formatHistoryForModel,
+	checkCooldown,
+	cleanTriggerFromText,
+	getTimeOfDay,
+	sendTyping,
+	sleep,
+	isUserOwner,
+	extractMentionedEntities
+} from '../aiengine/index.js';
+
 import { isBotSentMessage } from '../../src/botGuard.js';
 
-function isUserOwner(m) {
-	if (m.isOwner || m.isCreator) return true;
-	const senderNumber = (m.sender || '').split('@')[0];
-	const owners = [...(global.owner || []), ...(global.ownerNumber || [])];
-	return owners.some(o => {
-		if (typeof o === 'string') return o.replace(/[^0-9]/g, '') === senderNumber;
-		if (Array.isArray(o)) return String(o[0]).replace(/[^0-9]/g, '') === senderNumber;
-		if (o && typeof o === 'object' && o.id) return String(o.id).replace(/[^0-9]/g, '') === senderNumber;
-		return false;
-	});
+const ASSISTANT_ID = 'itsuki';
+
+/**
+ * Mengambil konfigurasi model untuk Itsuki AI
+ */
+function getItsukiConfig() {
+	const conf = global.itsukiAI || {};
+	const apiUrl = (conf.apiUrl || global.itsukiApiUrl || global.itsukiUrl || '').trim();
+	const apiKey = (conf.apiKey || global.itsukiApiKey || '').trim();
+	const customModel = (conf.customModel || conf.model || global.itsukiModel || 'gpt-4o-mini').trim();
+	const geminiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || conf.geminiKey || global.itsukiGeminiKey || global.geminiKey || '').trim();
+	const geminiModel = (conf.geminiModel || global.itsukiGeminiModel || 'gemini-2.5-flash').trim();
+
+	return {
+		apiUrl,
+		apiKey,
+		customModel,
+		geminiKey,
+		geminiModel,
+		timeoutMs: 12000,
+		temperature: 0.8
+	};
 }
 
 /**
- * Handler utama Itsuki Nakano AI untuk dipanggil pada setiap pesan masuk.
+ * Handler utama Itsuki Nakano AI untuk dipanggil pada setiap pesan masuk WhatsApp
  *
  * @param {Object} naze - Baileys socket client
  * @param {Object} m - Objek pesan WhatsApp
@@ -38,67 +76,43 @@ export async function itsukiAI(naze, m, db = global.db) {
 		if (!m || (!m.text && !m.body)) return;
 		if (m.isBaileys) return;
 
-		// Hindari loop jika pesan adalah pesan otomatis yang dikirim oleh proses bot ini
+		// Hindari loop jika pesan adalah pesan otomatis dari bot
 		if (isBotSentMessage(m.id || m.key?.id)) return;
 
 		const text = (typeof m.text === 'string' ? m.text : m.body || '').trim();
 		if (!text) return;
 
-		// 2. Cek apakah ini di grup atau private chat
+		// 2. Cek status grup & trigger
 		const isGroup = Boolean(m.isGroup);
 		const groupData = isGroup && db?.groups ? db.groups[m.chat] : (global.db?.groups?.[m.chat] || null);
 
 		const isEnabledInGroup = Boolean(
 			groupData?.itsukiAI?.enable === true ||
-			groupData?.itsukiAI === true ||
-			groupData?.itsuki === true
+			groupData?.itsukiAI === true
 		);
 
-		const replyToItsuki = isReplyToItsuki(m, db);
+		// Periksa apakah pesan mereply chat Itsuki
+		const replyToItsuki = isReplyToAssistant({ assistantId: ASSISTANT_ID, m, db });
 		const hasTrigger = isItsukiTrigger(text);
 
-		// Di grup: hanya merespon jika fitur aktif DAN (ada trigger nama Itsuki ATAU reply chat AI Itsuki)
 		if (isGroup) {
-			// Izinkan owner mengaktifkan/menonaktifkan Itsuki AI secara langsung
-			if (isUserOwner(m) && /^(itsuki|eatsuki)\s+(on|enable|aktifkan|1)$/i.test(text)) {
-				db.groups[m.chat].itsukiAI ??= { enable: false };
-				db.groups[m.chat].itsukiAI.enable = true;
-				global._dbDirty = true;
-				console.log(chalk.redBright('⭐ [ITSUKI AI]'), chalk.greenBright(`Itsuki AI diaktifkan di grup ${m.chat} oleh Shiro-sama!`));
-				return m.reply('⭐ *Itsuki Nakano AI diaktifkan oleh Shiro-sama!* 🥟✨\n\nKamu bisa mengajak Itsuki mengobrol dengan mengetik:\n• itsuki <pesanmu>\n• hai itsuki <pesanmu>\n• halo/pagi/siang/malam itsuki\n• eatsuki <pesanmu>\n\nAtau reply langsung pesan Itsuki untuk melanjutkan obrolan ⭐🥟');
-			}
-			if (isUserOwner(m) && /^(itsuki|eatsuki)\s+(off|disable|matikan|0)$/i.test(text)) {
-				db.groups[m.chat].itsukiAI ??= { enable: false };
-				db.groups[m.chat].itsukiAI.enable = false;
-				global._dbDirty = true;
-				console.log(chalk.redBright('⭐ [ITSUKI AI]'), chalk.yellowBright(`Itsuki AI dinonaktifkan di grup ${m.chat} oleh Shiro-sama`));
-				return m.reply('🔴 *Itsuki Nakano AI dinonaktifkan.* Aku mau lanjut belajar dulu ya~ ⭐📖');
-			}
-
-			if (!isEnabledInGroup) {
-				if (hasTrigger || replyToItsuki) {
-					console.log(chalk.redBright('⭐ [ITSUKI AI]'), chalk.yellow(`Pesan terdeteksi di grup ${m.chat} tetapi Itsuki AI belum diaktifkan (Gunakan: .itsuki on)`));
-				}
-				return;
-			}
+			if (!isEnabledInGroup) return;
 			if (!hasTrigger && !replyToItsuki) return;
 		} else {
-			// Di private chat: respon jika ada trigger nama Itsuki atau reply chat AI Itsuki
 			if (!hasTrigger && !replyToItsuki) return;
 		}
 
-		// 3. Jangan proses jika pesan adalah command bot dengan prefix lain
+		// 3. Filter command prefix (kecuali pesan eksplisit command .itsuki)
 		const listprefix = global.listprefix || ['.', '!', '+', '/'];
 		const isPrefixCmd = listprefix.some(p => text.startsWith(p));
-		const isDirectItsukiCmd = /^[.!\/+](itsuki|itsukiai|eatsuki|nakano)\b/i.test(text);
-		if (isPrefixCmd && !isDirectItsukiCmd) return;
+		const isDirectCmd = /^[.!\/+](itsuki|itsukiai|eatsuki|nakano)\b/i.test(text);
+		if (isPrefixCmd && !isDirectCmd) return;
 
-		// 4. Identifikasi user & status owner
+		// 4. Identifikasi owner & cek instruksi penetapan relasi natural
 		const isOwner = isUserOwner(m);
 
-		// Handler Relasi Khusus dari Owner (Shiro-sama)
 		if (isOwner) {
-			const relationIntent = parseOwnerItsukiRelationIntent(text, m.mentionedJid || [], m.quoted?.sender);
+			const relationIntent = parseOwnerItsukiRelationIntent(text, m.mentionedJid, m.quoted?.sender);
 			if (relationIntent) {
 				const targetNum = (relationIntent.targetJid || '').split('@')[0];
 				const targetName = global.db?.users?.[relationIntent.targetJid]?.name || `@${targetNum}`;
@@ -107,52 +121,54 @@ export async function itsukiAI(naze, m, db = global.db) {
 					setItsukiRelationship(db, relationIntent.targetJid, {
 						role: relationIntent.role,
 						targetName: targetName,
-						note: `Disetujui oleh Shiro-sama pada ${new Date().toLocaleDateString('id-ID')}`
+						note: `Disetujui dan diperintahkan oleh Shiro-sama pada ${new Date().toLocaleDateString('id-ID')}`
 					});
 
-					const roleDesc = relationIntent.role;
-					const replyText = `(tersipu malu sambil merapikan jepit bintang) B-Baiklah Shiro-sama... Jika ini adalah arahan dari Anda, mulai sekarang aku akan memperlakukan @${targetNum} sebagai *${roleDesc}* ku. Semoga aku bisa belajar menjadi pasangan yang baik dan tidak membuatnya repot ⭐🥟💕`;
+					const roleDesc = relationIntent.role === 'pacar' ? 'pacar' : relationIntent.role;
+					const replyText = `(⁄ ⁄•⁄ω⁄•⁄ ⁄) E-Eh?! Shiro-sama...?! A-Apakah Anda bersungguh-sungguh...?\n\nB-Baiklah, jika itu adalah restu dari Shiro-sama... Mulai sekarang aku akan memperlakukan @${targetNum} sebagai *${roleDesc}*! Tapi ingat ya, kamu tetap harus belajar dengan rajin dan tidak boleh membuatku kelaparan! ⭐🥟💕`;
 
-					console.log(chalk.magentaBright('⭐ [ITSUKI AI - RELASI DITETAPKAN]'), chalk.greenBright(`Target: ${targetNum} sebagai ${relationIntent.role}`));
-					await naze.sendPresenceUpdate?.('composing', m.chat);
-					await sleep(1000);
+					console.log(chalk.yellowBright('⭐ [ITSUKI AI - RELASI DITETAPKAN]'), chalk.greenBright(`Target: ${targetNum} sebagai ${relationIntent.role} atas izin Shiro-sama (Permanen ke JSON)`));
+					await sendTyping(naze, m.chat);
+					await sleep(1200);
 					const sentRel = await naze.sendMessage(m.chat, {
 						text: replyText,
 						mentions: [relationIntent.targetJid, m.sender]
 					}, { quoted: m });
+
 					if (sentRel?.key?.id) {
-						recordItsukiSentMessage(sentRel.key.id, replyText);
+						recordSentMessage({ assistantId: ASSISTANT_ID, messageId: sentRel.key.id, text: replyText });
 					}
 					return;
-				} else if (relationIntent.action === 'delete') {
+				} else if (relationIntent.action === 'remove') {
 					removeItsukiRelationship(db, relationIntent.targetJid);
-					const replyText = `(mengangguk sopan) Baik Shiro-sama, status relasi khusus dengan @${targetNum} telah kuhapus sesuai instruksi Anda. Sekarang kami berteman biasa ⭐`;
+					const replyText = `Baik, Shiro-sama. Status hubungan khusus dengan @${targetNum} telah aku hapus. Mulai sekarang aku akan memperlakukannya seperti teman biasa. ⭐`;
 
-					console.log(chalk.magentaBright('⭐ [ITSUKI AI - RELASI DIHAPUS]'), chalk.yellowBright(`Target: ${targetNum}`));
-					await naze.sendPresenceUpdate?.('composing', m.chat);
+					console.log(chalk.yellowBright('⭐ [ITSUKI AI - RELASI DIHAPUS]'), chalk.yellowBright(`Target: ${targetNum} dihapus atas arahan Shiro-sama`));
+					await sendTyping(naze, m.chat);
 					await sleep(1000);
 					const sentDel = await naze.sendMessage(m.chat, {
 						text: replyText,
 						mentions: [relationIntent.targetJid]
 					}, { quoted: m });
+
 					if (sentDel?.key?.id) {
-						recordItsukiSentMessage(sentDel.key.id, replyText);
+						recordSentMessage({ assistantId: ASSISTANT_ID, messageId: sentDel.key.id, text: replyText });
 					}
 					return;
 				}
 			}
 		}
 
-		// 5. Cooldown per user (2.5 detik)
-		const cooldownKey = `${m.chat}:${m.sender}`;
-		if (!checkItsukiCooldown(cooldownKey, 2500)) return;
+		// 5. Cooldown interaksi (2.5 detik)
+		const cooldownKey = `${ASSISTANT_ID}:${m.chat}:${m.sender}`;
+		if (!checkCooldown(cooldownKey, 2500)) return;
 
-		// 6. Bersihkan teks dari nama trigger
+		// 6. Bersihkan teks pesan dari nama trigger
 		let cleanText = replyToItsuki && !hasTrigger
 			? text
-			: cleanItsukiMessage(text);
+			: cleanTriggerFromText(text, itsukiTrigger);
 
-		if (isDirectItsukiCmd) {
+		if (isDirectCmd) {
 			cleanText = text.replace(/^[.!\/+](itsuki|itsukiai|eatsuki|nakano)\s*/i, '').trim() || 'Halo Itsuki';
 		}
 
@@ -160,57 +176,26 @@ export async function itsukiAI(naze, m, db = global.db) {
 			cleanText = text.trim() || 'Halo Itsuki';
 		}
 
-		// 7. Cek relasi khusus pengguna
+		// 7. Ambil relasi pengguna & kumpulkan data entitas yang dimention
 		const relationship = isOwner ? null : getItsukiRelationship(db, m.sender);
 		const allRelationships = listItsukiRelationships(db);
+		const mentionedEntities = extractMentionedEntities(m, text, (jid) => getItsukiRelationship(db, jid));
 
-		// Kumpulkan entitas yang disebut / di-mention / di-reply di pesan ini
-		const mentionedEntities = [];
-		const rawMentions = [...(m.mentionedJid || [])];
-		if (m.quoted?.sender && !rawMentions.includes(m.quoted.sender)) {
-			rawMentions.push(m.quoted.sender);
-		}
-
-		// Ekstrak juga nomor di dalam teks jika ada (contoh: @628xxx atau 628xxx)
-		const matchesInText = text.matchAll(/@?(\d{8,16})/g);
-		for (const match of matchesInText) {
-			const jid = `${match[1]}@s.whatsapp.net`;
-			if (!rawMentions.includes(jid)) {
-				rawMentions.push(jid);
-			}
-		}
-
-		for (const jid of rawMentions) {
-			const cleanNum = String(jid).replace(/[^0-9]/g, '');
-			if (!cleanNum) continue;
-			const targetRel = getItsukiRelationship(db, jid);
-			const targetName = global.db?.users?.[jid]?.name || targetRel?.targetName || `@${cleanNum}`;
-			mentionedEntities.push({
-				jid,
-				number: cleanNum,
-				name: targetName,
-				relationship: targetRel ? targetRel.role : null
-			});
-		}
-
-		// Log proses eksekusi AI mirip Mahiru AI
 		let userName = m.pushName || (isOwner ? 'Shiro-sama' : 'Teman');
-		if (isOwner) {
-			userName = 'Shiro-sama';
-		}
-		const relTag = relationship ? ` [Relasi: ${relationship.role}]` : '';
-		console.log(chalk.redBright('⭐ [ITSUKI AI]'), chalk.cyanBright(`Memproses pesan dari ${userName}${relTag} (${(m.sender || '').split('@')[0]}) di ${isGroup ? (m.metadata?.subject || 'Grup') : 'Private Chat'}:`), chalk.yellow(`"${cleanText}"`));
+		if (isOwner) userName = 'Shiro-sama';
 
-		// 8. Ambil Memori Riwayat Chat
+		const relTag = relationship ? ` [Relasi: ${relationship.role}]` : '';
+		console.log(chalk.yellowBright('⭐ [ITSUKI AI]'), chalk.cyanBright(`Memproses pesan dari ${userName}${relTag} (${(m.sender || '').split('@')[0]}):`), chalk.yellow(`"${cleanText}"`));
+
+		// 8. Ambil riwayat memori percakapan
 		const memKey = `${m.chat}:${m.sender}`;
-		const history = getItsukiMemory(db, memKey);
+		const history = getMemory({ assistantId: ASSISTANT_ID, sessionKey: memKey, db });
 
 		// Simpan pesan user ke memori
-		addItsukiMessage(db, memKey, 'user', cleanText);
+		addMessage({ assistantId: ASSISTANT_ID, sessionKey: memKey, role: 'user', content: cleanText, db });
 
-		// 9. Bangun prompt karakter Itsuki Nakano
+		// 9. Bangun prompt Itsuki
 		const timeOfDay = getTimeOfDay();
-
 		const systemPrompt = buildItsukiPrompt({
 			userName,
 			isOwner,
@@ -220,37 +205,34 @@ export async function itsukiAI(naze, m, db = global.db) {
 			timeOfDay
 		});
 
-		// 10. Kirim typing presence ke WA
-		await sendItsukiTyping(naze, m.chat);
-
-		// Natural delay (1.0 - 2.0 detik)
-		const randomDelay = Math.floor(Math.random() * 800) + 800;
+		// 10. Indikator mengetik & jeda alami
+		await sendTyping(naze, m.chat);
+		const randomDelay = Math.floor(Math.random() * 800) + 900;
 		await sleep(randomDelay);
 
-		// 11. Format pesan untuk AI Scraper
+		// 11. Format pesan & panggil AI Scraper Engine
 		const messagesForAI = [
-			...history.slice(-6).map(h => ({ role: h.role, content: h.content })),
+			...formatHistoryForModel(history, 6),
 			{ role: 'user', content: cleanText }
 		];
 
-		// 12. Scrape respon AI Itsuki Nakano
-		const itsukiReply = await scrapeItsukiChat(messagesForAI, systemPrompt, {
-			userName,
-			isOwner,
-			relationship,
-			allRelationships,
-			mentionedEntities
+		const config = getItsukiConfig();
+		const itsukiReply = await callAiModel({
+			messages: messagesForAI,
+			systemPrompt,
+			config,
+			options: { maxParagraphs: 2 }
 		});
 
 		if (!itsukiReply || typeof itsukiReply !== 'string' || itsukiReply.trim().length === 0) {
-			console.warn(chalk.yellow('[ITSUKI AI] Respon scraper kosong, mengabaikan'));
+			console.warn(chalk.yellow('[ITSUKI AI] Respon dari scraper kosong, mengabaikan'));
 			return;
 		}
 
-		// 13. Simpan balasan bot ke memori
-		addItsukiMessage(db, memKey, 'assistant', itsukiReply);
+		// 12. Simpan balasan Itsuki ke memori
+		addMessage({ assistantId: ASSISTANT_ID, sessionKey: memKey, role: 'assistant', content: itsukiReply, db });
 
-		// 14. Kumpulkan mentions jika ada
+		// 13. Kumpulkan mention balasan
 		const replyMentions = [];
 		for (const entity of mentionedEntities) {
 			if (entity.jid && !replyMentions.includes(entity.jid)) {
@@ -265,8 +247,8 @@ export async function itsukiAI(naze, m, db = global.db) {
 			}
 		}
 
-		// 15. Balas ke chat
-		console.log(chalk.redBright('⭐ [ITSUKI AI]'), chalk.greenBright(`Berhasil membalas ke ${m.chat}:`), chalk.white(itsukiReply.slice(0, 50) + '...'));
+		// 14. Kirim balasan ke WhatsApp
+		console.log(chalk.yellowBright('⭐ [ITSUKI AI]'), chalk.greenBright(`Berhasil membalas ke ${m.chat}:`), chalk.white(itsukiReply.slice(0, 50) + '...'));
 
 		let sentMsg = null;
 		if (replyMentions.length > 0 && naze?.sendMessage) {
@@ -279,9 +261,9 @@ export async function itsukiAI(naze, m, db = global.db) {
 		}
 
 		if (sentMsg?.key?.id) {
-			recordItsukiSentMessage(sentMsg.key.id, itsukiReply);
+			recordSentMessage({ assistantId: ASSISTANT_ID, messageId: sentMsg.key.id, text: itsukiReply });
 		} else {
-			recordItsukiSentMessage(null, itsukiReply);
+			recordSentMessage({ assistantId: ASSISTANT_ID, messageId: '', text: itsukiReply });
 		}
 
 	} catch (err) {
@@ -289,5 +271,12 @@ export async function itsukiAI(naze, m, db = global.db) {
 	}
 }
 
-export { clearItsukiMemory };
+/**
+ * Helper fungsi clear memory untuk Itsuki
+ */
+export function clearItsukiMemory(db, sessionKey) {
+	clearMemory({ assistantId: ASSISTANT_ID, sessionKey, db });
+}
+
+export { clearItsukiMemory as clearMemory };
 export default itsukiAI;

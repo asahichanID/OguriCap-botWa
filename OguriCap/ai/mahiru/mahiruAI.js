@@ -1,29 +1,70 @@
+/**
+ * OguriCap/ai/mahiru/mahiruAI.js
+ * -----------------------------------------------------------------------
+ * Handler Asisten Mahiru Shiina AI (The Angel Next Door).
+ * 
+ * Menggunakan arsitektur AI Engine terpusat:
+ * - Scraper fleksibel tanpa hardcode karakter
+ * - Memori percakapan terisolasi dan fleksibel
+ * - Relasi permanen berbasis relationship.json
+ */
+
 import chalk from 'chalk';
 import { buildMahiruPrompt } from './prompt.js';
-import { isMahiruTrigger } from './trigger.js';
-import { scrapeMahiruChat } from './scraper.js';
-import { getMahiruMemory, addMahiruMessage, clearMahiruMemory, recordMahiruSentMessage, isReplyToMahiru } from './memory.js';
-import { checkMahiruCooldown, cleanMahiruMessage, getTimeOfDay, sendMahiruTyping, sleep } from './helper.js';
-import { getMahiruRelationship, setMahiruRelationship, removeMahiruRelationship, parseOwnerRelationIntent, listMahiruRelationships } from './relationship.js';
+import { isMahiruTrigger, mahiruTrigger } from './trigger.js';
+import {
+	getMahiruRelationship,
+	setMahiruRelationship,
+	removeMahiruRelationship,
+	listMahiruRelationships,
+	parseOwnerRelationIntent
+} from './relationship.js';
+
+import {
+	callAiModel,
+	getMemory,
+	addMessage,
+	clearMemory,
+	recordSentMessage,
+	isReplyToAssistant,
+	formatHistoryForModel,
+	checkCooldown,
+	cleanTriggerFromText,
+	getTimeOfDay,
+	sendTyping,
+	sleep,
+	isUserOwner,
+	extractMentionedEntities
+} from '../aiengine/index.js';
+
 import { isBotSentMessage } from '../../src/botGuard.js';
 
+const ASSISTANT_ID = 'mahiru';
+
 /**
- * Memeriksa apakah user adalah owner / creator bot.
+ * Mengambil konfigurasi model untuk Mahiru AI
  */
-function isUserOwner(m) {
-	if (m.isOwner || m.isCreator) return true;
-	const senderNumber = (m.sender || '').split('@')[0];
-	const owners = [...(global.owner || []), ...(global.ownerNumber || [])];
-	return owners.some(o => {
-		if (typeof o === 'string') return o.replace(/[^0-9]/g, '') === senderNumber;
-		if (Array.isArray(o)) return String(o[0]).replace(/[^0-9]/g, '') === senderNumber;
-		if (o && typeof o === 'object' && o.id) return String(o.id).replace(/[^0-9]/g, '') === senderNumber;
-		return false;
-	});
+function getMahiruConfig() {
+	const conf = global.mahiruAI || {};
+	const apiUrl = (conf.apiUrl || global.mahiruApiUrl || global.mahiruUrl || '').trim();
+	const apiKey = (conf.apiKey || global.mahiruApiKey || '').trim();
+	const customModel = (conf.customModel || conf.model || global.mahiruModel || 'gpt-4o-mini').trim();
+	const geminiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || conf.geminiKey || global.mahiruGeminiKey || global.geminiKey || '').trim();
+	const geminiModel = (conf.geminiModel || global.mahiruGeminiModel || 'gemini-2.5-flash').trim();
+
+	return {
+		apiUrl,
+		apiKey,
+		customModel,
+		geminiKey,
+		geminiModel,
+		timeoutMs: 12000,
+		temperature: 0.8
+	};
 }
 
 /**
- * Handler utama Mahiru AI untuk dipanggil pada setiap pesan masuk.
+ * Handler utama Mahiru AI untuk dipanggil pada setiap pesan masuk WhatsApp
  *
  * @param {Object} naze - Baileys socket client
  * @param {Object} m - Objek pesan WhatsApp
@@ -35,17 +76,16 @@ export async function mahiruAI(naze, m, db = global.db) {
 		if (!m || (!m.text && !m.body)) return;
 		if (m.isBaileys) return;
 
-		// Hindari loop jika pesan adalah pesan otomatis yang dikirim oleh proses bot ini
+		// Hindari loop jika pesan adalah pesan otomatis dari bot
 		if (isBotSentMessage(m.id || m.key?.id)) return;
 
 		const text = (typeof m.text === 'string' ? m.text : m.body || '').trim();
 		if (!text) return;
 
-		// 2. Cek apakah ini di grup atau private chat
+		// 2. Cek status grup & trigger
 		const isGroup = Boolean(m.isGroup);
 		const groupData = isGroup && db?.groups ? db.groups[m.chat] : (global.db?.groups?.[m.chat] || null);
 
-		// Jika di grup, periksa apakah fitur Mahiru AI diaktifkan
 		const isEnabledInGroup = Boolean(
 			groupData?.mahiruAI?.enable === true ||
 			groupData?.mahiruAI === true ||
@@ -53,31 +93,26 @@ export async function mahiruAI(naze, m, db = global.db) {
 			groupData?.oguriAI === true
 		);
 
-		// PENTING: Hanya anggap reply jika pesan yang di-reply benar-benar pesan AI Mahiru
-		// (bukan chat biasa / command lain dari nomor bot/owner)
-		const replyToMahiru = isReplyToMahiru(m, db);
+		// Periksa apakah pesan mereply chat Mahiru
+		const replyToMahiru = isReplyToAssistant({ assistantId: ASSISTANT_ID, m, db });
 		const hasTrigger = isMahiruTrigger(text);
 
-		// Di grup: hanya merespon jika fitur aktif DAN (ada trigger nama Mahiru ATAU reply chat AI Mahiru)
 		if (isGroup) {
 			if (!isEnabledInGroup) return;
 			if (!hasTrigger && !replyToMahiru) return;
 		} else {
-			// Di private chat: respon jika ada trigger nama Mahiru atau reply chat AI Mahiru
 			if (!hasTrigger && !replyToMahiru) return;
 		}
 
-		// 3. Jangan proses jika pesan adalah command bot dengan prefix (kecuali pesan eksplisit command .mahiru)
+		// 3. Filter command prefix (kecuali pesan eksplisit command .mahiru)
 		const listprefix = global.listprefix || ['.', '!', '+', '/'];
 		const isPrefixCmd = listprefix.some(p => text.startsWith(p));
-		const isDirectMahiruCmd = /^[.!\/+](mahiru|mahiruai|tenshi|oguriai)\b/i.test(text);
-		if (isPrefixCmd && !isDirectMahiruCmd) return;
+		const isDirectCmd = /^[.!\/+](mahiru|mahiruai|tenshi|oguriai)\b/i.test(text);
+		if (isPrefixCmd && !isDirectCmd) return;
 
-		// 4. Identifikasi user & status owner
+		// 4. Identifikasi owner & cek instruksi penetapan relasi natural
 		const isOwner = isUserOwner(m);
 
-		// JIKA PESAN BERASAL DARI SHIRO-SAMA (OWNER):
-		// Cek apakah Shiro-sama sedang memberikan instruksi relasi khusus (misal: Mahiru tolong anggap @user pacarmu)
 		if (isOwner) {
 			const relationIntent = parseOwnerRelationIntent(text, m.mentionedJid, m.quoted?.sender);
 			if (relationIntent) {
@@ -94,15 +129,16 @@ export async function mahiruAI(naze, m, db = global.db) {
 					const roleDesc = relationIntent.role === 'pacar' ? 'pacar tercinta' : relationIntent.role;
 					const replyText = `(⁄ ⁄•⁄ω⁄•⁄ ⁄) E-Eh?! Shiro-sama serius...? \n\nB-Baiklah, jika itu adalah perintah dan keinginan Shiro-sama... Mulai sekarang Mahiru akan memperlakukan @${targetNum} layaknya *${roleDesc}* sendiri... Semoga Mahiru bisa menjadi ${roleDesc} yang baik dan tidak mengecewakan Shiro-sama ya! 🌸💕✨`;
 
-					console.log(chalk.magentaBright('🌸 [MAHIRU AI - RELASI DITETAPKAN]'), chalk.greenBright(`Target: ${targetNum} sebagai ${relationIntent.role} atas izin Shiro-sama`));
-					await naze.sendPresenceUpdate('composing', m.chat);
+					console.log(chalk.magentaBright('🌸 [MAHIRU AI - RELASI DITETAPKAN]'), chalk.greenBright(`Target: ${targetNum} sebagai ${relationIntent.role} atas izin Shiro-sama (Permanen ke JSON)`));
+					await sendTyping(naze, m.chat);
 					await sleep(1200);
 					const sentRel = await naze.sendMessage(m.chat, {
 						text: replyText,
 						mentions: [relationIntent.targetJid, m.sender]
 					}, { quoted: m });
+
 					if (sentRel?.key?.id) {
-						recordMahiruSentMessage(sentRel.key.id, replyText);
+						recordSentMessage({ assistantId: ASSISTANT_ID, messageId: sentRel.key.id, text: replyText });
 					}
 					return;
 				} else if (relationIntent.action === 'remove') {
@@ -110,31 +146,31 @@ export async function mahiruAI(naze, m, db = global.db) {
 					const replyText = `Baik, Shiro-sama. Status hubungan khusus dengan @${targetNum} telah Mahiru hapus sesuai arahan Shiro-sama. Sekarang Mahiru akan memperlakukannya seperti teman biasa. 🌸`;
 
 					console.log(chalk.magentaBright('🌸 [MAHIRU AI - RELASI DIHAPUS]'), chalk.yellowBright(`Target: ${targetNum} dihapus atas arahan Shiro-sama`));
-					await naze.sendPresenceUpdate('composing', m.chat);
+					await sendTyping(naze, m.chat);
 					await sleep(1000);
 					const sentDel = await naze.sendMessage(m.chat, {
 						text: replyText,
 						mentions: [relationIntent.targetJid]
 					}, { quoted: m });
+
 					if (sentDel?.key?.id) {
-						recordMahiruSentMessage(sentDel.key.id, replyText);
+						recordSentMessage({ assistantId: ASSISTANT_ID, messageId: sentDel.key.id, text: replyText });
 					}
 					return;
 				}
 			}
 		}
 
-		// 5. Cooldown per user (2.5 detik)
-		const cooldownKey = `${m.chat}:${m.sender}`;
-		if (!checkMahiruCooldown(cooldownKey, 2500)) return;
+		// 5. Cooldown interaksi (2.5 detik)
+		const cooldownKey = `${ASSISTANT_ID}:${m.chat}:${m.sender}`;
+		if (!checkCooldown(cooldownKey, 2500)) return;
 
-		// 6. Bersihkan teks dari nama trigger
+		// 6. Bersihkan teks pesan dari nama trigger
 		let cleanText = replyToMahiru && !hasTrigger
 			? text
-			: cleanMahiruMessage(text);
+			: cleanTriggerFromText(text, mahiruTrigger);
 
-		// Jika direct command seperti .mahiru halo
-		if (isDirectMahiruCmd) {
+		if (isDirectCmd) {
 			cleanText = text.replace(/^[.!\/+](mahiru|mahiruai|tenshi|oguriai)\s*/i, '').trim() || 'Halo Mahiru';
 		}
 
@@ -142,55 +178,25 @@ export async function mahiruAI(naze, m, db = global.db) {
 			cleanText = text.trim() || 'Halo Mahiru';
 		}
 
-		// 7. Cek relasi khusus pengguna & kumpulkan data relasi global
+		// 7. Ambil relasi pengguna & kumpulkan data entitas yang dimention
 		const relationship = isOwner ? null : getMahiruRelationship(db, m.sender);
 		const allRelationships = listMahiruRelationships(db);
-
-		// Kumpulkan entitas yang disebut / di-mention / di-reply di pesan ini
-		const mentionedEntities = [];
-		const rawMentions = [...(m.mentionedJid || [])];
-		if (m.quoted?.sender && !rawMentions.includes(m.quoted.sender)) {
-			rawMentions.push(m.quoted.sender);
-		}
-
-		// Ekstrak juga nomor di dalam teks jika ada (contoh: @628xxx atau 628xxx)
-		const matchesInText = text.matchAll(/@?(\d{8,16})/g);
-		for (const match of matchesInText) {
-			const jid = `${match[1]}@s.whatsapp.net`;
-			if (!rawMentions.includes(jid)) {
-				rawMentions.push(jid);
-			}
-		}
-
-		for (const jid of rawMentions) {
-			const cleanNum = String(jid).replace(/[^0-9]/g, '');
-			if (!cleanNum) continue;
-			const targetRel = getMahiruRelationship(db, jid);
-			const targetName = global.db?.users?.[jid]?.name || targetRel?.targetName || `@${cleanNum}`;
-			mentionedEntities.push({
-				jid,
-				number: cleanNum,
-				name: targetName,
-				relationship: targetRel
-			});
-		}
+		const mentionedEntities = extractMentionedEntities(m, text, (jid) => getMahiruRelationship(db, jid));
 
 		let userName = m.pushName || (isOwner ? 'Shiro-sama' : 'Teman');
-		if (isOwner) {
-			userName = 'Shiro-sama';
-		}
+		if (isOwner) userName = 'Shiro-sama';
 
 		const relTag = relationship ? ` [Relasi: ${relationship.role}]` : '';
-		console.log(chalk.magentaBright('🌸 [MAHIRU AI]'), chalk.cyanBright(`Memproses pesan dari ${userName}${relTag} (${(m.sender || '').split('@')[0]}) di ${isGroup ? (m.metadata?.subject || 'Grup') : 'Private Chat'}:`), chalk.yellow(`"${cleanText}"`));
+		console.log(chalk.magentaBright('🌸 [MAHIRU AI]'), chalk.cyanBright(`Memproses pesan dari ${userName}${relTag} (${(m.sender || '').split('@')[0]}):`), chalk.yellow(`"${cleanText}"`));
 
-		// 8. Ambil context memori percakapan
+		// 8. Ambil riwayat memori percakapan
 		const memKey = `${m.chat}:${m.sender}`;
-		const history = getMahiruMemory(db, memKey);
+		const history = getMemory({ assistantId: ASSISTANT_ID, sessionKey: memKey, db });
 
 		// Simpan pesan user ke memori
-		addMahiruMessage(db, memKey, 'user', cleanText);
+		addMessage({ assistantId: ASSISTANT_ID, sessionKey: memKey, role: 'user', content: cleanText, db });
 
-		// 9. Bangun prompt Mahiru dengan data relasi & mention lengkap
+		// 9. Bangun prompt Mahiru
 		const timeOfDay = getTimeOfDay();
 		const systemPrompt = buildMahiruPrompt({
 			userName,
@@ -201,44 +207,40 @@ export async function mahiruAI(naze, m, db = global.db) {
 			timeOfDay
 		});
 
-		// 10. Kirim typing presence ke WA
-		await sendMahiruTyping(naze, m.chat);
-
-		// Natural delay (1.0 - 2.0 detik)
-		const randomDelay = Math.floor(Math.random() * 1000) + 1000;
+		// 10. Indikator mengetik & jeda alami
+		await sendTyping(naze, m.chat);
+		const randomDelay = Math.floor(Math.random() * 800) + 900;
 		await sleep(randomDelay);
 
-		// 11. Format pesan untuk AI Scraper
+		// 11. Format pesan & panggil AI Scraper Engine
 		const messagesForAI = [
-			...history.slice(-6).map(h => ({ role: h.role, content: h.content })),
+			...formatHistoryForModel(history, 6),
 			{ role: 'user', content: cleanText }
 		];
 
-		// 12. Scrape respon AI Mahiru Shiina
-		const mahiruReply = await scrapeMahiruChat(messagesForAI, systemPrompt, {
-			userName,
-			isOwner,
-			relationship,
-			allRelationships,
-			mentionedEntities
+		const config = getMahiruConfig();
+		const mahiruReply = await callAiModel({
+			messages: messagesForAI,
+			systemPrompt,
+			config,
+			options: { maxParagraphs: 2 }
 		});
 
 		if (!mahiruReply || typeof mahiruReply !== 'string' || mahiruReply.trim().length === 0) {
-			console.warn(chalk.yellow('[MAHIRU AI] Respon scraper kosong, mengabaikan'));
+			console.warn(chalk.yellow('[MAHIRU AI] Respon dari scraper kosong, mengabaikan'));
 			return;
 		}
 
-		// 13. Simpan balasan bot ke memori
-		addMahiruMessage(db, memKey, 'assistant', mahiruReply);
+		// 12. Simpan balasan Mahiru ke memori
+		addMessage({ assistantId: ASSISTANT_ID, sessionKey: memKey, role: 'assistant', content: mahiruReply, db });
 
-		// 14. Kumpulkan mentions untuk pesan balasan
+		// 13. Kumpulkan mention balasan
 		const replyMentions = [];
 		for (const entity of mentionedEntities) {
 			if (entity.jid && !replyMentions.includes(entity.jid)) {
 				replyMentions.push(entity.jid);
 			}
 		}
-		// Cek nomor yang ada di teks balasan mahiru
 		const replyNumMatches = mahiruReply.matchAll(/@?(\d{8,16})/g);
 		for (const match of replyNumMatches) {
 			const jid = `${match[1]}@s.whatsapp.net`;
@@ -247,7 +249,7 @@ export async function mahiruAI(naze, m, db = global.db) {
 			}
 		}
 
-		// 15. Balas ke chat dan rekam ID & teks pesan yang dikirim
+		// 14. Kirim balasan ke WhatsApp
 		console.log(chalk.magentaBright('🌸 [MAHIRU AI]'), chalk.greenBright(`Berhasil membalas ke ${m.chat}:`), chalk.white(mahiruReply.slice(0, 50) + '...'));
 
 		let sentMsg = null;
@@ -261,9 +263,9 @@ export async function mahiruAI(naze, m, db = global.db) {
 		}
 
 		if (sentMsg?.key?.id) {
-			recordMahiruSentMessage(sentMsg.key.id, mahiruReply);
+			recordSentMessage({ assistantId: ASSISTANT_ID, messageId: sentMsg.key.id, text: mahiruReply });
 		} else {
-			recordMahiruSentMessage(null, mahiruReply);
+			recordSentMessage({ assistantId: ASSISTANT_ID, messageId: '', text: mahiruReply });
 		}
 
 	} catch (err) {
@@ -271,6 +273,12 @@ export async function mahiruAI(naze, m, db = global.db) {
 	}
 }
 
-// Re-export untuk backward-compatibility & direct command usage
-export { clearMahiruMemory, clearMahiruMemory as clearMemory };
+/**
+ * Helper fungsi clear memory untuk Mahiru
+ */
+export function clearMahiruMemory(db, sessionKey) {
+	clearMemory({ assistantId: ASSISTANT_ID, sessionKey, db });
+}
+
+export { clearMahiruMemory as clearMemory };
 export default mahiruAI;

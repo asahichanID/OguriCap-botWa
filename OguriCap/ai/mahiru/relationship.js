@@ -1,171 +1,75 @@
 /**
  * OguriCap/ai/mahiru/relationship.js
  * -----------------------------------------------------------------------
- * Modul Manajemen Relasi Khusus Mahiru Shiina AI.
- * 
- * Mengelola status hubungan spesial (misal: pacar, sahabat dekat, adik, dll.)
- * yang diberikan kepada pengguna tertentu HANYA atas izin Shiro-sama (Owner).
+ * Manajemen Relasi Mahiru Shiina AI Berbasis File JSON Permanen.
+ * Tersimpan secara permanen di relationship.json dan tersinkronisasi ke db.
  */
 
+import { fileURLToPath } from 'url';
+import path from 'path';
+import {
+	getRelationship,
+	setRelationship,
+	removeRelationship,
+	listRelationships,
+	parseOwnerRelationIntent as engineParseOwnerRelationIntent
+} from '../aiengine/relationship.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+export const MAHIRU_RELATIONSHIP_FILE = path.join(__dirname, 'relationship.json');
+
 /**
- * Mendapatkan data relasi Mahiru untuk user tertentu.
- *
- * @param {Object} db - Database global
- * @param {string} userJid - JID pengguna (misal: 628xxx@s.whatsapp.net)
- * @returns {Object|null} Objek relasi atau null
+ * Mengambil relasi Mahiru untuk user tertentu
  */
 export function getMahiruRelationship(db, userJid) {
-	if (!db || !userJid) return null;
-	const relDb = db.mahiruRelationships || (global.db && global.db.mahiruRelationships);
-	if (!relDb) return null;
-
-	const cleanNum = String(userJid).replace(/[^0-9]/g, '');
-	if (!cleanNum) return null;
-
-	return relDb[cleanNum] || relDb[userJid] || null;
+	return getRelationship({
+		userJid,
+		filePath: MAHIRU_RELATIONSHIP_FILE,
+		db,
+		assistantId: 'mahiru'
+	});
 }
 
 /**
- * Menyimpan / memperbarui relasi pengguna atas izin Shiro-sama.
- *
- * @param {Object} db - Database global
- * @param {string} userJid - JID pengguna target
- * @param {Object} data - Data relasi
- * @param {string} data.role - Jenis hubungan (contoh: 'pacar', 'sahabat', 'adik')
- * @param {string} [data.targetName] - Nama target
- * @param {string} [data.note] - Catatan tambahan
- * @returns {Object} Data relasi yang disimpan
+ * Menetapkan relasi Mahiru untuk user tertentu (Permanen ke JSON)
  */
-export function setMahiruRelationship(db, userJid, { role = 'pacar', targetName = '', note = '' } = {}) {
-	if (!db) db = global.db || {};
-	if (!db.mahiruRelationships) db.mahiruRelationships = {};
-
-	const cleanNum = String(userJid).replace(/[^0-9]/g, '');
-	const targetKey = cleanNum || userJid;
-
-	const relData = {
-		jid: userJid,
-		number: cleanNum,
-		role: role.toLowerCase(),
-		targetName: targetName || cleanNum,
-		grantedBy: 'Shiro-sama',
-		note: note || 'Ditetapkan atas restu dan izin Shiro-sama',
-		createdAt: Date.now(),
-		updatedAt: Date.now()
-	};
-
-	db.mahiruRelationships[targetKey] = relData;
-	if (global.db) {
-		global.db.mahiruRelationships = db.mahiruRelationships;
-		global._dbDirty = true;
-	}
-
-	return relData;
+export function setMahiruRelationship(db, userJid, data = {}) {
+	return setRelationship({
+		userJid,
+		data,
+		filePath: MAHIRU_RELATIONSHIP_FILE,
+		db,
+		assistantId: 'mahiru'
+	});
 }
 
 /**
- * Menghapus relasi pengguna.
- *
- * @param {Object} db - Database global
- * @param {string} userJid - JID target
- * @returns {boolean} Apakah berhasil dihapus
+ * Menghapus relasi Mahiru untuk user tertentu (Permanen dari JSON)
  */
 export function removeMahiruRelationship(db, userJid) {
-	if (!db || !userJid) return false;
-	const relDb = db.mahiruRelationships || (global.db && global.db.mahiruRelationships);
-	if (!relDb) return false;
-
-	const cleanNum = String(userJid).replace(/[^0-9]/g, '');
-	let deleted = false;
-
-	if (cleanNum && relDb[cleanNum]) {
-		delete relDb[cleanNum];
-		deleted = true;
-	}
-	if (relDb[userJid]) {
-		delete relDb[userJid];
-		deleted = true;
-	}
-
-	if (deleted && global.db) {
-		global._dbDirty = true;
-	}
-
-	return deleted;
+	return removeRelationship({
+		userJid,
+		filePath: MAHIRU_RELATIONSHIP_FILE,
+		db,
+		assistantId: 'mahiru'
+	});
 }
 
 /**
- * Mendapatkan seluruh daftar relasi Mahiru.
- *
- * @param {Object} db - Database global
- * @returns {Array<Object>} Daftar relasi
+ * Mendapatkan daftar seluruh relasi Mahiru
  */
 export function listMahiruRelationships(db) {
-	const relDb = db?.mahiruRelationships || global.db?.mahiruRelationships || {};
-	return Object.values(relDb);
+	return listRelationships({
+		filePath: MAHIRU_RELATIONSHIP_FILE,
+		db,
+		assistantId: 'mahiru'
+	});
 }
 
 /**
- * Memeriksa apakah teks dari Shiro-sama mengandung instruksi penetapan relasi khusus secara natural.
- *
- * Contoh instruksi natural dari Shiro-sama:
- * - "mahiru, anggap @user / dia pacarmu ya"
- * - "mahiru, perlakukan @user layaknya pacar"
- * - "mahiru, jadikan @user pacarmu mulai sekarang"
- * - "mahiru, hapus relasi @user"
- *
- * @param {string} text - Teks pesan
- * @param {Array<string>} mentionedJids - List JID yang dimention
- * @param {string|null} quotedSender - JID pesan yang direply
- * @returns {Object|null} Action { action: 'set'|'remove', targetJid: string, role: string }
+ * Parsing instruksi penetapan relasi natural dari Shiro-sama
  */
-export function parseOwnerRelationIntent(text = '', mentionedJids = [], quotedSender = null) {
-	if (!text || typeof text !== 'string') return null;
-	const lower = text.toLowerCase();
-
-	// Tentukan target JID (dari mention array, quoted sender, atau nomor di dalam teks)
-	let targetJid = null;
-	if (Array.isArray(mentionedJids) && mentionedJids.length > 0) {
-		targetJid = mentionedJids[0];
-	} else if (quotedSender) {
-		targetJid = quotedSender;
-	} else {
-		// Coba ekstrak nomor WhatsApp dari teks (misal @628123456789 atau 628123456789)
-		const numMatch = text.match(/@?(\d{8,16})/);
-		if (numMatch && numMatch[1]) {
-			targetJid = `${numMatch[1]}@s.whatsapp.net`;
-		}
-	}
-
-	// Cek jika perintah hapus relasi
-	const isRemove = /(hapus|cabut|batalkan|putus(in)?|hilangkan)\s+(relasi|hubungan|status|pacar|suami|istri|tunangan)/i.test(lower) ||
-		/(jangan\s+anggap\s+.*(pacar|kekasih|suami|istri|pasangan))/i.test(lower);
-
-	if (isRemove && targetJid) {
-		return { action: 'remove', targetJid };
-	}
-
-	// Cek kata kunci penetapan relasi
-	const isSetMatch = /(anggap|perlakukan|jadikan|buat|set|tetapkan)\s+(dia|mereka|kamu|kak|user|orang\s+ini|.*)?\s*(layaknya|sebagai|jadi)?\s*(pacar|kekasih|sahabat|adik|kakak|tunangan|istri|suami|pasangan)/i.test(lower) ||
-		/(mulai\s+sekarang\s+.*(pacar|kekasih|suami|istri|tunangan|pasangan))/i.test(lower) ||
-		/(pacaran\s+sama\s+.*|nikah\s+sama\s+.*|suami\s+kamu\s+.*|suamimu\s+.*)/i.test(lower);
-
-	if (isSetMatch) {
-		let role = 'pacar';
-		if (/suami/i.test(lower)) role = 'suami';
-		else if (/istri/i.test(lower)) role = 'istri';
-		else if (/tunangan/i.test(lower)) role = 'tunangan';
-		else if (/pacar|kekasih/i.test(lower)) role = 'pacar';
-		else if (/pasangan/i.test(lower)) role = 'pasangan';
-		else if (/sahabat/i.test(lower)) role = 'sahabat';
-		else if (/adik/i.test(lower)) role = 'adik';
-		else if (/kakak/i.test(lower)) role = 'kakak';
-
-		// Jika targetJid ditemukan
-		if (targetJid) {
-			return { action: 'set', targetJid, role };
-		}
-	}
-
-	return null;
+export function parseOwnerRelationIntent(text, mentionedJids = [], quotedSender = null) {
+	return engineParseOwnerRelationIntent(text, mentionedJids, quotedSender);
 }
