@@ -818,24 +818,35 @@ export const cariSpotify = async (conn, m, text) => {
       `💡 *Silakan ketuk tombol di bawah untuk memilih lagu favoritmu!*`
     ].join('\n')
 
-    const thumb = hasilAkhir[0]?.thumbnail || hasilAkhir[0]?.image || 'https://telegra.ph/file/95670d63378f7f4210f03.png'
+    const thumb = hasilAkhir[0]?.thumbnail || hasilAkhir[0]?.image || 'https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e02baf89eb11ec7c657805d2da0'
 
-    await conn.sendListMsg(m.chat, {
-      text: teks,
-      image: { url: thumb },
-      footer: `🛡️ Oguri Cap Music System • ${global.botname || 'Oguri Cap'}`,
-      buttons: [{
-        name: 'single_select',
-        buttonParamsJson: {
-          title: '🎵 PILIH LAGU DISINI',
-          sections: [{
-            title: '📋 Rekomendasi Lagu Spotify',
-            highlight_label: 'PILIHAN UTAMA',
-            rows: rows
-          }]
-        }
-      }]
-    }, { quoted: m })
+    try {
+      await conn.sendListMsg(m.chat, {
+        text: teks,
+        image: { url: thumb },
+        footer: `🛡️ Oguri Cap Music System • ${global.botname || 'Oguri Cap'}`,
+        buttons: [{
+          name: 'single_select',
+          buttonParamsJson: {
+            title: '🎵 PILIH LAGU DISINI',
+            sections: [{
+              title: '📋 Rekomendasi Lagu Spotify',
+              highlight_label: 'PILIHAN UTAMA',
+              rows: rows
+            }]
+          }
+        }]
+      }, { quoted: m })
+    } catch (errList) {
+      console.warn('⚠️ sendListMsg gagal, langsung kirim teks ke WA:', errList?.message || errList)
+      const listFallback = [
+        teks,
+        '',
+        '📋 *DAFTAR LAGU:*',
+        ...rows.map((r, i) => `${i + 1}. *${r.title}*\n   ${r.description}\n   👉 \`${r.id}\``)
+      ].join('\n')
+      await conn.sendMessage(m.chat, { text: listFallback }, { quoted: m })
+    }
 
   } catch (e) {
     console.error('💥 ERROR CARI SPOTIFY →', e)
@@ -870,7 +881,7 @@ export const unduhSpotify = async (conn, m, urlLagu) => {
         } catch (_) {}
       }
 
-      const coverUrl = meta.thumbnail || 'https://telegra.ph/file/95670d63378f7f4210f03.png'
+      const coverUrl = meta.thumbnail || 'https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e02baf89eb11ec7c657805d2da0'
 
       // Ambil lirik & unduh cover image buffer secara paralel
       const [lyricsData, coverBuffer] = await Promise.all([
@@ -880,7 +891,7 @@ export const unduhSpotify = async (conn, m, urlLagu) => {
             if (coverUrl && coverUrl.startsWith('http')) {
               const imgRes = await axios.get(coverUrl, {
                 responseType: 'arraybuffer',
-                timeout: 5000,
+                timeout: 2500,
                 headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
               })
               if (imgRes.data && imgRes.data.length > 0) {
