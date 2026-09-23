@@ -611,8 +611,24 @@ async function MessagesUpsert(naze, message, store) {
 		if (!msg || !msg.message) return;
 		if ((msg?.messageTimestamp * 1000) < botStartTime) return;
 
+		const remoteJid = msg.key.remoteJid;
+		(store.messages ??= {})[remoteJid] ??= {};
+		store.messages[remoteJid].array ??= [];
+		store.messages[remoteJid].keyId ??= new Set();
+		if (!(store.messages[remoteJid].keyId instanceof Set)) {
+			store.messages[remoteJid].keyId = new Set(store.messages[remoteJid].array.map(m => m.key.id));
+		}
+		if (!store.messages[remoteJid].keyId.has(msg.key.id)) {
+			store.messages[remoteJid].array.push(msg);
+			store.messages[remoteJid].keyId.add(msg.key.id);
+			if (store.messages[remoteJid].array.length > 50) {
+				const old = store.messages[remoteJid].array.shift();
+				if (old?.key?.id) store.messages[remoteJid].keyId.delete(old.key.id);
+			}
+		}
+
 		// 🛡️ ANTI SELF-REPLY / DOUBLE COMMAND:
-		// Abaikan seluruh pesan yang dikirim oleh proses bot ini atau bot Baileys
+		// Abaikan seluruh pesan yang dikirim oleh proses bot ini atau bot Baileys dari eksekusi command
 		if (isBotSentMessage(msg.key?.id)) return;
 		const hasActiveMath = Boolean(global.__oguriMathSessionManager?.hasSession(msg.key?.remoteJid));
 		const hasActiveGameSession = Boolean(hasAnyActiveGame(msg.key?.remoteJid));
@@ -624,21 +640,6 @@ async function MessagesUpsert(naze, message, store) {
 			msg.key.id?.startsWith('B1E')
 		)) {
 			return;
-		}
-
-		const remoteJid = msg.key.remoteJid;
-		(store.messages ??= {})[remoteJid] ??= {};
-		store.messages[remoteJid].array ??= [];
-		store.messages[remoteJid].keyId ??= new Set();
-		if (!(store.messages[remoteJid].keyId instanceof Set)) {
-			store.messages[remoteJid].keyId = new Set(store.messages[remoteJid].array.map(m => m.key.id));
-		}
-		if (store.messages[remoteJid].keyId.has(msg.key.id)) return;
-		store.messages[remoteJid].array.push(msg);
-		store.messages[remoteJid].keyId.add(msg.key.id);
-		if (store.messages[remoteJid].array.length > 20) {
-			const old = store.messages[remoteJid].array.shift();
-			if (old?.key?.id) store.messages[remoteJid].keyId.delete(old.key.id);
 		}
 		const type = msg.message ? (getContentType(msg.message) || Object.keys(msg.message)[0]) : '';
 		const m = await Serialize(naze, msg, store);
@@ -839,16 +840,24 @@ const convertLegacyButtons = (buttons = []) => {
 // WhatsApp nyata, ada bukti pasti (bukan dugaan) apa yang sebenarnya
 // terjadi di level ack/relay.
 const sendInteractiveCore = async (naze, jid, content = {}, options = {}, store) => {
-	// Samakan dengan langkah yang didokumentasikan dipakai sendMessage()
-	// bawaan Baileys untuk grup: pastikan metadata partisipan grup segar
-	// SEBELUM relay, bukan mengandalkan cache yang mungkin kosong/basi.
+	// Pastikan metadata partisipan grup tersedia untuk enkripsi multi-participant.
+	// Gunakan cache jika masih segar (< 5 menit) untuk menghilangkan lag berulang kali.
 	if (jid.endsWith('@g.us') && store) {
 		try {
 			store.groupMetadata = store.groupMetadata || {}
-			store.groupMetadata[jid] = await naze.groupMetadata(jid)
+			const cached = store.groupMetadata[jid]
+			const isFresh = cached && cached.participants?.length > 0 && (Date.now() - (cached._lastFetched || 0) < 5 * 60 * 1000)
+			if (!isFresh) {
+				const metaPromise = naze.groupMetadata(jid)
+				const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500))
+				const fresh = await Promise.race([metaPromise, timeoutPromise])
+				if (fresh) {
+					fresh._lastFetched = Date.now()
+					store.groupMetadata[jid] = fresh
+				}
+			}
 		} catch (e) {
-			// Biarkan lanjut walau gagal refresh -> tetap pakai cache lama jika ada,
-			// supaya fitur tidak mati total hanya karena metadata gagal di-refresh.
+			// Biarkan lanjut walau gagal refresh -> tetap pakai cache lama jika ada
 		}
 	}
 

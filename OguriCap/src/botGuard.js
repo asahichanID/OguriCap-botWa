@@ -38,26 +38,42 @@ let emergencyPauseUntil = 0;
 const chatOutgoingTimestamps = new Map(); // jid -> Array<number>
 const recentMessageHashes = new Map();     // jid -> Array<{ hash: string, time: number }>
 
-// Outgoing Queue State
-let outgoingQueuePromise = Promise.resolve();
+// Outgoing Queue State (Per-Chat Isolated Queues to prevent cross-chat bottleneck)
+const chatOutgoingQueues = new Map(); // jid -> Promise<any>
 let pendingOutgoingCount = 0;
-const MAX_PENDING_OUTGOING = 50;
+const MAX_PENDING_OUTGOING = 80;
 
-// Sent Bot Message ID Tracker (Anti Self-Reply / Double Reply)
-// Menyimpan ID pesan yang dikirim oleh proses bot ini agar tidak pernah diproses balik sebagai command
+// Sent Bot Message ID Tracker & Cache for Baileys getMessage Retry
+// Menyimpan ID dan konten pesan yang dikirim oleh bot agar WhatsApp dapat langsung mendekripsi pesan tanpa delay
 const sentBotMessageIds = new Set();
+const sentBotMessageCache = new Map(); // id -> proto message content
 
 /**
- * Merekam ID pesan yang dikirim oleh bot
+ * Merekam ID dan konten pesan yang dikirim oleh bot
  * @param {string} id 
+ * @param {any} messageContent
  */
-export function recordSentBotMessage(id) {
+export function recordSentBotMessage(id, messageContent = null) {
 	if (!id || typeof id !== 'string') return;
 	sentBotMessageIds.add(id);
+	if (messageContent) {
+		sentBotMessageCache.set(id, messageContent);
+	}
 	if (sentBotMessageIds.size > 3000) {
 		const oldest = sentBotMessageIds.values().next().value;
 		sentBotMessageIds.delete(oldest);
+		sentBotMessageCache.delete(oldest);
 	}
+}
+
+/**
+ * Mengambil cache konten pesan yang dikirim oleh bot untuk retry request WhatsApp
+ * @param {string} id 
+ * @returns {any}
+ */
+export function getSentBotMessage(id) {
+	if (!id || typeof id !== 'string') return null;
+	return sentBotMessageCache.get(id) || null;
 }
 
 /**
@@ -79,7 +95,7 @@ const userSpamStore = new Map();
 const autoThrottleStore = new Map();
 
 // Periodic cleanup every 3 minutes to prevent memory leak
-setInterval(() => {
+const cleanGuardTimer = setInterval(() => {
 	const now = Date.now();
 	
 	// Clean chat outgoing timestamps
@@ -103,13 +119,14 @@ setInterval(() => {
 		}
 	}
 
-	// Clean auto throttle
-	for (const [k, t] of autoThrottleStore.entries()) {
-		if (now - t > 60000) {
-			autoThrottleStore.delete(k);
+	// Clean completed chat queues
+	for (const [jid, q] of chatOutgoingQueues.entries()) {
+		if ((chatOutgoingTimestamps.get(jid)?.length || 0) === 0) {
+			chatOutgoingQueues.delete(jid);
 		}
 	}
 }, 3 * 60 * 1000);
+if (typeof cleanGuardTimer?.unref === 'function') cleanGuardTimer.unref();
 
 // ============================================================
 // 2. HELPER FUNCTIONS
@@ -123,9 +140,9 @@ function extractMessageSignature(content) {
 	if (typeof content === 'object') {
 		const text = content.text || content.caption || content.extendedTextMessage?.text || content.conversation || '';
 		if (text) return text.trim().toLowerCase().slice(0, 100);
-		if (content.image) return 'MEDIA:IMAGE';
-		if (content.video) return 'MEDIA:VIDEO';
-		if (content.audio) return 'MEDIA:AUDIO';
+		if (content.image) return 'MEDIA:IMAGE:' + (typeof content.image === 'object' ? (content.image.url || '') : '');
+		if (content.video) return 'MEDIA:VIDEO:' + (typeof content.video === 'object' ? (content.video.url || '') : '');
+		if (content.audio) return 'MEDIA:AUDIO:' + (content.fileName || (typeof content.audio === 'object' ? (content.audio.url || '') : ''));
 		if (content.sticker) return 'MEDIA:STICKER';
 		if (content.delete) return 'ACTION:DELETE:' + (content.delete.id || '');
 	}
@@ -195,7 +212,7 @@ export function checkOutgoingSafety(jid, content) {
 
 /**
  * Memasang Outgoing Guard & Pacing Queue pada instance Baileys socket.
- * Membungkus naze.sendMessage dan naze.relayMessage secara transparan.
+ * Membungkus naze.sendMessage dan naze.relayMessage secara transparan dengan antrian per-chat.
  * @param {object} naze 
  */
 export function installOutgoingGuard(naze) {
@@ -205,7 +222,7 @@ export function installOutgoingGuard(naze) {
 	const rawSendMessage = naze.sendMessage.bind(naze);
 	const rawRelayMessage = naze.relayMessage.bind(naze);
 
-	// Safe Outgoing Queue Dispatcher
+	// Safe Outgoing Queue Dispatcher (Per-Chat Isolated Queues)
 	function queueSendTask(task, jid, content) {
 		const safety = checkOutgoingSafety(jid, content);
 		if (!safety.allowed) {
@@ -227,41 +244,51 @@ export function installOutgoingGuard(naze) {
 
 		pendingOutgoingCount++;
 
-		const execPromise = outgoingQueuePromise.then(async () => {
+		const chatKey = jid || 'global';
+		const prevChatPromise = chatOutgoingQueues.get(chatKey) || Promise.resolve();
+
+		const execPromise = prevChatPromise.then(async () => {
 			try {
-				// Jeda alami 50-100ms antar pesan keluar agar efisien dan tetap aman
-				await sleep(50 + Math.floor(Math.random() * 50));
-				return await task();
+				// Jeda alami 30-60ms antar pesan keluar per chat
+				await sleep(30 + Math.floor(Math.random() * 30));
+				return await Promise.race([
+					task(),
+					new Promise((_, reject) => setTimeout(() => reject(new Error('Send task timeout (40s)')), 40000))
+				]);
 			} finally {
 				pendingOutgoingCount = Math.max(0, pendingOutgoingCount - 1);
 			}
 		});
 
-		outgoingQueuePromise = execPromise.catch(() => {});
+		chatOutgoingQueues.set(chatKey, execPromise.catch(() => {}));
 		return execPromise;
 	}
 
 	// Override sendMessage
 	naze.sendMessage = async (jid, content, options = {}) => {
-		if (options?.messageId) recordSentBotMessage(options.messageId);
+		if (options?.messageId) recordSentBotMessage(options.messageId, content);
 		return queueSendTask(async () => {
 			const res = await rawSendMessage(jid, content, options);
-			if (res?.key?.id) recordSentBotMessage(res.key.id);
+			if (res?.key?.id) {
+				recordSentBotMessage(res.key.id, res.message || content);
+			}
 			return res;
 		}, jid, content);
 	};
 
 	// Override relayMessage
 	naze.relayMessage = async (jid, message, options = {}) => {
-		if (options?.messageId) recordSentBotMessage(options.messageId);
+		if (options?.messageId) recordSentBotMessage(options.messageId, message);
 		return queueSendTask(async () => {
 			const res = await rawRelayMessage(jid, message, options);
-			if (res?.key?.id) recordSentBotMessage(res.key.id);
+			if (res?.key?.id) {
+				recordSentBotMessage(res.key.id, message);
+			}
 			return res;
 		}, jid, message);
 	};
 
-	console.log(chalk.greenBright('[BOT-GUARD] ✅ Outgoing Safety Guard & Circuit Breaker berhasil terpasang pada Baileys socket.'));
+	console.log(chalk.greenBright('[BOT-GUARD] ✅ Outgoing Safety Guard & Per-Chat Pacing Queue berhasil terpasang pada Baileys socket.'));
 }
 
 // ============================================================

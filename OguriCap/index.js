@@ -40,6 +40,7 @@ import { app, server, PORT } from './src/server.js';
 import { dataBase, cmdDel, checkStatus } from './src/database.js';
 import { assertInstalled, customHttpsAgent } from './lib/function.js';
 import { GroupParticipantsUpdate, MessagesUpsert, Solving } from './src/message.js';
+import { getSentBotMessage } from './src/botGuard.js';
 import { startSholatScheduler } from './lib/sholat.js';
 
 const require = createRequire(import.meta.url);
@@ -440,6 +441,10 @@ async function startNazeBot() {
 	const { version } = await fetchLatestWaWebVersion();
 	const { state, saveCreds } = await useMultiFileAuthState('nazedev');
 	const getMessage = async (key) => {
+		if (key?.id) {
+			const sentCached = getSentBotMessage(key.id);
+			if (sentCached) return typeof sentCached === 'object' && sentCached.message ? sentCached.message : sentCached;
+		}
 		if (global.store) {
 			const msg = await global.loadMessage(key.remoteJid, key.id);
 			return msg?.message || ''

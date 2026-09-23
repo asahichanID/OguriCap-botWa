@@ -881,7 +881,11 @@ export const unduhSpotify = async (conn, m, urlLagu) => {
         } catch (_) {}
       }
 
-      const coverUrl = meta.thumbnail || 'https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e02baf89eb11ec7c657805d2da0'
+      let coverUrl = meta.thumbnail || 'https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e02baf89eb11ec7c657805d2da0'
+      if (typeof coverUrl === 'string' && coverUrl.includes('ab67616d0000b273')) {
+        // Ganti cover 640x640 (~2MB) ke versi 300x300 (~25KB) agar upload ke WhatsApp secepat kilat
+        coverUrl = coverUrl.replace('ab67616d0000b273', 'ab67616d00001e02')
+      }
 
       // Ambil lirik & unduh cover image buffer secara paralel
       const [lyricsData, coverBuffer] = await Promise.all([

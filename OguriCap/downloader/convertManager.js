@@ -141,7 +141,7 @@ export async function convertToMp3(
                 throw new Error('Ukuran file audio melebihi batas maksimal 30MB')
             }
 
-            const buffer = await getBuffer(url, { timeout: 25000 })
+            const buffer = await getBuffer(url, { timeout: 12000 })
             if (buffer && Buffer.isBuffer(buffer) && buffer.length > 5000) {
                 if (buffer.length > MAX_AUDIO_SIZE) {
                     throw new Error('Ukuran file audio melebihi batas maksimal 30MB')
@@ -168,7 +168,7 @@ export async function convertToMp3(
             /* Lanjut ke FFmpeg fallback */
         }
 
-        // Jika memerlukan transcoding / stream kompleks, gunakan FFmpeg kualitas tinggi 192k secepat kilat
+        // Jika memerlukan transcoding / stream kompleks, gunakan FFmpeg dengan batas timeout 25 detik
         await execAsync(
             `ffmpeg -hide_banner -loglevel error -y \
 -user_agent "Mozilla/5.0" \
@@ -179,7 +179,8 @@ export async function convertToMp3(
 -c:a libmp3lame \
 -b:a 192k \
 -ar 44100 \
-"${output}"`
+"${output}"`,
+            { timeout: 25000 }
         )
 
         if (!fs.existsSync(output))

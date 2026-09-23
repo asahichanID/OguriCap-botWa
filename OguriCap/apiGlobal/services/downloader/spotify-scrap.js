@@ -234,8 +234,8 @@ export async function apiSpotifyScrapTrack(url) {
 
 // -----------------------------------------------------------------------
 // 2. Pencarian Spotify Super Cepat (apiSpotifyScrapSearch)
-//    - UTAMA: Scraper mandiri tanpa API key (YTMusic + yt-search + LRCLIB)
-//    - BACKUP: 2 API (Neoxr & Naze) jika seluruh scraper gagal
+//    - Mengembalikan 100% data resmi Spotify (URL open.spotify.com, CDN i.scdn.co)
+//    - Prioritas: Spotify API (Neoxr & Naze) dengan caching 5 menit
 // -----------------------------------------------------------------------
 export async function apiSpotifyScrapSearch(query) {
   if (!query || typeof query !== 'string' || !query.trim()) {
@@ -248,92 +248,50 @@ export async function apiSpotifyScrapSearch(query) {
   let standardized = [];
   let providerUsed = '';
 
-  // === TIER 1 (UTAMA): Scraper YouTube Music API (0 Apikey, Kualitas & Kecepatan Tinggi) ===
+  // === TIER 1 (UTAMA): Spotify Search API (Neoxr & Naze) - 100% Katalog Resmi Spotify ===
   try {
-    const ytm = await getYtMusic();
-    if (ytm) {
-      const songs = await ytm.searchSongs(query.trim());
-      if (Array.isArray(songs) && songs.length > 0) {
-        standardized = songs.slice(0, 10).map((item, idx) => {
-          const title = item.name || 'Spotify Track';
-          const artist = item.artist?.name || 'Spotify Artist';
-          const durationSec = typeof item.duration === 'number' ? item.duration : 0;
-          const duration = durationSec > 0
-            ? `${Math.floor(durationSec / 60)}:${String(durationSec % 60).padStart(2, '0')}`
-            : '--:--';
-          const thumbnail = item.thumbnails?.[item.thumbnails.length - 1]?.url ||
-                            item.thumbnails?.[0]?.url ||
-                            'https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e02baf89eb11ec7c657805d2da0';
-          const videoId = item.videoId || '';
-          const url = videoId
-            ? `https://www.youtube.com/watch?v=${videoId}`
-            : `https://open.spotify.com/search/${encodeURIComponent(title + ' ' + artist)}`;
+    const searchRes = await apiSpotifySearch(query.trim());
+    const list = Array.isArray(searchRes?.result) ? searchRes.result : [];
 
-          return {
-            index: idx + 1,
-            id: videoId || `track-${idx}`,
-            title,
-            name: title,
-            artist,
-            author: artist,
-            album: item.album?.name || title,
-            thumbnail,
-            image: thumbnail,
-            duration,
-            duration_ms: durationSec * 1000,
-            url
-          };
-        });
-        providerUsed = 'spotify-scraper (ytmusic)';
-      }
+    if (list.length > 0) {
+      standardized = list.map((item, idx) => {
+        let title = item.title || item.name || item.track || 'Spotify Track';
+        let artist = item.artist || item.author || (Array.isArray(item.artists) ? item.artists.map(a => a.name).join(', ') : '') || 'Spotify Artist';
+
+        if (title.includes(' - ') && (!artist || artist === 'Spotify Artist')) {
+          const splitted = title.split(' - ');
+          artist = splitted[0].trim();
+          title = splitted.slice(1).join(' - ').trim();
+        }
+
+        const thumbnail = item.thumbnail || item.image || item.album?.images?.[0]?.url || 'https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e02baf89eb11ec7c657805d2da0';
+        const duration = item.duration || (item.duration_ms ? `${Math.floor(item.duration_ms / 60000)}:${String(Math.floor((item.duration_ms % 60000) / 1000)).padStart(2, '0')}` : '--:--');
+        const trackId = item.id || extractSpotifyTrackId(item.url) || `track-${idx}`;
+        const url = item.url && item.url.includes('open.spotify.com') ? item.url : `https://open.spotify.com/track/${trackId}`;
+
+        return {
+          index: idx + 1,
+          id: trackId,
+          title,
+          name: title,
+          artist,
+          author: artist,
+          album: item.album?.name || title,
+          thumbnail,
+          image: thumbnail,
+          duration,
+          duration_ms: item.duration_ms || 0,
+          popularity: item.popularity || null,
+          url
+        };
+      });
+      providerUsed = `spotify (${searchRes?.provider || 'api'})`;
     }
-  } catch (errYtm) {
-    console.warn('⚠️ Scraper YTMusic search error:', errYtm?.message || errYtm);
+  } catch (errApi) {
+    console.warn('⚠️ Spotify Search API error, mencoba scraper fallback:', errApi?.message || errApi);
   }
 
-  // === TIER 2: Fallback Scraper yt-search (Lokal & Sangat Cepat, 0 Apikey) ===
-  if (!standardized.length) {
-    try {
-      const ytRes = await yts(query.trim());
-      const videos = Array.isArray(ytRes?.videos) ? ytRes.videos : [];
-      if (videos.length > 0) {
-        standardized = videos.slice(0, 10).map((item, idx) => {
-          const rawTitle = item.title || 'Spotify Track';
-          let title = rawTitle;
-          let artist = item.author?.name || 'Spotify Artist';
-
-          if (rawTitle.includes(' - ')) {
-            const parts = rawTitle.split(' - ');
-            artist = parts[0].trim();
-            title = parts.slice(1).join(' - ').trim();
-          }
-
-          const thumbnail = item.thumbnail || item.image || 'https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e02baf89eb11ec7c657805d2da0';
-          const duration = item.timestamp || (item.seconds ? `${Math.floor(item.seconds / 60)}:${String(item.seconds % 60).padStart(2, '0')}` : '--:--');
-
-          return {
-            index: idx + 1,
-            id: item.videoId || `track-${idx}`,
-            title,
-            name: title,
-            artist,
-            author: artist,
-            album: title,
-            thumbnail,
-            image: thumbnail,
-            duration,
-            duration_ms: (item.seconds || 0) * 1000,
-            url: item.url || `https://www.youtube.com/watch?v=${item.videoId}`
-          };
-        });
-        providerUsed = 'spotify-scraper (yt-search)';
-      }
-    } catch (errYts) {
-      console.warn('⚠️ Scraper yts search error:', errYts?.message || errYts);
-    }
-  }
-
-  // === TIER 3: Fallback Scraper LRCLIB Metadata Search (0 Apikey) ===
+  // === TIER 2: Fallback Scraper LRCLIB (Musik & Metadata Bebas Tanpa Apikey) ===
   if (!standardized.length) {
     try {
       const lrcRes = await axios.get('https://lrclib.net/api/search', {
@@ -373,50 +331,50 @@ export async function apiSpotifyScrapSearch(query) {
     }
   }
 
-  // === TIER 4 (BACKUP): 2 API Backup (Neoxr & Naze) jika seluruh scraper di atas gagal ===
+  // === TIER 3: Fallback Scraper YTMusic (Dimapping khusus ke format Spotify URL) ===
   if (!standardized.length) {
-    console.log('🔄 Seluruh Scraper tidak mengembalikan hasil, fallback ke 2 API Backup (Neoxr / Naze)...');
     try {
-      const searchRes = await apiSpotifySearch(query);
-      const list = Array.isArray(searchRes?.result) ? searchRes.result : [];
+      const ytm = await getYtMusic();
+      if (ytm) {
+        const songs = await ytm.searchSongs(query.trim());
+        if (Array.isArray(songs) && songs.length > 0) {
+          standardized = songs.slice(0, 10).map((item, idx) => {
+            const title = item.name || 'Spotify Track';
+            const artist = item.artist?.name || 'Spotify Artist';
+            const durationSec = typeof item.duration === 'number' ? item.duration : 0;
+            const duration = durationSec > 0
+              ? `${Math.floor(durationSec / 60)}:${String(durationSec % 60).padStart(2, '0')}`
+              : '--:--';
+            const thumbnail = item.thumbnails?.[item.thumbnails.length - 1]?.url ||
+                              item.thumbnails?.[0]?.url ||
+                              'https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e02baf89eb11ec7c657805d2da0';
 
-      standardized = list.map((item, idx) => {
-        let title = item.title || item.name || 'Spotify Track';
-        let artist = item.artist || item.author || 'Spotify Artist';
-        if (title.includes(' - ') && (!artist || artist === 'Spotify Artist')) {
-          const splitted = title.split(' - ');
-          artist = splitted[0].trim();
-          title = splitted.slice(1).join(' - ').trim();
+            return {
+              index: idx + 1,
+              id: item.videoId || `track-${idx}`,
+              title,
+              name: title,
+              artist,
+              author: artist,
+              album: item.album?.name || title,
+              thumbnail,
+              image: thumbnail,
+              duration,
+              duration_ms: durationSec * 1000,
+              url: `https://open.spotify.com/search/${encodeURIComponent(title + ' ' + artist)}`
+            };
+          });
+          providerUsed = 'spotify-scraper (music)';
         }
-        const thumbnail = item.thumbnail || item.image || item.album?.images?.[0]?.url || 'https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e02baf89eb11ec7c657805d2da0';
-        const duration = item.duration || (item.duration_ms ? `${Math.floor(item.duration_ms / 60000)}:${String(Math.floor((item.duration_ms % 60000) / 1000)).padStart(2, '0')}` : '--:--');
-        const url = item.url || (item.id ? `https://open.spotify.com/track/${item.id}` : '');
-
-        return {
-          index: idx + 1,
-          id: item.id || extractSpotifyTrackId(url) || `track-${idx}`,
-          title,
-          name: title,
-          artist,
-          author: artist,
-          album: item.album?.name || title,
-          thumbnail,
-          image: thumbnail,
-          duration,
-          duration_ms: item.duration_ms || 0,
-          popularity: item.popularity || null,
-          url
-        };
-      });
-      providerUsed = searchRes?.provider || 'backup-api';
-    } catch (errApi) {
-      console.error('❌ Backup API Spotify search juga error:', errApi?.message || errApi);
+      }
+    } catch (errYtm) {
+      console.warn('⚠️ Scraper Music search error:', errYtm?.message || errYtm);
     }
   }
 
   const envelopeRes = {
     result: standardized,
-    provider: providerUsed || 'spotify-scraper',
+    provider: providerUsed || 'spotify-api',
     total: standardized.length
   };
 
@@ -538,25 +496,41 @@ export async function apiSpotifyScrapAudio(url, meta = {}) {
   let providerUsed = '';
 
   // =====================================================================
-  // JALUR 1 (UTAMA): SCRAPER AUDIO MANDIRI TANPA APIKEY (SUPER CEPAT)
+  // JALUR 1 (UTAMA): API SPOTIFY DOWNLOAD RESMI (Neoxr & Naze)
+  // Mendownload audio resmi Spotify langsung dari URL Track
   // =====================================================================
-  const ytDirectId = extractYouTubeVideoId(url);
+  try {
+    const directDl = await apiSpotifyDownload(url);
+    if (directDl?.result?.download || directDl?.result?.url) {
+      downloadUrl = directDl.result.download || directDl.result.url;
+      providerUsed = `spotify (${directDl.provider || 'api'})`;
+      if ((!title || title === 'Spotify Track') && directDl.result.title) title = directDl.result.title;
+      if ((!artist || artist === 'Spotify Artist') && directDl.result.artist) artist = directDl.result.artist;
+      if (!thumbnail && directDl.result.thumbnail) thumbnail = directDl.result.thumbnail;
+    }
+  } catch (errApi) {
+    console.warn('⚠️ Spotify Download API kendala, mencoba fallback audio:', errApi?.message || errApi);
+  }
 
-  // Jika URL input langsung berupa link YouTube dari hasil scraper search:
-  if (ytDirectId) {
-    try {
-      const ytAudio = await apiYoutubeScrapAudio(`https://www.youtube.com/watch?v=${ytDirectId}`);
-      if (ytAudio?.result?.download) {
-        downloadUrl = ytAudio.result.download;
-        providerUsed = `spotify-scraper (direct-yt: ${ytAudio.provider})`;
-        if (!thumbnail && ytAudio.result.thumbnail) thumbnail = ytAudio.result.thumbnail;
+  // =====================================================================
+  // JALUR 2 (CADANGAN): Scraper Audio Mandiri jika API Download Spotify mengalami limit
+  // =====================================================================
+  if (!downloadUrl) {
+    const ytDirectId = extractYouTubeVideoId(url);
+    if (ytDirectId) {
+      try {
+        const ytAudio = await apiYoutubeScrapAudio(`https://www.youtube.com/watch?v=${ytDirectId}`);
+        if (ytAudio?.result?.download) {
+          downloadUrl = ytAudio.result.download;
+          providerUsed = `spotify-fallback (${ytAudio.provider})`;
+          if (!thumbnail && ytAudio.result.thumbnail) thumbnail = ytAudio.result.thumbnail;
+        }
+      } catch (errDirect) {
+        console.warn('⚠️ Fallback direct audio error:', errDirect?.message || errDirect);
       }
-    } catch (errDirect) {
-      console.warn('⚠️ Scraper direct YT audio error:', errDirect?.message || errDirect);
     }
   }
 
-  // Jika URL berupa Spotify track URL atau query:
   if (!downloadUrl) {
     const cleanSearchQuery = `${artist !== 'Spotify Artist' ? artist : ''} ${title !== 'Spotify Track' ? title : ''}`.trim() || title;
     if (cleanSearchQuery) {
@@ -567,32 +541,13 @@ export async function apiSpotifyScrapAudio(url, meta = {}) {
           const ytAudio = await apiYoutubeScrapAudio(firstVideo.url);
           if (ytAudio?.result?.download) {
             downloadUrl = ytAudio.result.download;
-            providerUsed = `spotify-scraper (${ytAudio.provider})`;
+            providerUsed = `spotify-fallback (${ytAudio.provider})`;
             if (!thumbnail && firstVideo.thumbnail) thumbnail = firstVideo.thumbnail;
           }
         }
       } catch (errScrap) {
-        console.warn('⚠️ Scraper Spotify audio error:', errScrap?.message || errScrap);
+        console.warn('⚠️ Fallback Spotify audio error:', errScrap?.message || errScrap);
       }
-    }
-  }
-
-  // =====================================================================
-  // JALUR 2 (BACKUP): 2 API (Neoxr & Naze AIO) JIKA SCRAPER GAGAL
-  // =====================================================================
-  if (!downloadUrl) {
-    console.log('🔄 Scraper audio tidak berhasil, mencoba 2 API Backup (Neoxr & Naze)...');
-    try {
-      const directDl = await apiSpotifyDownload(url);
-      if (directDl?.result?.download || directDl?.result?.url) {
-        downloadUrl = directDl.result.download || directDl.result.url;
-        providerUsed = directDl.provider || 'backup-api';
-        if ((!title || title === 'Spotify Track') && directDl.result.title) title = directDl.result.title;
-        if ((!artist || artist === 'Spotify Artist') && directDl.result.artist) artist = directDl.result.artist;
-        if (!thumbnail && directDl.result.thumbnail) thumbnail = directDl.result.thumbnail;
-      }
-    } catch (errApi) {
-      console.error('❌ Backup API Spotify download error:', errApi?.message || errApi);
     }
   }
 

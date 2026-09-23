@@ -67,8 +67,13 @@ export async function apiSpotifySearch(query) {
 	});
 
 	const items = extractSearchArray(raw).slice(0, 10).map((item) => {
-		const title = item.title || item.name || item.track || 'Spotify Track';
-		const artist = item.artist || (Array.isArray(item.artists) ? item.artists.map(a => a.name).join(', ') : '') || 'Spotify Artist';
+		let title = item.title || item.name || item.track || 'Spotify Track';
+		let artist = item.artist || (Array.isArray(item.artists) ? item.artists.map(a => a.name).join(', ') : '') || 'Spotify Artist';
+		if (title.includes(' - ') && (!artist || artist === 'Spotify Artist')) {
+			const parts = title.split(' - ');
+			artist = parts[0].trim();
+			title = parts.slice(1).join(' - ').trim();
+		}
 		const thumbnail = item.thumbnail || item.image || item.album?.images?.[0]?.url || '';
 		const duration = item.duration || (item.duration_ms ? `${Math.floor(item.duration_ms / 60000)}:${String(Math.floor((item.duration_ms % 60000) / 1000)).padStart(2, '0')}` : '--:--');
 		const url = item.url || item.link || (item.id ? `https://open.spotify.com/track/${item.id}` : '');
