@@ -225,11 +225,6 @@ async function GroupUpdate(naze, m, store) {
 				const key = metadata.addressingMode === 'lid' ? jidNormalizedUser(p.id) : jidNormalizedUser(p.phoneNumber)
 				return key !== (normalizedTarget.id || normalizedTarget)
 			});
-		} else {
-			console.log({
-				messageStubType: m.messageStubType, type,
-				messageStubParameters: m.messageStubParameters,
-			})
 		}
 	}
 }
@@ -642,6 +637,26 @@ async function MessagesUpsert(naze, message, store) {
 			return;
 		}
 		const type = msg.message ? (getContentType(msg.message) || Object.keys(msg.message)[0]) : '';
+		// 🛡️ Filter pesan internal protokol WhatsApp / Baileys (key distribution, receipt, history sync, dll)
+		// Pesan-pesan internal ini tidak memiliki konten interaksi manusia dan sering memicu spam log di console
+		const IGNORED_INTERNAL_TYPES = [
+			'senderKeyDistributionMessage',
+			'protocolMessage',
+			'keyExchangeMessage',
+			'peerDataOperationRequestMessage',
+			'peerDataOperationRequestResponseMessage',
+			'bcallMessage',
+			'callLogMessage'
+		];
+		if (!type || IGNORED_INTERNAL_TYPES.includes(type)) {
+			// Simpan pesan protokol penting seperti edit/delete jika dibutuhkan store, tapi jangan teruskan ke handler/console log
+			if (global.db?.set?.[botNumber]?.readsw && msg.key.remoteJid === 'status@broadcast' && /protocolMessage/i.test(type)) {
+				await naze.readMessages([msg.key]);
+				await naze.sendFromOwner(global.db?.set?.[botNumber]?.owner || global.owner, 'Status dari @' + msg.key.participant.split('@')[0] + ' Telah dihapus', msg, { mentions: [msg.key.participant] });
+			}
+			return;
+		}
+
 		const m = await Serialize(naze, msg, store);
 		if (nazeHandler) {
 			dispatchNazeHandler(naze, m, msg, store);
@@ -660,8 +675,7 @@ async function MessagesUpsert(naze, message, store) {
 			}
 		}
 	} catch (e) {
-		console.log(message);
-		throw e;
+		console.error('[MESSAGES UPSERT ERROR]:', e?.message || e);
 	}
 }
 

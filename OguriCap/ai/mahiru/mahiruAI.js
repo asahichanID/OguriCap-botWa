@@ -223,7 +223,7 @@ export async function mahiruAI(naze, m, db = global.db) {
 			messages: messagesForAI,
 			systemPrompt,
 			config,
-			options: { maxParagraphs: 2 }
+			options: { maxParagraphs: 2, maxSentencesPerParagraph: 3 }
 		});
 
 		if (!mahiruReply || typeof mahiruReply !== 'string' || mahiruReply.trim().length === 0) {

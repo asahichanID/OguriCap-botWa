@@ -114,12 +114,25 @@ export function sanitizeAiResponse(rawText = '', options = {}) {
 	// 6. Normalisasi newline berulang (> 2 baris kosong jadi 1 jeda paragraf)
 	clean = clean.replace(/\n{3,}/g, '\n\n').trim();
 
-	// 7. Pembatasan jumlah paragraf jika diatur
+	// 7. Pembatasan jumlah paragraf & panjang kalimat jika diatur
 	if (options.maxParagraphs && options.maxParagraphs > 0) {
-		const paragraphs = clean.split(/\n\s*\n/).filter(p => p.trim().length > 0);
+		let paragraphs = clean.split(/\n\s*\n/).filter(p => p.trim().length > 0);
 		if (paragraphs.length > options.maxParagraphs) {
-			clean = paragraphs.slice(0, options.maxParagraphs).join('\n\n').trim();
+			paragraphs = paragraphs.slice(0, options.maxParagraphs);
 		}
+
+		if (options.maxSentencesPerParagraph && options.maxSentencesPerParagraph > 0) {
+			paragraphs = paragraphs.map(p => {
+				// Memecah kalimat berdasarkan tanda baca (. ! ?) tanpa merusak kaomoji umum
+				const sentences = p.match(/[^.!?…]+[.!?…]+(?:[\s)\]}”"']*|$)/g);
+				if (sentences && sentences.length > options.maxSentencesPerParagraph) {
+					return sentences.slice(0, options.maxSentencesPerParagraph).join(' ').trim();
+				}
+				return p;
+			});
+		}
+
+		clean = paragraphs.join('\n\n').trim();
 	}
 
 	return clean;
@@ -304,7 +317,8 @@ ${effectiveSysPrompt}
 2. DILARANG KERAS memperkenalkan diri atau mengaku sebagai AI, Nexray, DeepAI, bot, sistem, ataupun model bahasa dalam bentuk apapun!
 3. Selalu pertahankan gaya bahasa, nada bicara, kaomoji khas, dan kepribadian karakter seperti yang dijelaskan di atas.
 4. KETERIKATAN KONTEKS MUTLAK (WAJIB NYAMBUNG): Perhatikan kata-kata terakhir User! Balasanmu WAJIB langsung menanggapi, mengomentari, dan menjawab inti topik/masalah tersebut secara logis dan mendalam. DILARANG merespons dengan template basa-basi umum tanpa menyentuh topik User!
-5. Jangan menuliskan kelanjutan dialog User. Cukup balas 1 kali secara langsung sebagai karakter.
+5. FORMAT 2 PARAGRAF EKSPRESIF: Balasan tersusun rapi dalam 2 paragraf yang hidup, hangat, dan mengena tanpa bertele-tele berlebihan seperti novel (sekitar 2-3 kalimat per paragraf).
+6. Jangan menuliskan kelanjutan dialog User. Cukup balas 1 kali secara langsung sebagai karakter.
 
 [RIWAYAT PERCAKAPAN]:
 ${historyText}

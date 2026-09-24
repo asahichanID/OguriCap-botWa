@@ -523,14 +523,26 @@ const naze = async (naze, m, msg, store) => {
 			
 		
 		// Auto Read & Console Log Activity
-		if (m.message && m.key.remoteJid !== 'status@broadcast') {
+		// Hanya log pesan jika memiliki konten teks / media yang nyata (bukan undefined / handshake internal / stub)
+		const messagePreview = (budy || m.text || m.body || (m.isMedia ? `[Media: ${m.type}]` : '')).trim();
+		const isInternalProtocol = [
+			'senderKeyDistributionMessage',
+			'protocolMessage',
+			'keyExchangeMessage',
+			'peerDataOperationRequestMessage',
+			'peerDataOperationRequestResponseMessage',
+			'bcallMessage',
+			'callLogMessage'
+		].includes(m.type);
+
+		if (m.message && m.key.remoteJid !== 'status@broadcast' && !isInternalProtocol && messagePreview) {
 			if (set.autoread && naze.public) {
 				naze.readMessages([m.key]);
 			}
 			if (set.log) {
-				console.log(chalk.black(chalk.whiteBright('[CHAT]:'), chalk.greenBright(`${locale_day} ${date} (${date_time})`), chalk.hex('#AF26EB')(m.key.id) + '\n' + chalk.hex('#00EAD3')(budy || m.type) + '\n' + chalk.cyanBright('[FROM]:'), chalk.yellowBright(m.pushName || (isCreator ? 'Owner' : 'User')), chalk.hex('#FF449F')(m.sender.split('@')[0]), chalk.hex('#FF5700')(m.isGroup ? (m.metadata?.subject || 'Grup') : m.chat.endsWith('@newsletter') ? 'Newsletter' : 'Private Chat'), chalk.blueBright('(' + m.chat + ')')));
+				console.log(chalk.black(chalk.whiteBright('[CHAT]:'), chalk.greenBright(`${locale_day} ${date} (${date_time})`), chalk.hex('#AF26EB')(m.key.id) + '\n' + chalk.hex('#00EAD3')(messagePreview) + '\n' + chalk.cyanBright('[FROM]:'), chalk.yellowBright(m.pushName || (isCreator ? 'Owner' : 'User')), chalk.hex('#FF449F')(m.sender.split('@')[0]), chalk.hex('#FF5700')(m.isGroup ? (m.metadata?.subject || 'Grup') : m.chat.endsWith('@newsletter') ? 'Newsletter' : 'Private Chat'), chalk.blueBright('(' + m.chat + ')')));
 			} else {
-				console.log(chalk.black(chalk.bgWhite('[CHAT]:'), chalk.bgGreen(`${locale_day} ${date} (${date_time})`), chalk.bgHex('#AF26EB')(m.key.id) + '\n' + chalk.bgHex('#00EAD3')(budy || m.type) + '\n' + chalk.bgCyanBright('[FROM]:'), chalk.bgYellow(m.pushName || (isCreator ? 'Owner' : 'User')), chalk.bgHex('#FF449F')(m.sender), chalk.bgHex('#FF5700')(m.isGroup ? (m.metadata?.subject || 'Grup') : m.chat.endsWith('@newsletter') ? 'Newsletter' : 'Private Chat'), chalk.bgBlue('(' + m.chat + ')')));
+				console.log(chalk.black(chalk.bgWhite('[CHAT]:'), chalk.bgGreen(`${locale_day} ${date} (${date_time})`), chalk.bgHex('#AF26EB')(m.key.id) + '\n' + chalk.bgHex('#00EAD3')(messagePreview) + '\n' + chalk.bgCyanBright('[FROM]:'), chalk.bgYellow(m.pushName || (isCreator ? 'Owner' : 'User')), chalk.bgHex('#FF449F')(m.sender), chalk.bgHex('#FF5700')(m.isGroup ? (m.metadata?.subject || 'Grup') : m.chat.endsWith('@newsletter') ? 'Newsletter' : 'Private Chat'), chalk.bgBlue('(' + m.chat + ')')));
 			}
 		}
 		
