@@ -914,13 +914,39 @@ const sendInteractiveCore = async (naze, jid, content = {}, options = {}, store)
 		console.log(`[NAZE_RELAY_DEBUG] sendInteractiveCore -> jid=${jid} isGroup=${isGroup} participantCount=${participantCount} messageId=${msg.key.id}`)
 	}
 
-	const hasil = await naze.relayMessage(msg.key.remoteJid, msg.message, relayOpts)
-
-	if (process.env.NAZE_RELAY_DEBUG === '1') {
-		console.log(`[NAZE_RELAY_DEBUG] relayMessage() selesai utk messageId=${msg.key.id} ->`, JSON.stringify(hasil))
+	let hasil;
+	try {
+		hasil = await naze.relayMessage(msg.key.remoteJid, msg.message, relayOpts)
+		if (process.env.NAZE_RELAY_DEBUG === '1') {
+			console.log(`[NAZE_RELAY_DEBUG] relayMessage() selesai utk messageId=${msg.key.id} ->`, JSON.stringify(hasil))
+		}
+		if (hasil?.status === 'FAILED' || hasil?.error) {
+			throw new Error(hasil.error || 'relayMessage failed');
+		}
+		return hasil;
+	} catch (err) {
+		console.warn(`[INTERACTIVE-FALLBACK] Relay native_flow gagal ke ${jid}: ${err.message}. Mengirim fallback teks bersih...`);
+		let fallback = '';
+		if (title) fallback += `*${title}*\n\n`;
+		const bodyText = text || caption || '';
+		if (bodyText) fallback += `${bodyText}\n`;
+		if (Array.isArray(buttons) && buttons.length > 0) {
+			fallback += `\n*Pilihan Menu:*\n`;
+			buttons.forEach((b, idx) => {
+				let label = '';
+				try {
+					if (typeof b.buttonParamsJson === 'string') {
+						const parsed = JSON.parse(b.buttonParamsJson);
+						label = parsed.display_text || parsed.title || '';
+					}
+				} catch (_) {}
+				label = label || b.buttonText?.displayText || b.name || `Opsi ${idx + 1}`;
+				fallback += `${idx + 1}. ${label}\n`;
+			});
+		}
+		if (footer) fallback += `\n_${footer}_`;
+		return await naze.sendMessage(jid, { text: fallback.trim(), mentions }, { quoted: options.quoted });
 	}
-
-	return hasil
 }
 
 
@@ -1053,23 +1079,23 @@ async function Solving(naze, store) {
 	naze.sendFileUrl = async (jid, url, caption, quoted, options = {}) => {
 		const quotedOptions = { quoted, ephemeralExpiration: quoted?.expiration || quoted?.metadata?.ephemeralDuration || store?.messages[jid]?.array?.slice(-1)[0]?.metadata?.ephemeralDuration || 0 }
 		try {
-			const res = await axios.head(url);
-			let mime = res.headers['content-type'];
+			const res = await axios.head(url, { timeout: 3500 });
+			let mime = res?.headers?.['content-type'] || '';
 			if (mime && mime.includes('gif')) {
-				return naze.sendMessage(jid, { video: { url }, caption: caption, gifPlayback: true, ...options }, quotedOptions);
+				return await naze.sendMessage(jid, { video: { url }, caption: caption, gifPlayback: true, ...options }, quotedOptions);
 			} else if (mime && mime === 'application/pdf') {
-				return naze.sendMessage(jid, { document: { url }, mimetype: 'application/pdf', caption: caption, ...options }, quotedOptions);
+				return await naze.sendMessage(jid, { document: { url }, mimetype: 'application/pdf', caption: caption, ...options }, quotedOptions);
 			} else if (mime && mime.includes('image')) {
-				return naze.sendMessage(jid, { image: { url }, caption: caption, ...options }, quotedOptions);
+				return await naze.sendMessage(jid, { image: { url }, caption: caption, ...options }, quotedOptions);
 			} else if (mime && mime.includes('video')) {
-				return naze.sendMessage(jid, { video: { url }, caption: caption, mimetype: 'video/mp4', ...options }, quotedOptions);
+				return await naze.sendMessage(jid, { video: { url }, caption: caption, mimetype: 'video/mp4', ...options }, quotedOptions);
 			} else if (mime && mime.includes('audio')) {
-				return naze.sendMessage(jid, { audio: { url }, mimetype: 'audio/mpeg', ...options }, quotedOptions);
+				return await naze.sendMessage(jid, { audio: { url }, mimetype: 'audio/mpeg', ...options }, quotedOptions);
 			} else {
-				return naze.sendMessage(jid, { document: { url }, caption: caption, mimetype: mime, ...options }, quotedOptions);
+				return await naze.sendMessage(jid, { document: { url }, caption: caption, mimetype: mime, ...options }, quotedOptions);
 			}
 		} catch (e) {
-			return naze.sendMessage(jid, { text: url, ...options }, quotedOptions);
+			return await naze.sendMessage(jid, { text: (caption ? `${caption}\n\n${url}` : url), ...options }, quotedOptions);
 		}
 	}
 	
@@ -1730,11 +1756,15 @@ async function Serialize(naze, msg, store) {
 		} else if (typeof content === 'string') {
 			try {
 				if (/^https?:\/\//.test(content)) {
-					const res = await axios.head(content).catch(() => null);
-					const mime = res?.headers['content-type'] || '';
+					const res = await axios.head(content, { timeout: 3500 }).catch(() => null);
+					const mime = res?.headers?.['content-type'] || '';
 					if (/gif|image|video|audio|pdf|stream/i.test(mime)) {
 						let type = /image/.test(mime) ? 'image' : /video/.test(mime) ? 'video' : /audio/.test(mime) ? 'audio' : 'document';
-						return naze.sendMessage(chat, { [type]: { url: content }, caption, mimetype: mime, ...validate }, { quoted, ephemeralExpiration })
+						try {
+							return await naze.sendMessage(chat, { [type]: { url: content }, caption, mimetype: mime, ...validate }, { quoted, ephemeralExpiration });
+						} catch (_) {
+							return await naze.sendMessage(chat, { text: content, mentions: fixMentions, ...validate }, { quoted, ephemeralExpiration });
+						}
 					} else {
 						return naze.sendMessage(chat, { text: content, mentions: fixMentions, ...validate }, { quoted, ephemeralExpiration })
 					}
