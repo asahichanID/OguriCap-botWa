@@ -84,6 +84,7 @@ export function extractAiText(data) {
 
 /**
  * Membersihkan balasan AI dari tag thinking, label role, dan markdown code blocks berlebih
+ * serta memastikan respon 100% konsisten dalam karakter (anti-OOC).
  * @param {string} rawText 
  * @param {Object} options
  * @param {number} [options.maxParagraphs=0] - Batas paragraf (0 = abaikan)
@@ -96,18 +97,24 @@ export function sanitizeAiResponse(rawText = '', options = {}) {
 	// 1. Hapus blok <think>...</think> dari model reasoning seperti DeepSeek R1
 	clean = clean.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
-	// 2. Hapus tag role awalan seperti "Assistant:", "AI:", "Bot:", "(Nama):"
-	clean = clean.replace(/^(Assistant|AI|Bot|[A-Za-z0-9_-]+)\s*:\s*/i, '');
+	// 2. Hapus disclaimer pembuka AI jika bocor (misal "Halo! Saya Nexray AI...", "Saya adalah model bahasa...", dll)
+	clean = clean.replace(/^(?:Halo!?[,\s]*)?(?:Saya|Aku)\s+(?:adalah\s+)?(?:Nexray AI|Standard AI Chat(?: by DeepAI)?|sebuah model bahasa|model bahasa|AI|bot|asisten virtual)[^.!?\n]*[.!?\n]+\s*/i, '').trim();
 
-	// 3. Hapus markdown code block pembungkus jika balasan dibungkus ``` ... ```
+	// 3. Hapus dialog lawan bicara tiruan yang disimulasikan model
+	clean = clean.split(/\n\s*(?:User|Amane|Shiro|Kamu|Lawan bicara|Player|Human|Pengguna)\s*:/i)[0].trim();
+
+	// 4. Hapus tag role awalan seperti "Assistant:", "AI:", "Bot:", "Mahiru:", "Itsuki:"
+	clean = clean.replace(/^(?:Assistant|AI|Bot|Mahiru(?: Shiina)?|Itsuki(?: Nakano)?|[A-Za-z0-9_-]+)\s*:\s*/i, '');
+
+	// 5. Hapus markdown code block pembungkus jika balasan dibungkus ``` ... ```
 	if (clean.startsWith('```') && clean.endsWith('```')) {
 		clean = clean.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
 	}
 
-	// 4. Normalisasi newline berulang (> 2 baris kosong jadi 1 jeda paragraf)
+	// 6. Normalisasi newline berulang (> 2 baris kosong jadi 1 jeda paragraf)
 	clean = clean.replace(/\n{3,}/g, '\n\n').trim();
 
-	// 5. Pembatasan jumlah paragraf jika diatur
+	// 7. Pembatasan jumlah paragraf jika diatur
 	if (options.maxParagraphs && options.maxParagraphs > 0) {
 		const paragraphs = clean.split(/\n\s*\n/).filter(p => p.trim().length > 0);
 		if (paragraphs.length > options.maxParagraphs) {
@@ -246,7 +253,9 @@ async function callGeminiApi(messages = [], systemPrompt = '', config = {}) {
 		throw new Error('Client Gemini tidak tersedia atau API Key kosong');
 	}
 
-	const modelName = config.geminiModel || 'gemini-2.5-flash';
+	const modelName = (config.geminiModel && config.geminiModel !== 'gemini-2.5-flash')
+		? config.geminiModel
+		: 'gemini-3.6-flash';
 
 	const formattedContents = messages.slice(-8).map(m => ({
 		role: m.role === 'assistant' ? 'model' : 'user',
@@ -269,7 +278,90 @@ async function callGeminiApi(messages = [], systemPrompt = '', config = {}) {
 }
 
 /**
- * Provider 3: Free Multi-Model Scrapers (Pollinations & Free Endpoints)
+ * Membangun prompt berdaya rekat tinggi untuk endpoint GET / Scraper pihak ketiga
+ * Menjamin model AI berakting 100% (12/12) mirip karakter tanpa keluar peran (anti-OOC).
+ * 
+ * @param {Array<{role: string, content: string}>} messages 
+ * @param {string} systemPrompt 
+ * @returns {string}
+ */
+export function buildCharacterPromptForGetEndpoint(messages = [], systemPrompt = '') {
+	const historyText = messages
+		.slice(-6)
+		.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+		.join('\n\n');
+
+	return `[INSTRUKSI SISTEM & IDENTITAS RESMI KARAKTER]:
+${systemPrompt}
+
+[ATURAN MUTLAK 12/12 KEMIRIPAN KARAKTER (ANTI-OOC)]:
+1. Kamu ADALAH karakter di atas seutuhnya! Bicaralah 100% sebagai karakter asli di dunia nyata.
+2. DILARANG KERAS memperkenalkan diri atau mengaku sebagai AI, Nexray, DeepAI, bot, sistem, ataupun model bahasa dalam bentuk apapun!
+3. Selalu pertahankan gaya bahasa, nada bicara, kaomoji/emoji khas, dan kepribadian karakter seperti yang dijelaskan di atas.
+4. Jangan menuliskan kelanjutan dialog User. Cukup balas 1 kali secara langsung sebagai karakter.
+
+[RIWAYAT PERCAKAPAN]:
+${historyText}
+
+Assistant:`;
+}
+
+/**
+ * Backup 1 (Khusus AI Asisten Mahiru & Itsuki):
+ * Nexray GPT-3.5-Turbo Endpoint
+ * Endpoint: https://api.nexray.eu.cc/ai/gpt-3.5-turbo?text=
+ * 
+ * @param {Array<{role: string, content: string}>} messages 
+ * @param {string} systemPrompt 
+ * @param {number} timeoutMs 
+ * @returns {Promise<string>}
+ */
+export async function callNexrayGpt35(messages = [], systemPrompt = '', timeoutMs = 12000) {
+	const fullPrompt = buildCharacterPromptForGetEndpoint(messages, systemPrompt);
+	const url = `https://api.nexray.eu.cc/ai/gpt-3.5-turbo?text=${encodeURIComponent(fullPrompt)}`;
+
+	const res = await axios.get(url, {
+		timeout: timeoutMs,
+		headers: {
+			'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+			'Accept': 'application/json, text/plain, */*'
+		}
+	});
+
+	const text = extractAiText(res.data);
+	if (text) return text;
+	throw new Error('Respon Nexray GPT-3.5 kosong atau tidak valid');
+}
+
+/**
+ * Backup 2 (Khusus AI Asisten Mahiru & Itsuki):
+ * Nexray Claude Endpoint
+ * Endpoint: https://api.nexray.eu.cc/ai/claude?text=
+ * 
+ * @param {Array<{role: string, content: string}>} messages 
+ * @param {string} systemPrompt 
+ * @param {number} timeoutMs 
+ * @returns {Promise<string>}
+ */
+export async function callNexrayClaude(messages = [], systemPrompt = '', timeoutMs = 12000) {
+	const fullPrompt = buildCharacterPromptForGetEndpoint(messages, systemPrompt);
+	const url = `https://api.nexray.eu.cc/ai/claude?text=${encodeURIComponent(fullPrompt)}`;
+
+	const res = await axios.get(url, {
+		timeout: timeoutMs,
+		headers: {
+			'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+			'Accept': 'application/json, text/plain, */*'
+		}
+	});
+
+	const text = extractAiText(res.data);
+	if (text) return text;
+	throw new Error('Respon Nexray Claude kosong atau tidak valid');
+}
+
+/**
+ * Provider 3: Free Multi-Model Scrapers (Pollinations & Free Endpoints Cadangan Lainnya)
  */
 async function callFreeScrapers(messages = [], systemPrompt = '', timeoutMs = 12000) {
 	const historyText = messages
@@ -357,12 +449,17 @@ async function callFreeScrapers(messages = [], systemPrompt = '', timeoutMs = 12
 		errors.push(`Ryzendesu Blackbox: ${e.message}`);
 	}
 
-	throw new Error(`Semua free scraper gagal: ${errors.join(' | ')}`);
+	throw new Error(`Semua free scraper cadangan gagal: ${errors.join(' | ')}`);
 }
 
 /**
  * Fungsi Utama Scraper AI Engine:
- * Menghubungi provider secara berjenjang dengan fallback otomatis.
+ * Menghubungi provider secara berjenjang dengan urutan prioritas:
+ * 1. Custom Endpoint (jika disetel pengguna/server)
+ * 2. Google Gemini API (jika API key tersedia & valid)
+ * 3. BACKUP 1: Nexray GPT-3.5-Turbo (Khusus Mahiru & Itsuki)
+ * 4. BACKUP 2: Nexray Claude (Khusus Mahiru & Itsuki)
+ * 5. Multi-Provider Fallback Lainnya (Pollinations, Ryzendesu GPT-4o, Gemini, Claude, Blackbox)
  *
  * @param {Object} params
  * @param {Array<{role: string, content: string}>} params.messages - Riwayat chat
@@ -392,16 +489,32 @@ export async function callAiModel({ messages = [], systemPrompt = '', config = {
 			rawResponse = await callGeminiApi(messages, systemPrompt, config);
 			if (rawResponse) return sanitizeAiResponse(rawResponse, options);
 		} catch (err) {
-			console.warn(`[AIEngine:Scraper] Gemini API gagal (${err.message}), beralih ke free scrapers...`);
+			console.warn(`[AIEngine:Scraper] Gemini API gagal (${err.message}), beralih ke Backup 1...`);
 		}
 	}
 
-	// 3. Fallback ke multi-provider free scrapers (Pollinations, Ryzendesu, dll)
+	// 3. BACKUP 1 (Prioritas Utama Backup): Nexray GPT-3.5-Turbo
+	try {
+		rawResponse = await callNexrayGpt35(messages, systemPrompt, timeoutMs);
+		if (rawResponse) return sanitizeAiResponse(rawResponse, options);
+	} catch (err) {
+		console.warn(`[AIEngine:Scraper] Backup 1 (Nexray GPT-3.5) kendala (${err.message}), beralih ke Backup 2...`);
+	}
+
+	// 4. BACKUP 2 (Prioritas Kedua Backup): Nexray Claude
+	try {
+		rawResponse = await callNexrayClaude(messages, systemPrompt, timeoutMs);
+		if (rawResponse) return sanitizeAiResponse(rawResponse, options);
+	} catch (err) {
+		console.warn(`[AIEngine:Scraper] Backup 2 (Nexray Claude) kendala (${err.message}), beralih ke cadangan lainnya...`);
+	}
+
+	// 5. Fallback ke multi-provider free scrapers cadangan lainnya (Pollinations, Ryzendesu, dll)
 	try {
 		rawResponse = await callFreeScrapers(messages, systemPrompt, timeoutMs);
 		if (rawResponse) return sanitizeAiResponse(rawResponse, options);
 	} catch (err) {
-		console.error(`[AIEngine:Scraper] Seluruh free scraper gagal (${err.message})`);
+		console.error(`[AIEngine:Scraper] Seluruh provider & scraper AI gagal (${err.message})`);
 	}
 
 	throw new Error('Gagal mendapatkan balasan dari seluruh provider AI');
