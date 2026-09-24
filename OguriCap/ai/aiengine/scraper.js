@@ -287,18 +287,24 @@ async function callGeminiApi(messages = [], systemPrompt = '', config = {}) {
  */
 export function buildCharacterPromptForGetEndpoint(messages = [], systemPrompt = '') {
 	const historyText = messages
-		.slice(-6)
+		.slice(-4)
 		.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
 		.join('\n\n');
 
-	return `[INSTRUKSI SISTEM & IDENTITAS RESMI KARAKTER]:
-${systemPrompt}
+	let effectiveSysPrompt = systemPrompt;
+	if (effectiveSysPrompt.length > 2500) {
+		effectiveSysPrompt = effectiveSysPrompt.slice(0, 2500) + '...';
+	}
+
+	return `[ROLEPLAY & IDENTITAS RESMI KARAKTER]:
+${effectiveSysPrompt}
 
 [ATURAN MUTLAK 12/12 KEMIRIPAN KARAKTER (ANTI-OOC)]:
-1. Kamu ADALAH karakter di atas seutuhnya! Bicaralah 100% sebagai karakter asli di dunia nyata.
+1. Kamu ADALAH karakter di atas seutuhnya! Bicaralah 100% sebagai karakter asli di WhatsApp.
 2. DILARANG KERAS memperkenalkan diri atau mengaku sebagai AI, Nexray, DeepAI, bot, sistem, ataupun model bahasa dalam bentuk apapun!
-3. Selalu pertahankan gaya bahasa, nada bicara, kaomoji/emoji khas, dan kepribadian karakter seperti yang dijelaskan di atas.
-4. Jangan menuliskan kelanjutan dialog User. Cukup balas 1 kali secara langsung sebagai karakter.
+3. Selalu pertahankan gaya bahasa, nada bicara, kaomoji khas, dan kepribadian karakter seperti yang dijelaskan di atas.
+4. KETERIKATAN KONTEKS MUTLAK (WAJIB NYAMBUNG): Perhatikan kata-kata terakhir User! Balasanmu WAJIB langsung menanggapi, mengomentari, dan menjawab inti topik/masalah tersebut secara logis dan mendalam. DILARANG merespons dengan template basa-basi umum tanpa menyentuh topik User!
+5. Jangan menuliskan kelanjutan dialog User. Cukup balas 1 kali secara langsung sebagai karakter.
 
 [RIWAYAT PERCAKAPAN]:
 ${historyText}
@@ -329,7 +335,12 @@ export async function callNexrayGpt35(messages = [], systemPrompt = '', timeoutM
 	});
 
 	const text = extractAiText(res.data);
-	if (text) return text;
+	if (text) {
+		if (/^(?:Maaf|Sorry)[,\s]+(?:aku|saya|I)\s+(?:tidak bisa|cannot)/i.test(text.trim())) {
+			throw new Error('Respon ditolak oleh Nexray GPT-3.5 (safety refusal): ' + text);
+		}
+		return text;
+	}
 	throw new Error('Respon Nexray GPT-3.5 kosong atau tidak valid');
 }
 
@@ -356,7 +367,12 @@ export async function callNexrayClaude(messages = [], systemPrompt = '', timeout
 	});
 
 	const text = extractAiText(res.data);
-	if (text) return text;
+	if (text) {
+		if (/^(?:Maaf|Sorry)[,\s]+(?:aku|saya|I)\s+(?:tidak bisa|cannot)/i.test(text.trim())) {
+			throw new Error('Respon ditolak oleh Nexray Claude (safety refusal): ' + text);
+		}
+		return text;
+	}
 	throw new Error('Respon Nexray Claude kosong atau tidak valid');
 }
 
