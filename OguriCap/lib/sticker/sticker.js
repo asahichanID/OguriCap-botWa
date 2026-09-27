@@ -42,6 +42,7 @@ import {
 	webpEngine,
 	exifEngine,
 	ffmpegEngine,
+	tempEngine,
 	cleanupEngine,
 	loadConfig,
 	initializeEngines,
@@ -157,21 +158,37 @@ async function renderSmeme(imageBuffer, topText = '', bottomText = '', options =
 	try {
 		const mediaResult = await mediaEngine.process(context)
 		context.mime = mediaResult.data.mime
-
-		// smeme SELALU menghasilkan output statis satu frame — konsisten
-		// dengan perilaku smeme.js versi lama, walau input berupa sticker
-		// animasi/video (hanya frame pertama yang dipakai sebagai base image).
-		context.metadata = { ...mediaResult.data.metadata, animated: false }
-
-		const imageResult = await imageEngine.process(context)
-		context.buffer = imageResult.buffer
-		context.metadata = imageResult.metadata
-
+		context.metadata = mediaResult.data.metadata
 		context.topText = topText
 		context.bottomText = bottomText
 
-		const pngBuffer = await canvasEngine.render(context)
-		return pngBuffer
+		const isAnimated = Boolean(mediaResult.data.metadata?.animated || mediaResult.data.type === 'video')
+
+		if (isAnimated) {
+			// ========================================================
+			// ⚡ JALUR VIDEO SMEME (Stiker Video Bergerak + Teks Meme)
+			// ========================================================
+			// 1. Render overlay teks transparan 512x512 (font, stroke, dan tataletak 100% identik foto)
+			const overlayPngBuffer = await canvasEngine.renderTextOverlay(context)
+			const overlayResource = await tempEngine.createFromBuffer(overlayPngBuffer, 'png')
+			context.overlayPath = overlayResource.path
+			context.resource?.trackTempFile(overlayResource.path)
+
+			// 2. Video Engine & FFmpeg Engine (overlay teks ke atas setiap frame video bergerak)
+			const videoResult = await videoEngine.process(context)
+			const ffmpegResult = await ffmpegEngine.execute(videoResult.task)
+
+			// Kembalikan WEBP animasi yang sudah berisi video + overlay teks meme
+			return ffmpegResult.buffer
+		} else {
+			// Jalur statis (Foto)
+			const imageResult = await imageEngine.process(context)
+			context.buffer = imageResult.buffer
+			context.metadata = imageResult.metadata
+
+			const pngBuffer = await canvasEngine.render(context)
+			return pngBuffer
+		}
 	} finally {
 		await cleanupEngine.cleanup(context)
 	}
@@ -204,19 +221,33 @@ async function renderSmemeCustom(imageBuffer, topText = '', bottomText = '', cus
 
 		const mediaResult = await mediaEngine.process(context)
 		context.mime = mediaResult.data.mime
-
-		// smemec, sama seperti smeme, selalu menghasilkan output statis satu frame.
-		context.metadata = { ...mediaResult.data.metadata, animated: false }
-
-		const imageResult = await imageEngine.process(context)
-		context.buffer = imageResult.buffer
-		context.metadata = imageResult.metadata
-
+		context.metadata = mediaResult.data.metadata
 		context.topText = topText
 		context.bottomText = bottomText
 
-		const pngBuffer = await canvasEngine.render(context)
-		return pngBuffer
+		const isAnimated = Boolean(mediaResult.data.metadata?.animated || mediaResult.data.type === 'video')
+
+		if (isAnimated) {
+			// ========================================================
+			// ⚡ JALUR VIDEO SMEME CUSTOM
+			// ========================================================
+			const overlayPngBuffer = await canvasEngine.renderTextOverlay(context)
+			const overlayResource = await tempEngine.createFromBuffer(overlayPngBuffer, 'png')
+			context.overlayPath = overlayResource.path
+			context.resource?.trackTempFile(overlayResource.path)
+
+			const videoResult = await videoEngine.process(context)
+			const ffmpegResult = await ffmpegEngine.execute(videoResult.task)
+
+			return ffmpegResult.buffer
+		} else {
+			const imageResult = await imageEngine.process(context)
+			context.buffer = imageResult.buffer
+			context.metadata = imageResult.metadata
+
+			const pngBuffer = await canvasEngine.render(context)
+			return pngBuffer
+		}
 	} finally {
 		await cleanupEngine.cleanup(context)
 	}

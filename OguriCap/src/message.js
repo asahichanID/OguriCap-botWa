@@ -23,6 +23,8 @@ import { isLocked } from '../group/kunci.js';
 import { acquireCommandSlot } from './guard.js';
 import { hasAnyActiveGame } from '../lib/gameSessionManager.js';
 import { installOutgoingGuard, isBotSentMessage, recordSentBotMessage } from './botGuard.js';
+import { checkAndHandleBannedSticker } from '../plugins/bansticker.js';
+import { runHeavyTask } from './heavyEngine.js';
 import { createSticker } from '../lib/sticker/sticker.js';
 import { imageToWebp, videoToWebp, writeExif, gifToWebp } from '../lib/exif.js';
 import { getBuffer, getSizeMedia, fetchJson, sleep, axiosss, fixBytes } from '../lib/function.js';
@@ -51,8 +53,11 @@ export async function getOrFetchGroupMetadata(naze, jid, store) {
 	const lastFetched = metadataCacheTime.get(jid) || 0;
 
 	// Gunakan memori cache jika data lengkap (punya participants) dan masih fresh (< 10 menit)
-	if (cached && Array.isArray(cached.participants) && cached.participants.length > 0 && (now - lastFetched) < METADATA_TTL_MS) {
-		return cached;
+	if (cached && Array.isArray(cached.participants) && cached.participants.length > 0) {
+		if (!metadataCacheTime.has(jid) || (now - lastFetched) < METADATA_TTL_MS) {
+			if (!metadataCacheTime.has(jid)) metadataCacheTime.set(jid, now);
+			return cached;
+		}
 	}
 
 	// In-flight deduplication: jika sudah ada request berjalan untuk grup yang sama, gunakan Promise yang sama
@@ -225,6 +230,11 @@ async function GroupUpdate(naze, m, store) {
 				const key = metadata.addressingMode === 'lid' ? jidNormalizedUser(p.id) : jidNormalizedUser(p.phoneNumber)
 				return key !== (normalizedTarget.id || normalizedTarget)
 			});
+		} else {
+			console.log({
+				messageStubType: m.messageStubType, type,
+				messageStubParameters: m.messageStubParameters,
+			})
 		}
 	}
 }
@@ -606,24 +616,8 @@ async function MessagesUpsert(naze, message, store) {
 		if (!msg || !msg.message) return;
 		if ((msg?.messageTimestamp * 1000) < botStartTime) return;
 
-		const remoteJid = msg.key.remoteJid;
-		(store.messages ??= {})[remoteJid] ??= {};
-		store.messages[remoteJid].array ??= [];
-		store.messages[remoteJid].keyId ??= new Set();
-		if (!(store.messages[remoteJid].keyId instanceof Set)) {
-			store.messages[remoteJid].keyId = new Set(store.messages[remoteJid].array.map(m => m.key.id));
-		}
-		if (!store.messages[remoteJid].keyId.has(msg.key.id)) {
-			store.messages[remoteJid].array.push(msg);
-			store.messages[remoteJid].keyId.add(msg.key.id);
-			if (store.messages[remoteJid].array.length > 50) {
-				const old = store.messages[remoteJid].array.shift();
-				if (old?.key?.id) store.messages[remoteJid].keyId.delete(old.key.id);
-			}
-		}
-
 		// 🛡️ ANTI SELF-REPLY / DOUBLE COMMAND:
-		// Abaikan seluruh pesan yang dikirim oleh proses bot ini atau bot Baileys dari eksekusi command
+		// Abaikan seluruh pesan yang dikirim oleh proses bot ini atau bot Baileys
 		if (isBotSentMessage(msg.key?.id)) return;
 		const hasActiveMath = Boolean(global.__oguriMathSessionManager?.hasSession(msg.key?.remoteJid));
 		const hasActiveGameSession = Boolean(hasAnyActiveGame(msg.key?.remoteJid));
@@ -636,28 +630,32 @@ async function MessagesUpsert(naze, message, store) {
 		)) {
 			return;
 		}
+
+		const remoteJid = msg.key.remoteJid;
+		(store.messages ??= {})[remoteJid] ??= {};
+		store.messages[remoteJid].array ??= [];
+		store.messages[remoteJid].keyId ??= new Set();
+		if (!(store.messages[remoteJid].keyId instanceof Set)) {
+			store.messages[remoteJid].keyId = new Set(store.messages[remoteJid].array.map(m => m.key.id));
+		}
+		if (store.messages[remoteJid].keyId.has(msg.key.id)) return;
+		store.messages[remoteJid].array.push(msg);
+		store.messages[remoteJid].keyId.add(msg.key.id);
+		if (store.messages[remoteJid].array.length > 20) {
+			const old = store.messages[remoteJid].array.shift();
+			if (old?.key?.id) store.messages[remoteJid].keyId.delete(old.key.id);
+		}
 		const type = msg.message ? (getContentType(msg.message) || Object.keys(msg.message)[0]) : '';
-		// 🛡️ Filter pesan internal protokol WhatsApp / Baileys (key distribution, receipt, history sync, dll)
-		// Pesan-pesan internal ini tidak memiliki konten interaksi manusia dan sering memicu spam log di console
-		const IGNORED_INTERNAL_TYPES = [
-			'senderKeyDistributionMessage',
-			'protocolMessage',
-			'keyExchangeMessage',
-			'peerDataOperationRequestMessage',
-			'peerDataOperationRequestResponseMessage',
-			'bcallMessage',
-			'callLogMessage'
-		];
-		if (!type || IGNORED_INTERNAL_TYPES.includes(type)) {
-			// Simpan pesan protokol penting seperti edit/delete jika dibutuhkan store, tapi jangan teruskan ke handler/console log
-			if (global.db?.set?.[botNumber]?.readsw && msg.key.remoteJid === 'status@broadcast' && /protocolMessage/i.test(type)) {
-				await naze.readMessages([msg.key]);
-				await naze.sendFromOwner(global.db?.set?.[botNumber]?.owner || global.owner, 'Status dari @' + msg.key.participant.split('@')[0] + ' Telah dihapus', msg, { mentions: [msg.key.participant] });
-			}
-			return;
+		const m = await Serialize(naze, msg, store);
+
+		// ⚡ ULTRA-FAST SILENT DELETE UNTUK BANNED STICKER (SOCKET LEVEL INSTANT)
+		if (m && m.isGroup && (m.type === 'stickerMessage' || m.msg?.mimetype === 'image/webp' || m.mime === 'image/webp')) {
+			try {
+				const isBanned = await checkAndHandleBannedSticker({ naze, m });
+				if (isBanned) return;
+			} catch (e) {}
 		}
 
-		const m = await Serialize(naze, msg, store);
 		if (nazeHandler) {
 			dispatchNazeHandler(naze, m, msg, store);
 		} else {
@@ -675,7 +673,8 @@ async function MessagesUpsert(naze, message, store) {
 			}
 		}
 	} catch (e) {
-		console.error('[MESSAGES UPSERT ERROR]:', e?.message || e);
+		console.log(message);
+		throw e;
 	}
 }
 
@@ -854,22 +853,12 @@ const convertLegacyButtons = (buttons = []) => {
 // WhatsApp nyata, ada bukti pasti (bukan dugaan) apa yang sebenarnya
 // terjadi di level ack/relay.
 const sendInteractiveCore = async (naze, jid, content = {}, options = {}, store) => {
-	// Pastikan metadata partisipan grup tersedia untuk enkripsi multi-participant.
-	// Gunakan cache jika masih segar (< 5 menit) untuk menghilangkan lag berulang kali.
+	// Samakan dengan langkah yang didokumentasikan dipakai sendMessage()
+	// bawaan Baileys untuk grup: pastikan metadata partisipan grup segar
+	// SEBELUM relay lewat in-memory cache berkecepatan tinggi (O(1)).
 	if (jid.endsWith('@g.us') && store) {
 		try {
-			store.groupMetadata = store.groupMetadata || {}
-			const cached = store.groupMetadata[jid]
-			const isFresh = cached && cached.participants?.length > 0 && (Date.now() - (cached._lastFetched || 0) < 5 * 60 * 1000)
-			if (!isFresh) {
-				const metaPromise = naze.groupMetadata(jid)
-				const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500))
-				const fresh = await Promise.race([metaPromise, timeoutPromise])
-				if (fresh) {
-					fresh._lastFetched = Date.now()
-					store.groupMetadata[jid] = fresh
-				}
-			}
+			await getOrFetchGroupMetadata(naze, jid, store);
 		} catch (e) {
 			// Biarkan lanjut walau gagal refresh -> tetap pakai cache lama jika ada
 		}
@@ -928,39 +917,13 @@ const sendInteractiveCore = async (naze, jid, content = {}, options = {}, store)
 		console.log(`[NAZE_RELAY_DEBUG] sendInteractiveCore -> jid=${jid} isGroup=${isGroup} participantCount=${participantCount} messageId=${msg.key.id}`)
 	}
 
-	let hasil;
-	try {
-		hasil = await naze.relayMessage(msg.key.remoteJid, msg.message, relayOpts)
-		if (process.env.NAZE_RELAY_DEBUG === '1') {
-			console.log(`[NAZE_RELAY_DEBUG] relayMessage() selesai utk messageId=${msg.key.id} ->`, JSON.stringify(hasil))
-		}
-		if (hasil?.status === 'FAILED' || hasil?.error) {
-			throw new Error(hasil.error || 'relayMessage failed');
-		}
-		return hasil;
-	} catch (err) {
-		console.warn(`[INTERACTIVE-FALLBACK] Relay native_flow gagal ke ${jid}: ${err.message}. Mengirim fallback teks bersih...`);
-		let fallback = '';
-		if (title) fallback += `*${title}*\n\n`;
-		const bodyText = text || caption || '';
-		if (bodyText) fallback += `${bodyText}\n`;
-		if (Array.isArray(buttons) && buttons.length > 0) {
-			fallback += `\n*Pilihan Menu:*\n`;
-			buttons.forEach((b, idx) => {
-				let label = '';
-				try {
-					if (typeof b.buttonParamsJson === 'string') {
-						const parsed = JSON.parse(b.buttonParamsJson);
-						label = parsed.display_text || parsed.title || '';
-					}
-				} catch (_) {}
-				label = label || b.buttonText?.displayText || b.name || `Opsi ${idx + 1}`;
-				fallback += `${idx + 1}. ${label}\n`;
-			});
-		}
-		if (footer) fallback += `\n_${footer}_`;
-		return await naze.sendMessage(jid, { text: fallback.trim(), mentions }, { quoted: options.quoted });
+	const hasil = await naze.relayMessage(msg.key.remoteJid, msg.message, relayOpts)
+
+	if (process.env.NAZE_RELAY_DEBUG === '1') {
+		console.log(`[NAZE_RELAY_DEBUG] relayMessage() selesai utk messageId=${msg.key.id} ->`, JSON.stringify(hasil))
 	}
+
+	return hasil
 }
 
 
@@ -1093,23 +1056,23 @@ async function Solving(naze, store) {
 	naze.sendFileUrl = async (jid, url, caption, quoted, options = {}) => {
 		const quotedOptions = { quoted, ephemeralExpiration: quoted?.expiration || quoted?.metadata?.ephemeralDuration || store?.messages[jid]?.array?.slice(-1)[0]?.metadata?.ephemeralDuration || 0 }
 		try {
-			const res = await axios.head(url, { timeout: 3500 });
-			let mime = res?.headers?.['content-type'] || '';
+			const res = await axios.head(url);
+			let mime = res.headers['content-type'];
 			if (mime && mime.includes('gif')) {
-				return await naze.sendMessage(jid, { video: { url }, caption: caption, gifPlayback: true, ...options }, quotedOptions);
+				return naze.sendMessage(jid, { video: { url }, caption: caption, gifPlayback: true, ...options }, quotedOptions);
 			} else if (mime && mime === 'application/pdf') {
-				return await naze.sendMessage(jid, { document: { url }, mimetype: 'application/pdf', caption: caption, ...options }, quotedOptions);
+				return naze.sendMessage(jid, { document: { url }, mimetype: 'application/pdf', caption: caption, ...options }, quotedOptions);
 			} else if (mime && mime.includes('image')) {
-				return await naze.sendMessage(jid, { image: { url }, caption: caption, ...options }, quotedOptions);
+				return naze.sendMessage(jid, { image: { url }, caption: caption, ...options }, quotedOptions);
 			} else if (mime && mime.includes('video')) {
-				return await naze.sendMessage(jid, { video: { url }, caption: caption, mimetype: 'video/mp4', ...options }, quotedOptions);
+				return naze.sendMessage(jid, { video: { url }, caption: caption, mimetype: 'video/mp4', ...options }, quotedOptions);
 			} else if (mime && mime.includes('audio')) {
-				return await naze.sendMessage(jid, { audio: { url }, mimetype: 'audio/mpeg', ...options }, quotedOptions);
+				return naze.sendMessage(jid, { audio: { url }, mimetype: 'audio/mpeg', ...options }, quotedOptions);
 			} else {
-				return await naze.sendMessage(jid, { document: { url }, caption: caption, mimetype: mime, ...options }, quotedOptions);
+				return naze.sendMessage(jid, { document: { url }, caption: caption, mimetype: mime, ...options }, quotedOptions);
 			}
 		} catch (e) {
-			return await naze.sendMessage(jid, { text: (caption ? `${caption}\n\n${url}` : url), ...options }, quotedOptions);
+			return naze.sendMessage(jid, { text: url, ...options }, quotedOptions);
 		}
 	}
 	
@@ -1142,21 +1105,23 @@ async function Solving(naze, store) {
 	naze.sendText = async (jid, text, quoted, options = {}) => naze.sendMessage(jid, { text: text, mentions: [...text.matchAll(/@(\d{0,16})/g)].map(v => v[1] + '@s.whatsapp.net'), ...options }, { quoted, ephemeralExpiration: quoted?.expiration || quoted?.metadata?.ephemeralDuration || store?.messages[jid]?.array?.slice(-1)[0]?.metadata?.ephemeralDuration || 0 })
 	
 	naze.sendAsSticker = async (jid, pathMedia, quoted, options = {}) => {
-		let buff = Buffer.isBuffer(pathMedia) ? pathMedia : /^data:.*?\/.*?;base64,/i.test(pathMedia) ? Buffer.from(pathMedia.split`,`[1], 'base64') : /^https?:\/\//.test(pathMedia) ? await (await getBuffer(pathMedia)) : (typeof pathMedia === 'string' && fs.existsSync(pathMedia)) ? pathMedia : Buffer.alloc(0);
-		// Sticker Engine V2: Media->Metadata->Image/Video(FFmpeg)->WebP->Exif,
-		// mengembalikan Buffer WEBP langsung (Buffer First, tanpa temp file
-		// tambahan untuk hasil akhir). Seluruh proses berjalan lokal (Sharp/
-		// Canvas/FFmpeg), tanpa API internet.
-		try {
-			const result = await createSticker(buff, options);
-			let anu = await naze.sendMessage(jid, { sticker: result, ...options }, { quoted, ephemeralExpiration: quoted?.expiration || quoted?.metadata?.ephemeralDuration || store?.messages[jid]?.array?.slice(-1)[0]?.metadata?.ephemeralDuration || 0 });
-			return anu;
-		} finally {
-			// Cleanup SELALU berjalan (termasuk saat createSticker gagal) —
-			// memperbaiki kebocoran temp file pada implementasi lama yang
-			// hanya membersihkan pathMedia ketika proses berhasil.
-			if (typeof pathMedia === 'string' && fs.existsSync(pathMedia)) fs.unlinkSync(pathMedia);
-		}
+		return runHeavyTask(async () => {
+			let buff = Buffer.isBuffer(pathMedia) ? pathMedia : /^data:.*?\/.*?;base64,/i.test(pathMedia) ? Buffer.from(pathMedia.split`,`[1], 'base64') : /^https?:\/\//.test(pathMedia) ? await (await getBuffer(pathMedia)) : (typeof pathMedia === 'string' && fs.existsSync(pathMedia)) ? pathMedia : Buffer.alloc(0);
+			// Sticker Engine V2: Media->Metadata->Image/Video(FFmpeg)->WebP->Exif,
+			// mengembalikan Buffer WEBP langsung (Buffer First, tanpa temp file
+			// tambahan untuk hasil akhir). Seluruh proses berjalan lokal (Sharp/
+			// Canvas/FFmpeg), tanpa API internet.
+			try {
+				const result = await createSticker(buff, options);
+				let anu = await naze.sendMessage(jid, { sticker: result, ...options }, { quoted, ephemeralExpiration: quoted?.expiration || quoted?.metadata?.ephemeralDuration || store?.messages[jid]?.array?.slice(-1)[0]?.metadata?.ephemeralDuration || 0 });
+				return anu;
+			} finally {
+				// Cleanup SELALU berjalan (termasuk saat createSticker gagal) —
+				// memperbaiki kebocoran temp file pada implementasi lama yang
+				// hanya membersihkan pathMedia ketika proses berhasil.
+				if (typeof pathMedia === 'string' && fs.existsSync(pathMedia)) fs.unlinkSync(pathMedia);
+			}
+		}, { name: 'sendAsSticker' });
 	}
 	
 	naze.downloadMediaMessage = async (message) => {
@@ -1165,8 +1130,22 @@ async function Solving(naze, store) {
 		msg.fileSha256 = fixBytes(msg.fileSha256);
 		msg.fileEncSha256 = fixBytes(msg.fileEncSha256);
 		const mime = msg.mimetype || '';
-		const messageType = (message.type || mime.split('/')[0]).replace(/Message/gi, '');
-		const stream = await downloadContentFromMessage(msg, messageType);
+		let messageType = (message.type || '').replace(/Message/gi, '');
+		if (!messageType || messageType === 'image') {
+			if (/webp/i.test(mime)) {
+				messageType = 'sticker';
+			} else if (mime.startsWith('video/')) {
+				messageType = 'video';
+			} else if (mime.startsWith('audio/')) {
+				messageType = 'audio';
+			} else if (mime.startsWith('image/')) {
+				messageType = 'image';
+			}
+		}
+		if (messageType === 'viewOnce') {
+			messageType = mime.startsWith('video') ? 'video' : 'image';
+		}
+		const stream = await downloadContentFromMessage(msg, messageType || 'image');
 		let buffer = Buffer.from([]);
 		for await (const chunk of stream) {
 			buffer = Buffer.concat([buffer, chunk]);
@@ -1182,7 +1161,21 @@ async function Solving(naze, store) {
 	msg.fileEncSha256 = fixBytes(msg.fileEncSha256)
 
 	const mime = msg.mimetype || ''
-	const messageType = (message.type || mime.split('/')[0]).replace(/Message/gi, '')
+	let messageType = (message.type || '').replace(/Message/gi, '')
+	if (!messageType || messageType === 'image') {
+		if (/webp/i.test(mime)) {
+			messageType = 'sticker'
+		} else if (mime.startsWith('video/')) {
+			messageType = 'video'
+		} else if (mime.startsWith('audio/')) {
+			messageType = 'audio'
+		} else if (mime.startsWith('image/')) {
+			messageType = 'image'
+		}
+	}
+	if (messageType === 'viewOnce') {
+		messageType = mime.startsWith('video') ? 'video' : 'image'
+	}
 	const ext = mime.split('/')[1]?.split(';')[0] || 'bin'
 
 	const dir = path.join(__dirname, '../database/temp')
@@ -1199,7 +1192,7 @@ async function Solving(naze, store) {
 
 	for (let retry = 1; retry <= 3; retry++) {
 		try {
-			const stream = await downloadContentFromMessage(msg, messageType)
+			const stream = await downloadContentFromMessage(msg, messageType || 'image')
 
 			await new Promise((resolve, reject) => {
 				const writeStream = fs.createWriteStream(trueFileName)
@@ -1437,8 +1430,7 @@ async function Solving(naze, store) {
 	naze.sendCarouselMsg = async (jid, body = '', footer = '', cards = [], options = {}) => {
 		if (jid.endsWith('@g.us') && store) {
 			try {
-				store.groupMetadata = store.groupMetadata || {}
-				store.groupMetadata[jid] = await naze.groupMetadata(jid)
+				await getOrFetchGroupMetadata(naze, jid, store);
 			} catch (e) {
 				// Biarkan lanjut jika gagal refresh grup metadata
 			}
@@ -1770,15 +1762,11 @@ async function Serialize(naze, msg, store) {
 		} else if (typeof content === 'string') {
 			try {
 				if (/^https?:\/\//.test(content)) {
-					const res = await axios.head(content, { timeout: 3500 }).catch(() => null);
-					const mime = res?.headers?.['content-type'] || '';
+					const res = await axios.head(content).catch(() => null);
+					const mime = res?.headers['content-type'] || '';
 					if (/gif|image|video|audio|pdf|stream/i.test(mime)) {
 						let type = /image/.test(mime) ? 'image' : /video/.test(mime) ? 'video' : /audio/.test(mime) ? 'audio' : 'document';
-						try {
-							return await naze.sendMessage(chat, { [type]: { url: content }, caption, mimetype: mime, ...validate }, { quoted, ephemeralExpiration });
-						} catch (_) {
-							return await naze.sendMessage(chat, { text: content, mentions: fixMentions, ...validate }, { quoted, ephemeralExpiration });
-						}
+						return naze.sendMessage(chat, { [type]: { url: content }, caption, mimetype: mime, ...validate }, { quoted, ephemeralExpiration })
 					} else {
 						return naze.sendMessage(chat, { text: content, mentions: fixMentions, ...validate }, { quoted, ephemeralExpiration })
 					}

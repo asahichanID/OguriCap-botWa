@@ -38,84 +38,26 @@ let emergencyPauseUntil = 0;
 const chatOutgoingTimestamps = new Map(); // jid -> Array<number>
 const recentMessageHashes = new Map();     // jid -> Array<{ hash: string, time: number }>
 
-// Outgoing Queue State (Multi-Lane Isolated Queues)
-export const TASK_LANE = {
-	FAST: 'FAST_LANE',     // Teks, Reaksi, Polling, Native Flow / Buttons, Status
-	MEDIA: 'MEDIA_LANE',   // Gambar, Video, Audio, Dokumen, Stiker, Album
-	BULK: 'BULK_LANE'      // Broadcast, Hidetag, Notifikasi massal
-};
-
-// Konfigurasi performa & toleransi per-lane
-const LANE_CONFIG = {
-	[TASK_LANE.FAST]: {
-		maxRetries: 3,
-		timeoutMs: 15000,    // 15s (cepat & responsif)
-		delayRange: [5, 18], // jitter 5-18ms
-		backoffBase: 250     // exponential backoff 250ms -> 550ms -> 1200ms
-	},
-	[TASK_LANE.MEDIA]: {
-		maxRetries: 2,
-		timeoutMs: 60000,    // 60s (cukup untuk upload media besar / video)
-		delayRange: [40, 80],
-		backoffBase: 1000
-	},
-	[TASK_LANE.BULK]: {
-		maxRetries: 2,
-		timeoutMs: 25000,
-		delayRange: [300, 450], // Anti-ban pacing
-		backoffBase: 1500
-	}
-};
-
-// Map antrian terpisah per-lane dan per-chat: key -> Promise<any>
-const laneChatQueues = new Map();
-let activeMediaUploads = 0;
-const MAX_CONCURRENT_MEDIA = 3; // Menjaga heap memory & bandwidth tetap stabil
-
+// Outgoing Queue State
+let outgoingQueuePromise = Promise.resolve();
 let pendingOutgoingCount = 0;
-const MAX_PENDING_OUTGOING = 120;
+const MAX_PENDING_OUTGOING = 50;
 
-// Statistik pemantauan outbound
-export const outboundStats = {
-	totalSent: 0,
-	totalRetried: 0,
-	totalFailed: 0,
-	fastLaneCount: 0,
-	mediaLaneCount: 0,
-	bulkLaneCount: 0
-};
-
-// Sent Bot Message ID Tracker & Cache for Baileys getMessage Retry
-// Menyimpan ID dan konten pesan yang dikirim oleh bot agar WhatsApp dapat langsung mendekripsi pesan tanpa delay
+// Sent Bot Message ID Tracker (Anti Self-Reply / Double Reply)
+// Menyimpan ID pesan yang dikirim oleh proses bot ini agar tidak pernah diproses balik sebagai command
 const sentBotMessageIds = new Set();
-const sentBotMessageCache = new Map(); // id -> proto message content
 
 /**
- * Merekam ID dan konten pesan yang dikirim oleh bot
+ * Merekam ID pesan yang dikirim oleh bot
  * @param {string} id 
- * @param {any} messageContent
  */
-export function recordSentBotMessage(id, messageContent = null) {
+export function recordSentBotMessage(id) {
 	if (!id || typeof id !== 'string') return;
 	sentBotMessageIds.add(id);
-	if (messageContent) {
-		sentBotMessageCache.set(id, messageContent);
-	}
 	if (sentBotMessageIds.size > 3000) {
 		const oldest = sentBotMessageIds.values().next().value;
 		sentBotMessageIds.delete(oldest);
-		sentBotMessageCache.delete(oldest);
 	}
-}
-
-/**
- * Mengambil cache konten pesan yang dikirim oleh bot untuk retry request WhatsApp
- * @param {string} id 
- * @returns {any}
- */
-export function getSentBotMessage(id) {
-	if (!id || typeof id !== 'string') return null;
-	return sentBotMessageCache.get(id) || null;
 }
 
 /**
@@ -137,7 +79,7 @@ const userSpamStore = new Map();
 const autoThrottleStore = new Map();
 
 // Periodic cleanup every 3 minutes to prevent memory leak
-const cleanGuardTimer = setInterval(() => {
+setInterval(() => {
 	const now = Date.now();
 	
 	// Clean chat outgoing timestamps
@@ -161,101 +103,19 @@ const cleanGuardTimer = setInterval(() => {
 		}
 	}
 
-	// Clean completed chat queues
-	for (const [key, q] of laneChatQueues.entries()) {
-		const jid = key.split(':')[1];
-		if (!jid || (chatOutgoingTimestamps.get(jid)?.length || 0) === 0) {
-			laneChatQueues.delete(key);
+	// Clean auto throttle
+	for (const [k, t] of autoThrottleStore.entries()) {
+		if (now - t > 60000) {
+			autoThrottleStore.delete(k);
 		}
 	}
 }, 3 * 60 * 1000);
-if (typeof cleanGuardTimer?.unref === 'function') cleanGuardTimer.unref();
 
 // ============================================================
-// 2. HELPER FUNCTIONS & LANE DETECTION
+// 2. HELPER FUNCTIONS
 // ============================================================
 
-export const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-/**
- * Mendeteksi jalur tugas (Lane) pengiriman pesan berdasarkan konten dan opsi.
- * @param {any} content 
- * @param {object} options 
- * @returns {string} TASK_LANE.FAST | TASK_LANE.MEDIA | TASK_LANE.BULK
- */
-export function detectTaskLane(content, options = {}) {
-	if (options.isBulk || options.isBroadcast || options.priority === 'low') {
-		return TASK_LANE.BULK;
-	}
-	if (!content) return TASK_LANE.FAST;
-	if (typeof content === 'object') {
-		if (
-			content.image ||
-			content.video ||
-			content.audio ||
-			content.document ||
-			content.sticker ||
-			content.album ||
-			content.albumMessage
-		) {
-			return TASK_LANE.MEDIA;
-		}
-	}
-	return TASK_LANE.FAST;
-}
-
-/**
- * Memastikan koneksi WebSocket WhatsApp siap sebelum mengirim pesan.
- * Jika socket sedang reconnecting atau handshaking, menunggu secara anggun (graceful wait)
- * sehingga pesan tidak langsung gagal atau memicu timeout error.
- * @param {object} naze - Baileys socket
- * @param {number} maxWaitMs - Waktu maksimal menunggu (ms)
- * @returns {Promise<boolean>}
- */
-export async function waitForSocketReady(naze, maxWaitMs = 6000) {
-	if (!naze) return false;
-	// Status 1 = WebSocket.OPEN
-	if (naze.ws?.readyState === 1 && naze.user?.id) {
-		return true;
-	}
-	const startTime = Date.now();
-	while (Date.now() - startTime < maxWaitMs) {
-		if (naze.ws?.readyState === 1 && naze.user?.id) {
-			return true;
-		}
-		await sleep(150);
-	}
-	return Boolean(naze.ws?.readyState === 1);
-}
-
-/**
- * Memeriksa apakah error pengiriman adalah error sementara yang layak di-retry.
- * @param {Error|any} err 
- * @returns {boolean}
- */
-export function isRetryableError(err) {
-	if (!err) return false;
-	const msg = String(err.message || err.output?.payload?.message || err).toLowerCase();
-	return (
-		msg.includes('timed out') ||
-		msg.includes('timeout') ||
-		msg.includes('connection closed') ||
-		msg.includes('connection lost') ||
-		msg.includes('websocket') ||
-		msg.includes('stream') ||
-		msg.includes('rate-overlimit') ||
-		msg.includes('socket') ||
-		msg.includes('epipe') ||
-		msg.includes('econnreset') ||
-		msg.includes('etimedout') ||
-		msg.includes('503') ||
-		msg.includes('500') ||
-		msg.includes('408') ||
-		msg.includes('service unavailable') ||
-		msg.includes('failed to upload') ||
-		msg.includes('temporary')
-	);
-}
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 function extractMessageSignature(content) {
 	if (!content) return '';
@@ -263,9 +123,9 @@ function extractMessageSignature(content) {
 	if (typeof content === 'object') {
 		const text = content.text || content.caption || content.extendedTextMessage?.text || content.conversation || '';
 		if (text) return text.trim().toLowerCase().slice(0, 100);
-		if (content.image) return 'MEDIA:IMAGE:' + (typeof content.image === 'object' ? (content.image.url || '') : '');
-		if (content.video) return 'MEDIA:VIDEO:' + (typeof content.video === 'object' ? (content.video.url || '') : '');
-		if (content.audio) return 'MEDIA:AUDIO:' + (content.fileName || (typeof content.audio === 'object' ? (content.audio.url || '') : ''));
+		if (content.image) return 'MEDIA:IMAGE';
+		if (content.video) return 'MEDIA:VIDEO';
+		if (content.audio) return 'MEDIA:AUDIO';
 		if (content.sticker) return 'MEDIA:STICKER';
 		if (content.delete) return 'ACTION:DELETE:' + (content.delete.id || '');
 	}
@@ -273,7 +133,7 @@ function extractMessageSignature(content) {
 }
 
 // ============================================================
-// 3. OUTGOING GATEKEEPER & MULTI-LANE DISPATCHER
+// 3. OUTGOING GATEKEEPER (CIRCUIT BREAKER & RATE LIMITER)
 // ============================================================
 
 /**
@@ -311,13 +171,12 @@ export function checkOutgoingSafety(jid, content) {
 	}
 
 	// 4. Cek Identical Message Loop (mencegah loop kirim teks persis sama berulang kali)
-	// Ditingkatkan ambang batasnya (>= 4x dlm 6s) agar command sah pengguna tidak terblokir
 	const sig = extractMessageSignature(content);
 	if (sig && sig.length > 3 && !sig.startsWith('ACTION:DELETE')) {
 		let hashes = recentMessageHashes.get(jid) || [];
-		hashes = hashes.filter(h => now - h.time < 6000);
+		hashes = hashes.filter(h => now - h.time < 8000);
 		const duplicateCount = hashes.filter(h => h.hash === sig).length;
-		if (duplicateCount >= 4) {
+		if (duplicateCount >= 2) {
 			recentMessageHashes.set(jid, hashes);
 			console.warn(chalk.yellowBright(`[BOT-GUARD] 🔁 Loop pesan identik diblokir ke ${jid} (isi: "${sig.slice(0, 30)}...")`));
 			return { allowed: false, reason: 'IDENTICAL_LOOP_DETECTED' };
@@ -335,9 +194,8 @@ export function checkOutgoingSafety(jid, content) {
 }
 
 /**
- * Memasang Outgoing Multi-Lane Guard & Resilient Dispatcher pada instance Baileys socket.
- * Memisahkan tugas Fast Lane (Teks/Interaktif), Media Lane, dan Bulk Lane agar anti-timeout,
- * anti-crash, dan responsif 24/7.
+ * Memasang Outgoing Guard & Pacing Queue pada instance Baileys socket.
+ * Membungkus naze.sendMessage dan naze.relayMessage secara transparan.
  * @param {object} naze 
  */
 export function installOutgoingGuard(naze) {
@@ -347,22 +205,12 @@ export function installOutgoingGuard(naze) {
 	const rawSendMessage = naze.sendMessage.bind(naze);
 	const rawRelayMessage = naze.relayMessage.bind(naze);
 
-	/**
-	 * Safe Multi-Lane Task Dispatcher dengan Auto-Retry & Crash-Proof Error Boundary.
-	 * @param {Function} task - Fungsi pengiriman pesan aktual
-	 * @param {string} jid - JID penerima
-	 * @param {any} content - Konten pesan
-	 * @param {object} options - Opsi pengiriman
-	 * @returns {Promise<any>}
-	 */
-	function queueSendTask(task, jid, content, options = {}) {
-		const lane = detectTaskLane(content, options);
+	// Per-Chat Outgoing Queues untuk konkurensi maksimal antar grup & chat berbeda
+	const chatQueues = new Map();
+	const activeChatCounts = new Map();
 
-		// Update statistik lane
-		if (lane === TASK_LANE.FAST) outboundStats.fastLaneCount++;
-		else if (lane === TASK_LANE.MEDIA) outboundStats.mediaLaneCount++;
-		else outboundStats.bulkLaneCount++;
-
+	// Safe Outgoing Queue Dispatcher
+	function queueSendTask(task, jid, content, isUrgent = false) {
 		const safety = checkOutgoingSafety(jid, content);
 		if (!safety.allowed) {
 			return Promise.resolve({
@@ -372,147 +220,66 @@ export function installOutgoingGuard(naze) {
 			});
 		}
 
-		if (pendingOutgoingCount >= MAX_PENDING_OUTGOING) {
-			console.warn(chalk.yellowBright(`[OUTBOUND] ⚠️ Outgoing queue penuh (${pendingOutgoingCount} antrian). Menolak pesan burst baru.`));
-			return Promise.resolve({
-				key: { remoteJid: jid, id: 'SAFETY_GUARD_QUEUE_FULL' },
-				status: 'BLOCKED',
-				reason: 'QUEUE_OVERFLOW'
-			});
+		// Aksi darurat/kilat (seperti delete sticker ban, antilink, react) langsung dieksekusi tanpa jeda antrian
+		if (isUrgent || content?.delete || content?.react) {
+			return task();
 		}
 
-		pendingOutgoingCount++;
+		// Pacing per-chat: pesan ke chat berbeda berjalan paralel tanpa saling mengunci!
+		const previousChatPromise = chatQueues.get(jid) || Promise.resolve();
+		const currentCount = activeChatCounts.get(jid) || 0;
+		if (currentCount >= 10) {
+			return task();
+		}
+		activeChatCounts.set(jid, currentCount + 1);
 
-		// Isolasi antrian per-lane dan per-chat
-		// FAST LANE tidak akan pernah macet / menunggu MEDIA LANE yang sedang upload besar!
-		const chatKey = jid || 'global';
-		const queueKey = `${lane}:${chatKey}`;
-		const prevPromise = laneChatQueues.get(queueKey) || Promise.resolve();
-		const config = LANE_CONFIG[lane] || LANE_CONFIG[TASK_LANE.FAST];
-
-		const execPromise = prevPromise.then(async () => {
-			let isMediaActive = false;
+		const execPromise = previousChatPromise.then(async () => {
 			try {
-				// Khusus Media Lane: Kendalikan batas concurrency upload global agar hemat RAM & bandwidth
-				if (lane === TASK_LANE.MEDIA) {
-					while (activeMediaUploads >= MAX_CONCURRENT_MEDIA) {
-						await sleep(100);
-					}
-					activeMediaUploads++;
-					isMediaActive = true;
+				if (currentCount > 0) {
+					// Minimal jitter 10ms jika ada rentetan pesan beruntun ke chat yang persis sama
+					await sleep(10);
 				}
-
-				// Jeda mikro / pacing alami sesuai lane
-				const [minD, maxD] = config.delayRange;
-				const jitter = minD + Math.floor(Math.random() * (maxD - minD + 1));
-				if (jitter > 0) await sleep(jitter);
-
-				// Eksekusi dengan Resilient Retry & Socket Readiness Guard
-				let attempt = 0;
-				let lastError = null;
-
-				while (attempt <= config.maxRetries) {
-					attempt++;
-
-					// 1. Pastikan socket aktif sebelum menembak pesan
-					const isSocketReady = await waitForSocketReady(naze, attempt === 1 ? 3500 : 6000);
-					if (!isSocketReady && attempt > 1) {
-						console.warn(chalk.yellow(`[OUTBOUND] ⚠️ Menunggu socket WA stabil (percobaan ${attempt}/${config.maxRetries + 1}) ke ${jid}`));
-					}
-
-					try {
-						let timer = null;
-						const timeoutPromise = new Promise((_, reject) => {
-							timer = setTimeout(() => {
-								reject(new Error(`Send task timeout (${config.timeoutMs}ms) di ${lane}`));
-							}, config.timeoutMs);
-						});
-
-						const result = await Promise.race([task(), timeoutPromise]);
-						if (timer) clearTimeout(timer);
-
-						if (attempt > 1) {
-							outboundStats.totalRetried++;
-							console.log(chalk.greenBright(`[OUTBOUND-RETRY] ✅ Pesan (${lane}) ke ${jid} berhasil terkirim pada percobaan ke-${attempt}!`));
-						}
-
-						outboundStats.totalSent++;
-						return result;
-					} catch (err) {
-						lastError = err;
-						const retryable = isRetryableError(err);
-
-						if (attempt <= config.maxRetries && retryable) {
-							const backoff = (config.backoffBase * Math.pow(1.8, attempt - 1)) + Math.floor(Math.random() * 150);
-							console.warn(chalk.yellowBright(`[OUTBOUND-RETRY] ⚠️ Pengiriman (${lane}) ke ${jid} kendala: ${err.message}. Mencoba ulang dalam ${backoff}ms (Percobaan ${attempt}/${config.maxRetries})...`));
-							await sleep(backoff);
-						} else {
-							break;
-						}
-					}
-				}
-
-				// Jika seluruh retry habis: JANGAN BIARKAN NODE.JS CRASH!
-				// Kembalikan safe response object dan log error
-				outboundStats.totalFailed++;
-				console.error(chalk.redBright(`[OUTBOUND] ❌ Gagal mengirim pesan (${lane}) ke ${jid} setelah ${attempt}x percobaan: ${lastError?.message || 'Unknown'}`));
-				return {
-					key: { remoteJid: jid, id: options?.messageId || `FAIL_${Date.now()}` },
-					status: 'FAILED',
-					error: lastError?.message || 'Send failed after retries',
-					lane
-				};
-
-			} catch (fatalErr) {
-				outboundStats.totalFailed++;
-				console.error(chalk.redBright(`[OUTBOUND-FATAL] Safe boundary caught: ${fatalErr?.message || fatalErr}`));
-				return {
-					key: { remoteJid: jid, id: options?.messageId || `FAIL_${Date.now()}` },
-					status: 'FATAL_ERROR',
-					error: fatalErr?.message || 'Fatal send error',
-					lane
-				};
+				return await task();
 			} finally {
-				pendingOutgoingCount = Math.max(0, pendingOutgoingCount - 1);
-				if (isMediaActive) {
-					activeMediaUploads = Math.max(0, activeMediaUploads - 1);
-				}
-				// Draining bersih: jika antrian selesai, hapus key dari map untuk menghemat memory
-				if (laneChatQueues.get(queueKey) === execPromise) {
-					laneChatQueues.delete(queueKey);
+				const remaining = Math.max(0, (activeChatCounts.get(jid) || 1) - 1);
+				if (remaining === 0) {
+					activeChatCounts.delete(jid);
+					if (chatQueues.get(jid) === execPromise) {
+						chatQueues.delete(jid);
+					}
+				} else {
+					activeChatCounts.set(jid, remaining);
 				}
 			}
 		});
 
-		laneChatQueues.set(queueKey, execPromise.catch(() => {}));
+		chatQueues.set(jid, execPromise.catch(() => {}));
 		return execPromise;
 	}
 
-	// Override sendMessage dengan Multi-Lane Dispatcher
+	// Override sendMessage
 	naze.sendMessage = async (jid, content, options = {}) => {
-		if (options?.messageId) recordSentBotMessage(options.messageId, content);
+		if (options?.messageId) recordSentBotMessage(options.messageId);
+		const isUrgent = Boolean(options?.urgent || content?.delete || content?.react);
 		return queueSendTask(async () => {
 			const res = await rawSendMessage(jid, content, options);
-			if (res?.key?.id) {
-				recordSentBotMessage(res.key.id, res.message || content);
-			}
+			if (res?.key?.id) recordSentBotMessage(res.key.id);
 			return res;
-		}, jid, content, options);
+		}, jid, content, isUrgent);
 	};
 
-	// Override relayMessage dengan Multi-Lane Dispatcher
+	// Override relayMessage
 	naze.relayMessage = async (jid, message, options = {}) => {
-		if (options?.messageId) recordSentBotMessage(options.messageId, message);
+		if (options?.messageId) recordSentBotMessage(options.messageId);
+		const isUrgent = Boolean(options?.urgent);
 		return queueSendTask(async () => {
 			const res = await rawRelayMessage(jid, message, options);
-			if (res?.key?.id) {
-				recordSentBotMessage(res.key.id, message);
-			}
+			if (res?.key?.id) recordSentBotMessage(res.key.id);
 			return res;
-		}, jid, message, options);
+		}, jid, message, isUrgent);
 	};
 
-	console.log(chalk.greenBright('[BOT-GUARD] ✅ Multi-Lane Outgoing Engine & Resilient Dispatcher berhasil terpasang pada Baileys socket.'));
+	console.log(chalk.greenBright('[BOT-GUARD] ✅ Outgoing Safety Guard & Circuit Breaker berhasil terpasang pada Baileys socket.'));
 }
 
 // ============================================================

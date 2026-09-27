@@ -84,7 +84,7 @@ function toPTT(media, ext) {
 }
 
 function toVideo(media, ext) {
-	return ffmpeg(media, ['-c:v', 'libx264', '-c:a', 'aac', '-ab', '128k', '-ar', '44100', '-crf', '32', '-preset', 'slow'], ext, 'mp4')
+	return ffmpeg(media, ['-c:v', 'libx264', '-c:a', 'aac', '-ab', '128k', '-ar', '44100', '-crf', '30', '-preset', 'veryfast'], ext, 'mp4')
 }
 
 export {

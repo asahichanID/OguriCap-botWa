@@ -65,14 +65,19 @@ async function readImageMetadata(buffer) {
 	const animated = frames > 1
 
 	let fps = 0
-	if (animated && Array.isArray(meta.delay) && meta.delay.length > 0) {
-		const avgDelayMs = meta.delay.reduce((a, b) => a + b, 0) / meta.delay.length
-		fps = avgDelayMs > 0 ? Math.round(1000 / avgDelayMs) : 0
-	}
+	let durationSec = 0
 
-	const durationSec = animated && Array.isArray(meta.delay)
-		? meta.delay.reduce((a, b) => a + b, 0) / 1000
-		: 0
+	if (animated) {
+		let totalDelayMs = 0
+		if (Array.isArray(meta.delay) && meta.delay.length > 0) {
+			totalDelayMs = meta.delay.reduce((sum, d) => sum + (d > 0 ? d : 100), 0)
+		} else {
+			totalDelayMs = frames * 100
+		}
+		const avgDelayMs = totalDelayMs / frames
+		fps = avgDelayMs > 0 ? Math.round(1000 / avgDelayMs) : Math.round(frames / (totalDelayMs / 1000 || 1))
+		durationSec = totalDelayMs / 1000
+	}
 
 	return emptyMetadata({
 		width: meta.width || 0,

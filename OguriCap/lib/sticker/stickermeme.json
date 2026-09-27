@@ -107,7 +107,7 @@
   "video": {
     "maxDurationSec": 10,
 
-    "maxFps": 15,
+    "maxFps": 60,
 
     "maxDimension": 512
   },

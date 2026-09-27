@@ -77,8 +77,8 @@ export const PERFORMANCE_TARGET = Object.freeze({
 export const STICKER_LIMITS = Object.freeze({
 	maxDimension: 512, // WhatsApp sticker canvas standar
 	maxDurationSec: 10, // animated sticker
-	maxFps: 15,
-	maxAnimatedFrames: 150, // safety net (10s * 15fps)
+	maxFps: 60,
+	maxAnimatedFrames: 360, // safety net (6s * 60fps)
 	maxOutputBytes: 1_000_000 // ~1MB, soft cap kualitas WEBP
 })
 

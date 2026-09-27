@@ -328,8 +328,94 @@ async function renderCanvas(context) {
 	return outputBuffer
 }
 
+/**
+ * renderTextOverlay(context): Merender teks meme dan emoji di atas kanvas transparan 512x512 tanpa base image.
+ * Digunakan sebagai overlay PNG untuk Video Smeme sehingga font, stroke, dan tataletak 100% identik dengan smeme foto.
+ */
+async function renderTextOverlay(context) {
+	const cfg = context.config && typeof context.config === 'object' ? context.config : {}
+	const canvasSize = cfg.render?.canvas || 512
+	const topText = (context.topText || '').toString()
+	const bottomText = (context.bottomText || '').toString()
+
+	let lib
+	try {
+		lib = await loadCanvasLib()
+	} catch (err) {
+		throw new StickerEngineError('CanvasEngine', ERROR_CODES.CANVAS_FAILED, `Canvas library tidak tersedia: ${err.message}`, undefined, err)
+	}
+
+	let canvas
+	let ctx
+	try {
+		canvas = lib.createCanvas(canvasSize, canvasSize)
+		ctx = canvas.getContext('2d')
+	} catch (err) {
+		throw new StickerEngineError('CanvasEngine', ERROR_CODES.INVALID_CANVAS, `Gagal membuat Canvas: ${err.message}`, undefined, err)
+	}
+
+	if (cfg.render?.smoothing !== false && 'imageSmoothingEnabled' in ctx) {
+		ctx.imageSmoothingEnabled = true
+		if ('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = 'high'
+	}
+
+	ctx.clearRect(0, 0, canvasSize, canvasSize)
+
+	// Pastikan Font Engine sudah teregistrasi sebelum layout/draw
+	await fontEngine.register().catch(() => {})
+
+	const layouts = []
+	try {
+		if (topText.trim()) {
+			layouts.push(
+				await textEngine.layout({ text: topText, canvasWidth: canvasSize, canvasHeight: canvasSize, position: 'top', config: cfg })
+			)
+		}
+		if (bottomText.trim()) {
+			layouts.push(
+				await textEngine.layout({ text: bottomText, canvasWidth: canvasSize, canvasHeight: canvasSize, position: 'bottom', config: cfg })
+			)
+		}
+	} catch (err) {
+		throw new StickerEngineError('CanvasEngine', ERROR_CODES.RENDER_FAILED, `Text Engine gagal layout: ${err.message}`, undefined, err)
+	}
+
+	const emojiLayerMap = new Map()
+	if (cfg.emoji?.enabled !== false) {
+		for (const layout of layouts) {
+			const combined = layout.lines.join(' ')
+			if (!emojiEngine.hasEmoji(combined)) continue
+			try {
+				const emojiResult = await emojiEngine.render({ text: combined, size: layout.fontSize, resource: context.resource })
+				for (const layer of emojiResult.layers) emojiLayerMap.set(layer.char, layer)
+			} catch (_) {}
+		}
+	}
+
+	for (const layout of layouts) {
+		let y = layout.position.y
+		for (const line of layout.lines) {
+			drawLine(ctx, line, layout.position.x, y, layout, emojiLayerMap)
+			y += layout.lineHeight
+		}
+	}
+
+	emojiLayerMap.clear()
+
+	let outputBuffer
+	try {
+		outputBuffer = canvas.toBuffer('image/png')
+	} catch (err) {
+		throw new StickerEngineError('CanvasEngine', ERROR_CODES.RENDER_FAILED, `Gagal encode overlay PNG: ${err.message}`, undefined, err)
+	}
+
+	context.resource?.trackBuffer(outputBuffer)
+	return outputBuffer
+}
+
 export const canvasEngine = {
-	render: renderCanvas
+	render: renderCanvas,
+	renderTextOverlay
 }
 
 export default canvasEngine

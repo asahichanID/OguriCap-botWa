@@ -61,6 +61,8 @@ import { kirimUlarTangga } from './game/ulartangga.js';
 import { getLevelInfo, generateBaseXP, addExp, handleBackgroundCommandXp, checkAndNotifyLevelUp } from './lib/xpGlobal.js';
 import { hasAnyActiveGame, handleIncomingGameAnswer } from './lib/gameSessionManager.js';
 import { setLvl } from './plugins/cheat.js';
+import { banSticker, unbanSticker, listBanSticker, checkAndHandleBannedSticker } from './plugins/bansticker.js';
+import { runHeavyTask, getHeavyEngineStats } from './src/heavyEngine.js';
 import { kirimAngryBirds } from './game/angry_birds.js';
 import { kirimBalap } from './game/balap.js';
 import { kirimDino } from './game/dino.js';
@@ -519,6 +521,14 @@ const naze = async (naze, m, msg, store) => {
 					await naze.relayMessage(m.chat, { extendedTextMessage: { text: `Terdeteksi @${m.sender.split('@')[0]} Mengirim Bug..`, contextInfo: { mentionedJid: [m.key.participantAlt || m.sender], isForwarded: true, forwardingScore: 1, quotedMessage: { conversation: '*Anti Bug❗*'}, ...m.key }}}, {})
 					await naze.groupParticipantsUpdate(m.chat, [m.sender], 'remove')
 				}
+			}
+
+			// ============================================================
+			// ⚡ PROTEKSI AUTO-DELETE BANNED STICKER (SECEPAT KILAT & SILENT)
+			// ============================================================
+			if (m.isGroup) {
+				const isBannedHandled = await checkAndHandleBannedSticker({ naze, m });
+				if (isBannedHandled) return;
 			}
 			
 		
@@ -1073,7 +1083,7 @@ try {
 			if (!allowed) return;
 
 			// 🔮 XP DIBALIK LAYAR UNTUK COMMAND VALID (1-7 XP)
-			if (!['setlvl', 'setlevel'].includes(targetCmd)) {
+			if (!['setlvl', 'setlevel', 'bans', 'bansticker', 'banstiker', 'unbans', 'unbansticker', 'delbans', 'listbans', 'listbansticker'].includes(targetCmd)) {
 				await handleBackgroundCommandXp({ db, jid: m.sender, command: targetCmd, naze, m }).catch(() => {});
 			}
 		}
@@ -1495,6 +1505,23 @@ break
 			case 'setlvl':
 			case 'setlevel': {
 				await setLvl({ naze, m, args, text, db, isCreator, prefix, command });
+			}
+			break
+			case 'bans':
+			case 'bansticker':
+			case 'banstiker': {
+				await banSticker({ naze, m, args, text, isCreator, prefix, command });
+			}
+			break
+			case 'unbans':
+			case 'unbansticker':
+			case 'delbans': {
+				await unbanSticker({ naze, m, args, text, isCreator, prefix, command });
+			}
+			break
+			case 'listbans':
+			case 'listbansticker': {
+				await listBanSticker({ naze, m, isCreator, prefix });
 			}
 			break
 			case 'listpc': {
@@ -3558,7 +3585,7 @@ Select Bot Settings:
 				let latensi = speed() - timestamp
 				let neww = performance.now()
 				let oldd = performance.now()
-				let respon = `Kecepatan Respon ${latensi.toFixed(4)} _Second_ \n ${oldd - neww} _miliseconds_\n\nRuntime : ${runtime(process.uptime())}\n\n💻 Info Server\nRAM: ${formatp(os.totalmem() - os.freemem())} / ${formatp(os.totalmem())}\n\n_NodeJS Memory Usaage_\n${Object.keys(used).map((key, _, arr) => `${key.padEnd(Math.max(...arr.map(v=>v.length)),' ')}: ${formatp(used[key])}`).join('\n')}\n\n${cpus[0] ? `_Total CPU Usage_\n${cpus[0].model.trim()} (${cpu.speed} MHZ)\n${Object.keys(cpu.times).map(type => `- *${(type + '*').padEnd(6)}: ${(100 * cpu.times[type] / cpu.total).toFixed(2)}%`).join('\n')}\n_CPU Core(s) Usage (${cpus.length} Core CPU)_\n${cpus.map((cpu, i) => `${i + 1}. ${cpu.model.trim()} (${cpu.speed} MHZ)\n${Object.keys(cpu.times).map(type => `- *${(type + '*').padEnd(6)}: ${(100 * cpu.times[type] / cpu.total).toFixed(2)}%`).join('\n')}`).join('\n\n')}` : ''}`.trim()
+				let respon = `Kecepatan Respon ${latensi.toFixed(4)} _Second_ \n ${oldd - neww} _miliseconds_\n\nRuntime : ${runtime(process.uptime())}\n⚡ Heavy Engine: ${getHeavyEngineStats().activeTasks} aktif, ${getHeavyEngineStats().queuedTasks} antrian\n\n💻 Info Server\nRAM: ${formatp(os.totalmem() - os.freemem())} / ${formatp(os.totalmem())}\n\n_NodeJS Memory Usaage_\n${Object.keys(used).map((key, _, arr) => `${key.padEnd(Math.max(...arr.map(v=>v.length)),' ')}: ${formatp(used[key])}`).join('\n')}\n\n${cpus[0] ? `_Total CPU Usage_\n${cpus[0].model.trim()} (${cpu.speed} MHZ)\n${Object.keys(cpu.times).map(type => `- *${(type + '*').padEnd(6)}: ${(100 * cpu.times[type] / cpu.total).toFixed(2)}%`).join('\n')}\n_CPU Core(s) Usage (${cpus.length} Core CPU)_\n${cpus.map((cpu, i) => `${i + 1}. ${cpu.model.trim()} (${cpu.speed} MHZ)\n${Object.keys(cpu.times).map(type => `- *${(type + '*').padEnd(6)}: ${(100 * cpu.times[type] / cpu.total).toFixed(2)}%`).join('\n')}`).join('\n\n')}` : ''}`.trim()
 				m.reply(respon)
 			}
 			break
@@ -4107,18 +4134,19 @@ Select Bot Settings:
 			}
 			break
 			case 'smeme': case 'stickmeme': case 'stikmeme': case 'stickermeme': case 'stikermeme': {
-				if (!/image|video|sticker/.test(quoted.type)) return m.reply(`Kirim/reply gambar (jpg/jpeg/png/webp) dengan caption ${prefix + command} teks atas|teks bawah\n\nContoh: ${prefix + command} kalau gabut|nyoba bot`)
+				if (!/image|video|sticker/.test(quoted.type) && !/image|video|webp/.test(mime)) return m.reply(`Kirim/reply gambar atau video dengan caption ${prefix + command} teks atas|teks bawah\n\nContoh: ${prefix + command} kalau gabut|nyoba bot`)
 				if (!text) return m.reply(`Sertakan teksnya, pisahkan atas dan bawah dengan "|"\n\nContoh: ${prefix + command} kalau gabut|nyoba bot`)
 
 				const atas = text.split`|`[0]?.trim() || ''
 				const bawah = text.split`|`[1]?.trim() || ''
 
 				if (!atas && !bawah) return m.reply(`Sertakan teksnya, pisahkan atas dan bawah dengan "|"\n\nContoh: ${prefix + command} kalau gabut|nyoba bot`)
+				if (/video/.test(mime) && (qmsg).seconds > 11) return m.reply('Maksimal durasi video 10 detik!')
 
 				m.react('⏳')
 
 				try {
-					const media = await quoted.download()
+					const media = await (quoted.download ? quoted.download() : m.download())
 
 					const hasil = await smeme(
 						media,
@@ -4145,7 +4173,7 @@ Select Bot Settings:
 			}
 			break
 			case 'smemec': case 'stickmemec': case 'stikmemec': case 'stickermemec': case 'stikermemec': {
-				if (!/image|video|sticker/.test(quoted.type)) return m.reply(`Kirim/reply gambar (jpg/jpeg/png/webp) dengan caption ${prefix + command} teks atas|teks bawah|parameter\n\nContoh: ${prefix + command} kalau gabut|nyoba bot|f42|s8`)
+				if (!/image|video|sticker/.test(quoted.type) && !/image|video|webp/.test(mime)) return m.reply(`Kirim/reply gambar atau video dengan caption ${prefix + command} teks atas|teks bawah|parameter\n\nContoh: ${prefix + command} kalau gabut|nyoba bot|f42|s8`)
 				if (!text) return m.reply(`Sertakan teksnya, pisahkan atas|bawah|parameter dengan "|"\n\nContoh: ${prefix + command} kalau gabut|nyoba bot|f42|s8\n\nParameter tersedia: t,b,f,fn,fx,s,sb,sx,sy,pt,pb,pl,pr,ls,lh,a,ml,uc,sa,es,ex,ey`)
 
 				const partsCustom = text.split('|')
@@ -4154,11 +4182,12 @@ Select Bot Settings:
 				const paramStringCustom = partsCustom.slice(2).join('|').trim()
 
 				if (!atasCustom && !bawahCustom) return m.reply(`Sertakan teksnya, pisahkan atas|bawah|parameter dengan "|"\n\nContoh: ${prefix + command} kalau gabut|nyoba bot|f42|s8`)
+				if (/video/.test(mime) && (qmsg).seconds > 11) return m.reply('Maksimal durasi video 10 detik!')
 
 				m.react('⏳')
 
 				try {
-					const media = await quoted.download()
+					const media = await (quoted.download ? quoted.download() : m.download())
 
 					const hasil = await smemec(
 						media,
@@ -4564,30 +4593,31 @@ Select Bot Settings:
 			break
     			case 'play':
                 case 'ytplay': {
-                
-                await play(
-                naze,
-                m,
-                text,
-                prefix,
-                command,
-                db
-                )
-                
+					await runHeavyTask(async () => {
+						await play(
+							naze,
+							m,
+							text,
+							prefix,
+							command,
+							db
+						);
+					}, { name: 'play', highPriority: true });
                 }
-                
                 break
     			case 'play2':
                 case 'ytplay2':
                 case 'spotify2': {
-                await play2(
-                naze,
-                m,
-                text,
-                prefix,
-                command,
-                db
-                )
+					await runHeavyTask(async () => {
+						await play2(
+							naze,
+							m,
+							text,
+							prefix,
+							command,
+							db
+						);
+					}, { name: 'play2', highPriority: true });
                 }
                 break
     			case 'pixiv': {
@@ -4883,25 +4913,25 @@ break
             
             case 'tt':
             case 'tiktok': {
-            
-            	await tiktok(
-            		naze,
-            		m,
-            		text
-            	)
-            
+				await runHeavyTask(async () => {
+					await tiktok(
+						naze,
+						m,
+						text
+					);
+				}, { name: 'tiktok' });
             }
             break
             
             case 'ttmp3':
             case 'tta': {
-            
-            	await ttmp3(
-            		naze,
-            		m,
-            		text
-            	)
-            
+				await runHeavyTask(async () => {
+					await ttmp3(
+						naze,
+						m,
+						text
+					);
+				}, { name: 'ttmp3' });
             }
             break
 			case 'igvideo': {

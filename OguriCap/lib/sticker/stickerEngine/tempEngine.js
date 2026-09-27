@@ -84,11 +84,16 @@ async function remove(target) {
 	registry.delete(p)
 	try {
 		if (fs.existsSync(p)) {
-			await fsp.unlink(p)
+			const stat = await fsp.stat(p).catch(() => null)
+			if (stat && stat.isDirectory()) {
+				await fsp.rm(p, { recursive: true, force: true })
+			} else {
+				await fsp.unlink(p)
+			}
 		}
 		return true
 	} catch (err) {
-		logger.warn(`gagal menghapus temp file ${p}: ${err.message}`)
+		logger.warn(`gagal menghapus temp file/dir ${p}: ${err.message}`)
 		return false
 	}
 }
@@ -99,11 +104,35 @@ function removeSync(target) {
 	if (!p) return false
 	registry.delete(p)
 	try {
-		if (fs.existsSync(p)) fs.unlinkSync(p)
+		if (fs.existsSync(p)) {
+			const stat = fs.statSync(p, { throwIfNoEntry: false })
+			if (stat && stat.isDirectory()) {
+				fs.rmSync(p, { recursive: true, force: true })
+			} else {
+				fs.unlinkSync(p)
+			}
+		}
 		return true
 	} catch (err) {
-		logger.warn(`gagal menghapus temp file (sync) ${p}: ${err.message}`)
+		logger.warn(`gagal menghapus temp file/dir (sync) ${p}: ${err.message}`)
 		return false
+	}
+}
+
+/** Membuat direktori sementara khusus untuk unpacking frame animasi. */
+async function createAnimDir(resource) {
+	ensureDir()
+	const dirName = `se2_anim_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`
+	const dirPath = path.join(TEMP_DIR, dirName)
+	await fsp.mkdir(dirPath, { recursive: true })
+	registry.add(dirPath)
+	resource?.trackTempFile(dirPath)
+	return {
+		path: dirPath,
+		createdAt: Date.now(),
+		async remove() {
+			return remove(dirPath)
+		}
 	}
 }
 
@@ -179,6 +208,7 @@ async function getOrCreateInputFile(context, ext = 'bin') {
 export const tempEngine = {
 	create,
 	createFromBuffer,
+	createAnimDir,
 	exists,
 	remove,
 	removeSync,

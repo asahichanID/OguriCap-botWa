@@ -52,7 +52,9 @@ async function processVideo(context) {
 	// batas 11 detik pada command .sticker/.take/dst — TIDAK diubah/di-duplicate
 	// di sini, hanya dipastikan tidak ada input yang jauh di luar nalar yang
 	// lolos lewat jalur lain di masa depan).
-	const maxDuration = cfg.video?.maxDurationSec || STICKER_LIMITS.maxDurationSec
+	// Batasi durasi stiker animasi maksimal 7 detik agar aman di protokol WhatsApp
+	const maxAllowedDuration = 7.0
+	const maxDuration = Math.min(cfg.video?.maxDurationSec || STICKER_LIMITS.maxDurationSec, maxAllowedDuration)
 	if (metadata.duration && metadata.duration > maxDuration * 6) {
 		throw new StickerEngineError(
 			'VideoEngine',
@@ -63,20 +65,49 @@ async function processVideo(context) {
 	const duration = Math.min(metadata.duration || maxDuration, maxDuration)
 
 	const maxDim = cfg.video?.maxDimension || STICKER_LIMITS.maxDimension
-	const maxFps = cfg.video?.maxFps || STICKER_LIMITS.maxFps
-	const fps = Math.min(metadata.fps || maxFps, maxFps) || maxFps
+	
+	// Deteksi format input khusus: Animated WebP (Stiker Video / WebP animasi)
+	const isAnimatedWebp = (context.mime === 'image/webp' || metadata.format === 'webp') && Boolean(metadata.animated)
 
-	// task: instruksi siap pakai untuk FFmpeg Engine pada tahap Pipeline
-	// berikutnya. Memakai context._tempInputPath bila FFmpeg Engine/Metadata
-	// Engine sebelumnya sudah membuat temp file (hindari duplicate write);
-	// jika belum ada, FFmpeg Engine akan membuatnya sendiri dari Buffer.
+	// Pertahankan FPS asli media agar kecepatan gerak 100% identik dengan file original
+	const rawFps = metadata.fps && metadata.fps > 0 ? Math.round(metadata.fps) : (isAnimatedWebp ? 15 : 30)
+	const inputSize = context.buffer ? context.buffer.length : 0
+	const isLargeVideo = inputSize >= 3_000_000
+
+	let fps = rawFps
+	let quality = 45
+
+	if (isAnimatedWebp) {
+		// Untuk stiker animasi WebP: FPS harus sama persis dengan FPS aslinya agar gerakannya tidak percepat
+		fps = rawFps
+		quality = 48
+	} else if (isLargeVideo) {
+		fps = Math.min(30, rawFps)
+		quality = 40
+	} else if (duration <= 3.5) {
+		fps = rawFps
+		quality = 48
+	} else if (duration <= 5.5) {
+		fps = Math.min(30, Math.max(20, rawFps))
+		quality = 42
+	} else {
+		fps = Math.min(24, Math.max(15, rawFps))
+		quality = 38
+	}
+
+	// task: instruksi siap pakai untuk FFmpeg Engine pada tahap Pipeline berikutnya.
 	const task = {
 		inputPath: context._tempInputPath || undefined,
 		input: context._tempInputPath ? undefined : context.buffer,
-		inputExt: 'input',
+		inputExt: isAnimatedWebp ? 'webp' : 'input',
+		isAnimatedWebp,
 		size: maxDim,
 		fps,
+		inputFps: rawFps,
 		duration,
+		quality,
+		overlayPath: context.overlayPath || undefined,
+		crop: Boolean(context.options?.crop),
 		resource: context.resource
 	}
 

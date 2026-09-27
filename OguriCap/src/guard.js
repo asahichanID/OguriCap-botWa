@@ -378,13 +378,14 @@ export const absoluteGuard = async (sender, cmd, category, m) => {
     return { ok: false }
   }
 
-  // ── 5 & 6. Masuk Queue Kategori ──────────────────────────
-  await enqueue(category)
+  // ── 5 & 6. Masuk Queue Kategori & User (konkuren antar user berbeda) ──
+  const queueKey = `${category}:${sender}`
+  await enqueue(queueKey)
 
   // ── Acquire Lock ─────────────────────────────────────────
   if (!acquireLock(category, sender)) {
     // Gagal acquire lock setelah keluar queue (race condition safeguard)
-    dequeue(category)
+    dequeue(queueKey)
     return { ok: false }
   }
 
@@ -396,7 +397,7 @@ export const absoluteGuard = async (sender, cmd, category, m) => {
   const release = () => {
     // 7. Auto Unlock via try/finally di sisi caller
     releaseLock(category, sender)
-    dequeue(category)
+    dequeue(queueKey)
   }
 
   return { ok: true, release }

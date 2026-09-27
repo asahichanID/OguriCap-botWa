@@ -78,6 +78,9 @@
  */
 
 import fsp from 'fs/promises'
+import path from 'path'
+import { execFile } from 'child_process'
+import sharp from 'sharp'
 import ffmpeg from 'fluent-ffmpeg'
 import { StickerEngineError, ERROR_CODES, createLogger, PERFORMANCE_TARGET, STICKER_LIMITS } from './constants.js'
 import { tempEngine } from './tempEngine.js'
@@ -95,7 +98,7 @@ const MAX_ATTEMPTS = 2 // percobaan pertama + 1 retry (retry adaptif)
 // lambat, kompresi terbaik). Percobaan pertama memprioritaskan kecepatan yang
 // masih menjaga kualitas wajar; percobaan retry (setelah timeout) memakai
 // level tercepat supaya benar-benar punya peluang selesai.
-const COMPRESSION_LEVEL_PRIMARY = 3
+const COMPRESSION_LEVEL_PRIMARY = 2
 const COMPRESSION_LEVEL_FALLBACK = 1
 
 /**
@@ -104,21 +107,23 @@ const COMPRESSION_LEVEL_FALLBACK = 1
  */
 function estimateTimeout({ duration, fps }, explicitTimeoutMs) {
 	if (explicitTimeoutMs) return explicitTimeoutMs
-	const estimatedFrames = Math.max(1, Math.round((duration || STICKER_LIMITS.maxDurationSec) * (fps || STICKER_LIMITS.maxFps)))
+	const estimatedFrames = Math.max(1, Math.round((duration || STICKER_LIMITS.maxDurationSec) * (fps || 30)))
 	const budget = estimatedFrames * MS_BUDGET_PER_FRAME
 	return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, budget))
 }
 
 /**
- * Filter chain WEBP: scale (preserve aspect) -> fps cap -> pad ke kanvas
- * persegi (alpha transparan). TIDAK ADA palettegen/paletteuse — libwebp
- * menangani warna penuh (RGBA) secara native.
+ * Filter chain WEBP: scale (preserve aspect) -> format RGBA murni -> pad transparan alpha=0 -> fps.
+ * Mencegah pinggiran hitam pada sticker video secara absolut dan menjamin kanvas persegi transparan standar WhatsApp.
  */
-function buildWebpFilterChain({ size, fps }) {
+function buildWebpFilterChain({ size, crop }) {
+	if (crop) {
+		return `scale=${size}:${size}:force_original_aspect_ratio=increase,crop=${size}:${size},format=yuva420p`
+	}
 	return (
-		`scale='min(${size},iw)':'min(${size},ih)':force_original_aspect_ratio=decrease,` +
-		`fps=${fps},` +
-		`pad=${size}:${size}:(ow-iw)/2:(oh-ih)/2:color=0x00000000`
+		`scale=${size}:${size}:force_original_aspect_ratio=decrease,` +
+		`pad=${size}:${size}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,` +
+		`format=yuva420p`
 	)
 }
 
@@ -135,17 +140,24 @@ const OUTPUT_PROFILES = {
 	webpSticker: {
 		ext: 'webp',
 		format: 'webp',
-		buildOutputOptions: ({ size, fps, compressionLevel }) => [
-			'-y',
-			'-vcodec', 'libwebp',
-			'-vf', buildWebpFilterChain({ size, fps }),
-			'-loop', '0',
-			'-an',
-			'-vsync', '0',
-			'-lossless', '0',
-			'-compression_level', String(compressionLevel),
-			'-preset', 'default'
-		]
+		buildOutputOptions: ({ size, compressionLevel, crop, overlayPath, quality }) => {
+			const q = quality || 48
+			const opts = [
+				'-y',
+				'-vcodec', 'libwebp',
+				'-pix_fmt', 'yuva420p',
+				'-loop', '0',
+				'-an',
+				'-lossless', '0',
+				'-q:v', String(q),
+				'-compression_level', String(compressionLevel || 2),
+				'-preset', 'default'
+			]
+			if (!overlayPath) {
+				opts.push('-vf', buildWebpFilterChain({ size, crop }))
+			}
+			return opts
+		}
 	},
 	mp4Video: {
 		ext: 'mp4',
@@ -187,13 +199,70 @@ function forceKill(command, resource) {
 	proc.once('exit', () => clearTimeout(verifyTimer))
 }
 
+/**
+ * unpackAnimatedWebp: Mengurai frame dari Animated WebP ke direktori sementara
+ * supaya dapat dibaca FFmpeg tanpa error unsupported chunk ANIM / ANMF.
+ */
+async function unpackAnimatedWebp(input, resource) {
+	const animDir = await tempEngine.createAnimDir(resource)
+	const buffer = Buffer.isBuffer(input) ? input : await fsp.readFile(input)
+
+	let unpacked = false
+	try {
+		const tempSrc = await tempEngine.createFromBuffer(buffer, 'webp')
+		resource?.trackTempFile(tempSrc.path)
+		await new Promise((resolve, reject) => {
+			execFile('convert', [tempSrc.path, path.join(animDir.path, 'frame_%04d.png')], (err) => {
+				if (err) reject(err)
+				else resolve()
+			})
+		})
+		await tempEngine.remove(tempSrc)
+		const files = await fsp.readdir(animDir.path)
+		if (files.filter((f) => f.endsWith('.png')).length > 0) {
+			unpacked = true
+		}
+	} catch (_) {
+		unpacked = false
+	}
+
+	if (!unpacked) {
+		const meta = await sharp(buffer, { animated: true, limitInputPixels: false }).metadata()
+		const pages = meta.pages || 1
+		for (let i = 0; i < pages; i++) {
+			const framePath = path.join(animDir.path, `frame_${String(i).padStart(4, '0')}.png`)
+			await sharp(buffer, { page: i, limitInputPixels: false }).png().toFile(framePath)
+		}
+	}
+
+	return {
+		animDir,
+		inputPattern: path.join(animDir.path, 'frame_%04d.png')
+	}
+}
+
 function runOnce(inputPath, outputPath, profile, params) {
 	return new Promise((resolve, reject) => {
 		let settled = false
 		let timer = null
 
 		const command = ffmpeg(inputPath)
+		if (params.isFrameSequence) {
+			command.inputOptions(['-framerate', String(params.inputFps || params.fps || 15)])
+		}
 		if (params.duration && params.duration > 0) command.duration(params.duration)
+
+		// Dukungan Overlay Teks Meme untuk Video Smeme / Stiker Animasi Smeme
+		if (params.overlayPath) {
+			command.input(params.overlayPath)
+			const baseFilter = params.crop
+				? `[0:v]scale=${params.size}:${params.size}:force_original_aspect_ratio=increase,crop=${params.size}:${params.size},format=yuva420p[bg]`
+				: `[0:v]scale=${params.size}:${params.size}:force_original_aspect_ratio=decrease,pad=${params.size}:${params.size}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,format=yuva420p[bg]`
+			command.complexFilter([
+				baseFilter,
+				`[bg][1:v]overlay=0:0:format=auto:eof_action=repeat[out]`
+			], ['[out]'])
+		}
 
 		command
 			.outputOptions(profile.buildOutputOptions(params))
@@ -244,6 +313,9 @@ function buildRetryParams(base, lastErr) {
 		size: reducedSize,
 		fps: reducedFps,
 		duration: reducedDuration,
+		quality: Math.min(base.quality || 55, 45),
+		crop: base.crop,
+		overlayPath: base.overlayPath,
 		compressionLevel: COMPRESSION_LEVEL_FALLBACK,
 		timeoutMs: Math.max(base.timeoutMs, estimateTimeout({ duration: reducedDuration, fps: reducedFps }))
 	}
@@ -268,8 +340,19 @@ async function runTaskWithRetry(task, profile) {
 	const baseTimeoutMs = estimateTimeout({ duration: baseDuration, fps: baseFps }, task.timeoutMs)
 
 	let inputResource = null
+	let animDirResource = null
 	let inputPath = task.inputPath
-	if (!inputPath) {
+	let isFrameSequence = false
+
+	if (task.isAnimatedWebp || (task.inputExt === 'webp' && task.animated)) {
+		const inputData = task.input || (task.inputPath ? await fsp.readFile(task.inputPath) : null)
+		if (inputData) {
+			const unpackResult = await unpackAnimatedWebp(inputData, task.resource)
+			animDirResource = unpackResult.animDir
+			inputPath = unpackResult.inputPattern
+			isFrameSequence = true
+		}
+	} else if (!inputPath) {
 		inputResource = await tempEngine.createFromBuffer(task.input, task.inputExt || 'input')
 		inputPath = inputResource.path
 		task.resource?.trackTempFile(inputPath)
@@ -278,10 +361,15 @@ async function runTaskWithRetry(task, profile) {
 	let currentParams = {
 		size: baseSize,
 		fps: baseFps,
+		inputFps: task.inputFps || baseFps,
 		duration: baseDuration,
 		timeoutMs: baseTimeoutMs,
 		compressionLevel: COMPRESSION_LEVEL_PRIMARY,
 		hasAudio: !!task.hasAudio,
+		crop: Boolean(task.crop),
+		overlayPath: task.overlayPath || undefined,
+		quality: task.quality || 48,
+		isFrameSequence,
 		resource: task.resource
 	}
 
@@ -316,6 +404,7 @@ async function runTaskWithRetry(task, profile) {
 
 	if (lastErr) {
 		if (inputResource) await tempEngine.remove(inputResource)
+		if (animDirResource) await tempEngine.remove(animDirResource)
 		throw new StickerEngineError(
 			'FFmpegEngine',
 			lastErr.code === ERROR_CODES.FFMPEG_TIMEOUT ? ERROR_CODES.FFMPEG_TIMEOUT : ERROR_CODES.FFMPEG_FAILED,
@@ -336,6 +425,7 @@ async function runTaskWithRetry(task, profile) {
 		throw new StickerEngineError('FFmpegEngine', ERROR_CODES.FFMPEG_FAILED, `Gagal membaca hasil output FFmpeg: ${err.message}`, undefined, err)
 	} finally {
 		if (inputResource) await tempEngine.remove(inputResource)
+		if (animDirResource) await tempEngine.remove(animDirResource)
 		await tempEngine.remove(outputResource)
 	}
 
