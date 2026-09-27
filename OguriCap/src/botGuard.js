@@ -43,21 +43,38 @@ let outgoingQueuePromise = Promise.resolve();
 let pendingOutgoingCount = 0;
 const MAX_PENDING_OUTGOING = 50;
 
-// Sent Bot Message ID Tracker (Anti Self-Reply / Double Reply)
-// Menyimpan ID pesan yang dikirim oleh proses bot ini agar tidak pernah diproses balik sebagai command
+// Sent Bot Message ID Tracker & Cache (Anti Self-Reply / Double Reply / Baileys getMessage cache)
+// Menyimpan ID dan konten pesan yang dikirim oleh proses bot ini agar tidak pernah diproses balik sebagai command
+// dan dapat diambil kembali oleh getMessage handler Baileys
 const sentBotMessageIds = new Set();
+const sentBotMessageCache = new Map();
 
 /**
- * Merekam ID pesan yang dikirim oleh bot
+ * Merekam ID dan konten pesan yang dikirim oleh bot
  * @param {string} id 
+ * @param {any} [messageData]
  */
-export function recordSentBotMessage(id) {
+export function recordSentBotMessage(id, messageData = null) {
 	if (!id || typeof id !== 'string') return;
 	sentBotMessageIds.add(id);
+	if (messageData) {
+		sentBotMessageCache.set(id, messageData);
+	}
 	if (sentBotMessageIds.size > 3000) {
 		const oldest = sentBotMessageIds.values().next().value;
 		sentBotMessageIds.delete(oldest);
+		sentBotMessageCache.delete(oldest);
 	}
+}
+
+/**
+ * Mengambil cache konten pesan bot yang tersimpan berdasarkan message ID
+ * @param {string} id 
+ * @returns {any}
+ */
+export function getSentBotMessage(id) {
+	if (!id || typeof id !== 'string') return null;
+	return sentBotMessageCache.get(id) || null;
 }
 
 /**
@@ -67,7 +84,7 @@ export function recordSentBotMessage(id) {
  */
 export function isBotSentMessage(id) {
 	if (!id || typeof id !== 'string') return false;
-	return sentBotMessageIds.has(id);
+	return sentBotMessageIds.has(id) || sentBotMessageCache.has(id);
 }
 
 // Incoming User Spam & Freeze State
@@ -259,22 +276,22 @@ export function installOutgoingGuard(naze) {
 
 	// Override sendMessage
 	naze.sendMessage = async (jid, content, options = {}) => {
-		if (options?.messageId) recordSentBotMessage(options.messageId);
+		if (options?.messageId) recordSentBotMessage(options.messageId, content);
 		const isUrgent = Boolean(options?.urgent || content?.delete || content?.react);
 		return queueSendTask(async () => {
 			const res = await rawSendMessage(jid, content, options);
-			if (res?.key?.id) recordSentBotMessage(res.key.id);
+			if (res?.key?.id) recordSentBotMessage(res.key.id, res?.message || content);
 			return res;
 		}, jid, content, isUrgent);
 	};
 
 	// Override relayMessage
 	naze.relayMessage = async (jid, message, options = {}) => {
-		if (options?.messageId) recordSentBotMessage(options.messageId);
+		if (options?.messageId) recordSentBotMessage(options.messageId, message);
 		const isUrgent = Boolean(options?.urgent);
 		return queueSendTask(async () => {
 			const res = await rawRelayMessage(jid, message, options);
-			if (res?.key?.id) recordSentBotMessage(res.key.id);
+			if (res?.key?.id) recordSentBotMessage(res.key.id, res?.message || message);
 			return res;
 		}, jid, message, isUrgent);
 	};
