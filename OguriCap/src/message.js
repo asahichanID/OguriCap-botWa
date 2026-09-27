@@ -174,7 +174,7 @@ async function GroupUpdate(naze, m, store) {
 	}
 	if (!m.messageStubType || !m.isGroup || isLocked(m.chat)) return
 	if (global.db?.groups?.[m.chat] && store?.groupMetadata?.[m.chat]) {
-		const admin = `@${m.sender.split('@')[0]}`
+		const admin = `@${(m.sender || '').split('@')[0]}`
 		const metadata = store.groupMetadata[m.chat];
 		const normalizedTarget = clearParse(m.messageStubParameters[0]);
 		const type = m.messageStubType;
@@ -230,11 +230,6 @@ async function GroupUpdate(naze, m, store) {
 				const key = metadata.addressingMode === 'lid' ? jidNormalizedUser(p.id) : jidNormalizedUser(p.phoneNumber)
 				return key !== (normalizedTarget.id || normalizedTarget)
 			});
-		} else {
-			console.log({
-				messageStubType: m.messageStubType, type,
-				messageStubParameters: m.messageStubParameters,
-			})
 		}
 	}
 }

@@ -549,10 +549,12 @@ const naze = async (naze, m, msg, store) => {
 			if (set.autoread && naze.public) {
 				naze.readMessages([m.key]);
 			}
+			const fromNumber = (m.sender || '').split('@')[0] || 'Unknown';
+			const chatLocation = m.isGroup ? (m.metadata?.subject || 'Grup') : (m.chat || '').endsWith('@newsletter') ? 'Newsletter' : 'Private Chat';
 			if (set.log) {
-				console.log(chalk.black(chalk.whiteBright('[CHAT]:'), chalk.greenBright(`${locale_day} ${date} (${date_time})`), chalk.hex('#AF26EB')(m.key.id) + '\n' + chalk.hex('#00EAD3')(messagePreview) + '\n' + chalk.cyanBright('[FROM]:'), chalk.yellowBright(m.pushName || (isCreator ? 'Owner' : 'User')), chalk.hex('#FF449F')(m.sender.split('@')[0]), chalk.hex('#FF5700')(m.isGroup ? (m.metadata?.subject || 'Grup') : m.chat.endsWith('@newsletter') ? 'Newsletter' : 'Private Chat'), chalk.blueBright('(' + m.chat + ')')));
+				console.log(chalk.black(chalk.whiteBright('[CHAT]:'), chalk.greenBright(`${locale_day} ${date} (${date_time})`), chalk.hex('#AF26EB')(m.key.id) + '\n' + chalk.hex('#00EAD3')(messagePreview) + '\n' + chalk.cyanBright('[FROM]:'), chalk.yellowBright(m.pushName || (isCreator ? 'Owner' : 'User')), chalk.hex('#FF449F')(fromNumber), chalk.hex('#FF5700')(chatLocation), chalk.blueBright('(' + (m.chat || '') + ')')));
 			} else {
-				console.log(chalk.black(chalk.bgWhite('[CHAT]:'), chalk.bgGreen(`${locale_day} ${date} (${date_time})`), chalk.bgHex('#AF26EB')(m.key.id) + '\n' + chalk.bgHex('#00EAD3')(messagePreview) + '\n' + chalk.bgCyanBright('[FROM]:'), chalk.bgYellow(m.pushName || (isCreator ? 'Owner' : 'User')), chalk.bgHex('#FF449F')(m.sender), chalk.bgHex('#FF5700')(m.isGroup ? (m.metadata?.subject || 'Grup') : m.chat.endsWith('@newsletter') ? 'Newsletter' : 'Private Chat'), chalk.bgBlue('(' + m.chat + ')')));
+				console.log(chalk.black(chalk.bgWhite('[CHAT]:'), chalk.bgGreen(`${locale_day} ${date} (${date_time})`), chalk.bgHex('#AF26EB')(m.key.id) + '\n' + chalk.bgHex('#00EAD3')(messagePreview) + '\n' + chalk.bgCyanBright('[FROM]:'), chalk.bgYellow(m.pushName || (isCreator ? 'Owner' : 'User')), chalk.bgHex('#FF449F')(m.sender || ''), chalk.bgHex('#FF5700')(chatLocation), chalk.bgBlue('(' + (m.chat || '') + ')')));
 			}
 		}
 		
@@ -1049,11 +1051,11 @@ const naze = async (naze, m, msg, store) => {
 		if (!m.body && (body || budy)) m.body = (body || budy);
 
 		// ── Mahiru Shiina AI ─────────────────────────────────────
-		await mahiruAI(naze, m, db)
+		await mahiruAI(naze, m, db).catch(err => console.error(chalk.magentaBright('[MAHIRU AI ERROR]'), err?.message || err));
 		// ─────────────────────────────────────────────────────────
 
 		// ── Itsuki Nakano AI ─────────────────────────────────────
-		await itsukiAI(naze, m, db)
+		await itsukiAI(naze, m, db).catch(err => console.error(chalk.yellowBright('[ITSUKI AI ERROR]'), err?.message || err));
 		// ─────────────────────────────────────────────────────────
       
 // 🛡️ TANGGAPI TOMBOL KUNCI / BUKA DULUAN SEBELUM PERINTAH LAIN
