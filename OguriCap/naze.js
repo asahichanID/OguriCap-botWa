@@ -232,9 +232,10 @@ const naze = async (naze, m, msg, store) => {
 		const budy = (typeof m.text == 'string' ? m.text : '')
 		const senderNum = m.sender ? m.sender.split('@')[0] : '';
 		const senderNormalized = m.sender ? jidNormalizedUser(m.sender) : '';
-		const isCreator = global.isOwner = Boolean(
+		const isCreator = Boolean(
 			m.key?.fromMe ||
 			m.fromMe ||
+			(naze.isJadiBot && naze.jadibotOwner && (naze.jadibotOwner === m.sender || naze.jadibotOwner.split('@')[0] === senderNum)) ||
 			ownerNumber.some(owner => {
 				const cleanOwner = String(owner).replace(/[^0-9]/g, '');
 				if (cleanOwner && (cleanOwner === senderNum || senderNormalized.startsWith(cleanOwner))) return true;
@@ -3817,25 +3818,41 @@ Select Bot Settings:
 			}
 			break
 			case 'jadibot': {
-				if (!isPremium) return m.reply(global.mess.prem)
-				if (!isLimit) return m.reply(global.mess.limit)
-				const nmrnya = text ? text.replace(/[^0-9]/g, '') + '@s.whatsapp.net' : m.sender
-				const onWa = await naze.onWhatsApp(nmrnya)
-				if (!onWa.length > 0) return m.reply(global.mess.onWa)
-				await JadiBot(naze, nmrnya, m, store)
-				m.reply(`Gunakan ${prefix}stopjadibot\nUntuk Berhenti`)
-				setLimit(m, db)
+				if (!isPremium) {
+					return m.reply(
+`╭─❖「 🔒 𝐀𝐊𝐒𝐄𝐒 𝐏𝐑𝐄𝐌𝐈𝐔𝐌 🌸 」
+│
+├ ⚠️ Fitur *JadiBot* adalah fitur eksklusif khusus user Premium!
+├ 💡 Keuntungan JadiBot:
+│ • Memiliki bot WhatsApp mandiri (1 Panel)
+│ • Bebas atur mode .self / .public tanpa ganggu bot utama
+│ • Akses penuh ke seluruh command & games
+│
+├ 👑 Hubungi owner untuk upgrade premium:
+│ • Ketik *.owner*
+╰─────────────❖`
+					);
+				}
+				if (!isLimit) return m.reply(global.mess.limit);
+				const targetNum = text ? text.replace(/[^0-9]/g, '') + '@s.whatsapp.net' : m.sender;
+				const onWa = await naze.onWhatsApp(targetNum).catch(() => []);
+				if (!onWa || onWa.length === 0) return m.reply(global.mess.onWa);
+
+				await m.react('⏳');
+				await JadiBot(naze, targetNum, m, store);
+				setLimit(m, db);
 			}
 			break
-			case 'stopjadibot': case 'deljadibot': {
-				const nmrnya = text ? text.replace(/[^0-9]/g, '') + '@s.whatsapp.net' : m.sender
-				const onWa = await naze.onWhatsApp(nmrnya)
-				if (!onWa.length > 0) return m.reply(global.mess.onWa)
-				await StopJadiBot(naze, nmrnya, m)
+
+			case 'stopjadibot': case 'deljadibot': case 'berhentijadibot': {
+				const targetNum = text ? text.replace(/[^0-9]/g, '') + '@s.whatsapp.net' : m.sender;
+				await m.react('⏳');
+				await StopJadiBot(naze, targetNum, m);
 			}
 			break
-			case 'listjadibot': {
-				ListJadiBot(naze, m)
+
+			case 'listjadibot': case 'jadibotlist': {
+				await ListJadiBot(naze, m);
 			}
 			break
 			
