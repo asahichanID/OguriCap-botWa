@@ -253,7 +253,7 @@ function startBot(options?: { botNumber?: string; customCode?: string }) {
       addLog('system', `[BAN-GUARD] Warning pembersihan sairidev: ${e?.message || e}`);
     }
 
-    botProcess = spawn('node', ['index.js'], {
+    botProcess = spawn('node', ['--max-old-space-size=512', 'index.js'], {
       cwd: OGURI_DIR,
       env: subEnv,
       stdio: ['pipe', 'pipe', 'pipe'],

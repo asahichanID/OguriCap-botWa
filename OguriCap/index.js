@@ -85,10 +85,11 @@ const userInfoSyt = () => {
 // pernah diberitahukan ke pemilik bot — dihapus total sesuai hasil audit.
 
 try {
-	dns.setServers(['8.8.8.8', '1.1.1.1']);
-	console.log(chalk.yellowBright('[SYSTEM] Custom DNS Google & Cloudflare.'));
+	// Gunakan DNS bawaan sistem / Docker container agar kompatibel penuh dengan Pterodactyl & VPS
+	const currentServers = dns.getServers();
+	console.log(chalk.greenBright(`[SYSTEM] DNS Resolver aktif (${currentServers.join(', ') || 'System Default'}) - Siap & Cepat.`));
 } catch (e) {
-	console.log(chalk.yellowBright('[SYSTEM] failed to custom DNS:'), e.message);
+	// ignore
 }
 
 // Fetch Api
@@ -462,9 +463,9 @@ async function startNazeBot() {
 		syncFullHistory: false,
 		maxMsgRetryCount: 5,
 		msgRetryCounterCache,
-		retryRequestDelayMs: 250,
-		defaultQueryTimeoutMs: 60000,
-		connectTimeoutMs: 60000,
+		retryRequestDelayMs: 200,
+		defaultQueryTimeoutMs: 20000,
+		connectTimeoutMs: 30000,
 		keepAliveIntervalMs: 25000,
 		browser: Browsers.ubuntu('Chrome'),
 		generateHighQualityLinkPreview: false,

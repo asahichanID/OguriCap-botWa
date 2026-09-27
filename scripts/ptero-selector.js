@@ -168,7 +168,7 @@ export async function startBotOnly() {
   const rootModules = path.join(ROOT_DIR, 'node_modules');
   const nodePaths = [oguriModules, rootModules].filter(fs.existsSync).join(path.delimiter);
 
-  const botProc = spawn('node', ['start.js'], {
+  const botProc = spawn('node', ['--max-old-space-size=512', 'start.js'], {
     cwd: OGURI_DIR,
     stdio: 'inherit',
     env: {

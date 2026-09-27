@@ -281,7 +281,7 @@ const dequeue = (category) => {
 // 3. Mencegah race condition spam dari user yang sama (maksimal 3 antrian per user).
 // 4. Obrolan biasa langsung tembus tanpa antrian.
 
-const CMD_QUEUE_SAFEGUARD_MS = 25 * 1000 // Safeguard 25 detik (anti-deadlock)
+const CMD_QUEUE_SAFEGUARD_MS = 8 * 1000 // Safeguard 8 detik (anti-deadlock super cepat)
 const MAX_USER_COMMAND_QUEUE = 3 // Maksimal 3 antrian menunggu per user
 
 export const acquireCommandSlot = async (sender, chat, m = null) => {

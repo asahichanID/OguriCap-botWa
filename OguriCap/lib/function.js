@@ -38,28 +38,42 @@ const unsafeAgent = new https.Agent({
 	maxSockets: 60
 });
 
-const customHttpsAgent = new https.Agent({
-	lookup: (hostname, options, callback) => {
-		let cb = callback;
-		let opts = options;
-		if (typeof options === 'function') {
-			cb = options;
-			opts = {};
-		}
-		dns.resolve4(hostname, (err, addresses) => {
-			if (err) return cb(err);
-			if (!addresses || addresses.length === 0) {
-				const error = new Error(`ENOTFOUND: Tidak menemukan IPv4 untuk ${hostname}`);
-				error.code = 'ENOTFOUND';
-				return cb(error);
-			}
-			if (opts && opts.all) {
-				const formatted = addresses.map(ip => ({ address: ip, family: 4 }));
-				return cb(null, formatted);
-			}
-			cb(null, addresses[0], 4); 
-		});
+const dnsCache = new Map();
+const DNS_CACHE_TTL = 5 * 60 * 1000;
+
+const fastLookup = (hostname, options, callback) => {
+	let cb = callback;
+	let opts = options;
+	if (typeof options === 'function') {
+		cb = options;
+		opts = {};
 	}
+	const cacheKey = hostname;
+	const cached = dnsCache.get(cacheKey);
+	if (cached && (Date.now() - cached.time < DNS_CACHE_TTL)) {
+		if (opts && opts.all) {
+			return cb(null, [{ address: cached.address, family: 4 }]);
+		}
+		return cb(null, cached.address, 4);
+	}
+
+	// Gunakan sistem getaddrinfo bawaan OS / Docker (127.0.0.11 di Pterodactyl) dengan hint IPv4
+	dns.lookup(hostname, { family: 4 }, (err, address, family) => {
+		if (!err && address) {
+			dnsCache.set(cacheKey, { address, time: Date.now() });
+		}
+		if (opts && opts.all) {
+			return cb(err, address ? [{ address, family: family || 4 }] : []);
+		}
+		cb(err, address, family || 4);
+	});
+};
+
+const customHttpsAgent = new https.Agent({
+	rejectUnauthorized: false,
+	keepAlive: true,
+	maxSockets: 60,
+	lookup: fastLookup
 });
 
 const axiosss = axios.create({

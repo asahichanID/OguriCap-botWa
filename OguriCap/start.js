@@ -71,7 +71,7 @@ function start() {
 	const rootModules = path.join(rootDir, 'node_modules');
 	const nodePaths = [oguriModules, rootModules].filter(fs.existsSync).join(path.delimiter);
 
-	let args = [path.join(__dirname, 'index.js'), ...process.argv.slice(2)];
+	let args = ['--max-old-space-size=512', path.join(__dirname, 'index.js'), ...process.argv.slice(2)];
 	let isIntentionalStop = false;
 
 	let p = spawn(process.argv[0], args, {

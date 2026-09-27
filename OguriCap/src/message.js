@@ -52,30 +52,44 @@ export async function getOrFetchGroupMetadata(naze, jid, store) {
 	const cached = store.groupMetadata[jid];
 	const lastFetched = metadataCacheTime.get(jid) || 0;
 
-	// Gunakan memori cache jika data lengkap (punya participants) dan masih fresh (< 10 menit)
+	// 1. Jika ada cache dan memiliki participants: RETURN INSTAN tanpa menunggu network!
 	if (cached && Array.isArray(cached.participants) && cached.participants.length > 0) {
-		if (!metadataCacheTime.has(jid) || (now - lastFetched) < METADATA_TTL_MS) {
-			if (!metadataCacheTime.has(jid)) metadataCacheTime.set(jid, now);
-			return cached;
+		// Jika cache sudah lebih dari 10 menit, jadwalkan background update non-blocking
+		if (now - lastFetched >= METADATA_TTL_MS && !metadataFetchPromises.has(jid)) {
+			metadataCacheTime.set(jid, now);
+			Promise.race([
+				naze.groupMetadata(jid),
+				new Promise((_, r) => setTimeout(() => r(new Error('bg_timeout')), 3000))
+			]).then((data) => {
+				if (data && Array.isArray(data.participants) && data.participants.length > 0) {
+					store.groupMetadata[jid] = data;
+					metadataCacheTime.set(jid, Date.now());
+				}
+			}).catch(() => {});
 		}
+		return cached;
 	}
 
-	// In-flight deduplication: jika sudah ada request berjalan untuk grup yang sama, gunakan Promise yang sama
+	// 2. In-flight deduplication: gunakan Promise yang sedang berjalan
 	if (metadataFetchPromises.has(jid)) {
 		return await metadataFetchPromises.get(jid);
 	}
 
+	// 3. Jika belum pernah ada cache sama sekali, fetch dengan batas timeout ketat (maksimal 1.5 detik)
 	const promise = (async () => {
 		try {
-			const data = await naze.groupMetadata(jid);
+			const data = await Promise.race([
+				naze.groupMetadata(jid),
+				new Promise((_, reject) => setTimeout(() => reject(new Error('Metadata timeout')), 1500))
+			]);
 			if (data && Array.isArray(data.participants) && data.participants.length > 0) {
 				store.groupMetadata[jid] = data;
 				metadataCacheTime.set(jid, Date.now());
 				return data;
 			}
-			return cached || data || {};
+			return cached || data || { id: jid, participants: [] };
 		} catch (e) {
-			return cached || {};
+			return cached || { id: jid, participants: [] };
 		} finally {
 			metadataFetchPromises.delete(jid);
 		}
@@ -606,70 +620,81 @@ if (!Array.isArray(bank.aktivitas))
 
 async function MessagesUpsert(naze, message, store) {
 	try {
-		let botNumber = naze.decodeJid(naze.user.id);
-		const msg = message.messages[0];
-		if (!msg || !msg.message) return;
-		if ((msg?.messageTimestamp * 1000) < botStartTime) return;
+		if (!message?.messages || !Array.isArray(message.messages) || message.messages.length === 0) return;
+		let botNumber = naze.decodeJid(naze.user?.id || '');
 
-		// 🛡️ ANTI SELF-REPLY / DOUBLE COMMAND:
-		// Abaikan seluruh pesan yang dikirim oleh proses bot ini atau bot Baileys
-		if (isBotSentMessage(msg.key?.id)) return;
-		const hasActiveMath = Boolean(global.__oguriMathSessionManager?.hasSession(msg.key?.remoteJid));
-		const hasActiveGameSession = Boolean(hasAnyActiveGame(msg.key?.remoteJid));
-		if (!hasActiveMath && !hasActiveGameSession && msg.key?.fromMe && (
-			msg.key.id?.startsWith('3EB0') ||
-			msg.key.id?.includes('STARFALL') ||
-			msg.key.id?.startsWith('BAE5') ||
-			msg.key.id?.startsWith('HSK') ||
-			msg.key.id?.startsWith('B1E')
-		)) {
-			return;
-		}
+		for (const msg of message.messages) {
+			if (!msg || !msg.message) continue;
 
-		const remoteJid = msg.key.remoteJid;
-		(store.messages ??= {})[remoteJid] ??= {};
-		store.messages[remoteJid].array ??= [];
-		store.messages[remoteJid].keyId ??= new Set();
-		if (!(store.messages[remoteJid].keyId instanceof Set)) {
-			store.messages[remoteJid].keyId = new Set(store.messages[remoteJid].array.map(m => m.key.id));
-		}
-		if (store.messages[remoteJid].keyId.has(msg.key.id)) return;
-		store.messages[remoteJid].array.push(msg);
-		store.messages[remoteJid].keyId.add(msg.key.id);
-		if (store.messages[remoteJid].array.length > 20) {
-			const old = store.messages[remoteJid].array.shift();
-			if (old?.key?.id) store.messages[remoteJid].keyId.delete(old.key.id);
-		}
-		const type = msg.message ? (getContentType(msg.message) || Object.keys(msg.message)[0]) : '';
-		const m = await Serialize(naze, msg, store);
+			// Ekstraksi timestamp yang akurat (menangani format Long object maupun number di protobuf)
+			const rawTimestamp = msg.messageTimestamp;
+			const timestampSec = typeof rawTimestamp === 'number'
+				? rawTimestamp
+				: (rawTimestamp?.low ?? Number(rawTimestamp) ?? 0);
+			const msgTime = timestampSec * 1000;
 
-		// ⚡ ULTRA-FAST SILENT DELETE UNTUK BANNED STICKER (SOCKET LEVEL INSTANT)
-		if (m && m.isGroup && (m.type === 'stickerMessage' || m.msg?.mimetype === 'image/webp' || m.mime === 'image/webp')) {
-			try {
-				const isBanned = await checkAndHandleBannedSticker({ naze, m });
-				if (isBanned) return;
-			} catch (e) {}
-		}
+			// ⚡ ULTRA-FAST STALE FILTER: Abaikan pesan lama sebelum bot online atau pesan sync offline (> 2 menit yang lalu)
+			if (msgTime > 0 && (msgTime < botStartTime || (Date.now() - msgTime > 2 * 60 * 1000))) {
+				continue;
+			}
 
-		if (nazeHandler) {
-			dispatchNazeHandler(naze, m, msg, store);
-		} else {
-			// FIX (audit): reloadNaze() tidak pernah didefinisikan di mana pun
-			// (ReferenceError). Fungsi yang benar-benar ada adalah reloadHandler().
-			await reloadHandler();
-			if (nazeHandler) dispatchNazeHandler(naze, m, msg, store);
-		}
-		if (global.db?.set?.[botNumber]?.readsw && msg.key.remoteJid === 'status@broadcast') {
-			await naze.readMessages([msg.key]);
-			if (/protocolMessage/i.test(type)) await naze.sendFromOwner(global.db?.set?.[botNumber]?.owner || global.owner, 'Status dari @' + msg.key.participant.split('@')[0] + ' Telah dihapus', msg, { mentions: [msg.key.participant] });
-			if (/(audioMessage|imageMessage|videoMessage|extendedTextMessage)/i.test(type)) {
-				let keke = (type == 'extendedTextMessage') ? `Story Teks Berisi : ${msg.message.extendedTextMessage.text ? msg.message.extendedTextMessage.text : ''}` : (type == 'imageMessage') ? `Story Gambar ${msg.message.imageMessage.caption ? 'dengan Caption : ' + msg.message.imageMessage.caption : ''}` : (type == 'videoMessage') ? `Story Video ${msg.message.videoMessage.caption ? 'dengan Caption : ' + msg.message.videoMessage.caption : ''}` : (type == 'audioMessage') ? 'Story Audio' : '\nTidak diketahui cek saja langsung'
-				await naze.sendFromOwner(global.db?.set?.[botNumber]?.owner || global.owner, `Melihat story dari @${msg.key.participant.split('@')[0]}\n${keke}`, msg, { mentions: [msg.key.participant] });
+			// 🛡️ ANTI SELF-REPLY / DOUBLE COMMAND:
+			// Abaikan seluruh pesan yang dikirim oleh proses bot ini atau bot Baileys
+			if (isBotSentMessage(msg.key?.id)) continue;
+			const remoteJid = msg.key?.remoteJid;
+			const hasActiveMath = Boolean(global.__oguriMathSessionManager?.hasSession(remoteJid));
+			const hasActiveGameSession = Boolean(hasAnyActiveGame(remoteJid));
+			if (!hasActiveMath && !hasActiveGameSession && msg.key?.fromMe && (
+				msg.key.id?.startsWith('3EB0') ||
+				msg.key.id?.includes('STARFALL') ||
+				msg.key.id?.startsWith('BAE5') ||
+				msg.key.id?.startsWith('HSK') ||
+				msg.key.id?.startsWith('B1E')
+			)) {
+				continue;
+			}
+
+			(store.messages ??= {})[remoteJid] ??= {};
+			store.messages[remoteJid].array ??= [];
+			store.messages[remoteJid].keyId ??= new Set();
+			if (!(store.messages[remoteJid].keyId instanceof Set)) {
+				store.messages[remoteJid].keyId = new Set(store.messages[remoteJid].array.map(m => m.key.id));
+			}
+			if (store.messages[remoteJid].keyId.has(msg.key.id)) continue;
+			store.messages[remoteJid].array.push(msg);
+			store.messages[remoteJid].keyId.add(msg.key.id);
+			if (store.messages[remoteJid].array.length > 20) {
+				const old = store.messages[remoteJid].array.shift();
+				if (old?.key?.id) store.messages[remoteJid].keyId.delete(old.key.id);
+			}
+			const type = msg.message ? (getContentType(msg.message) || Object.keys(msg.message)[0]) : '';
+			const m = await Serialize(naze, msg, store);
+
+			// ⚡ ULTRA-FAST SILENT DELETE UNTUK BANNED STICKER (SOCKET LEVEL INSTANT)
+			if (m && m.isGroup && (m.type === 'stickerMessage' || m.msg?.mimetype === 'image/webp' || m.mime === 'image/webp')) {
+				try {
+					const isBanned = await checkAndHandleBannedSticker({ naze, m });
+					if (isBanned) continue;
+				} catch (e) {}
+			}
+
+			if (nazeHandler) {
+				dispatchNazeHandler(naze, m, msg, store);
+			} else {
+				await reloadHandler();
+				if (nazeHandler) dispatchNazeHandler(naze, m, msg, store);
+			}
+			if (global.db?.set?.[botNumber]?.readsw && msg.key.remoteJid === 'status@broadcast') {
+				await naze.readMessages([msg.key]).catch(() => {});
+				if (/protocolMessage/i.test(type)) await naze.sendFromOwner(global.db?.set?.[botNumber]?.owner || global.owner, 'Status dari @' + msg.key.participant.split('@')[0] + ' Telah dihapus', msg, { mentions: [msg.key.participant] }).catch(() => {});
+				if (/(audioMessage|imageMessage|videoMessage|extendedTextMessage)/i.test(type)) {
+					let keke = (type == 'extendedTextMessage') ? `Story Teks Berisi : ${msg.message.extendedTextMessage.text ? msg.message.extendedTextMessage.text : ''}` : (type == 'imageMessage') ? `Story Gambar ${msg.message.imageMessage.caption ? 'dengan Caption : ' + msg.message.imageMessage.caption : ''}` : (type == 'videoMessage') ? `Story Video ${msg.message.videoMessage.caption ? 'dengan Caption : ' + msg.message.videoMessage.caption : ''}` : (type == 'audioMessage') ? 'Story Audio' : '\nTidak diketahui cek saja langsung'
+					await naze.sendFromOwner(global.db?.set?.[botNumber]?.owner || global.owner, `Melihat story dari @${msg.key.participant.split('@')[0]}\n${keke}`, msg, { mentions: [msg.key.participant] }).catch(() => {});
+				}
 			}
 		}
 	} catch (e) {
-		console.log(message);
-		throw e;
+		console.error('[MESSAGES UPSERT ERROR]', e?.message || e);
 	}
 }
 
@@ -1051,7 +1076,7 @@ async function Solving(naze, store) {
 	naze.sendFileUrl = async (jid, url, caption, quoted, options = {}) => {
 		const quotedOptions = { quoted, ephemeralExpiration: quoted?.expiration || quoted?.metadata?.ephemeralDuration || store?.messages[jid]?.array?.slice(-1)[0]?.metadata?.ephemeralDuration || 0 }
 		try {
-			const res = await axios.head(url);
+			const res = await axios.head(url, { timeout: 3500 });
 			let mime = res.headers['content-type'];
 			if (mime && mime.includes('gif')) {
 				return naze.sendMessage(jid, { video: { url }, caption: caption, gifPlayback: true, ...options }, quotedOptions);
@@ -1757,7 +1782,7 @@ async function Serialize(naze, msg, store) {
 		} else if (typeof content === 'string') {
 			try {
 				if (/^https?:\/\//.test(content)) {
-					const res = await axios.head(content).catch(() => null);
+					const res = await axios.head(content, { timeout: 3500 }).catch(() => null);
 					const mime = res?.headers['content-type'] || '';
 					if (/gif|image|video|audio|pdf|stream/i.test(mime)) {
 						let type = /image/.test(mime) ? 'image' : /video/.test(mime) ? 'video' : /audio/.test(mime) ? 'audio' : 'document';
