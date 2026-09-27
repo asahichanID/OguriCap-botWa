@@ -136,7 +136,7 @@ import { profile, leaderboard } from './lib/profile.js'
 import { afk } from './group/afk.js'
 import { play } from './downloader/play.js'
 import { play2 } from './downloader/play2.js'
-import { ytmp3, ytmp4, tiktok, ttmp3, cariSpotify, unduhSpotify, instagram } from './downloader/tracendd.js'
+import { ytmp3, ytmp4, tiktok, ttmp3, cariSpotify, unduhSpotify, instagram, igaudio } from './downloader/tracendd.js'
 import { audit, bansos } from './lib/economy/academy.js'
 import { banktracen, cekbank } from './lib/economy/banktracen.js'
 import { autoSound } from './downloader/sounds.js'
@@ -4934,6 +4934,35 @@ break
 						text
 					);
 				}, { name: 'ttmp3' });
+            }
+            break
+
+            case 'ig':
+            case 'igdl':
+            case 'instagram':
+            case 'instagramdl':
+            case 'reels':
+            case 'reel': {
+				await runHeavyTask(async () => {
+					await instagram(
+						naze,
+						m,
+						text
+					);
+				}, { name: 'instagram' });
+            }
+            break
+
+            case 'igaudio':
+            case 'iga':
+            case 'igmp3': {
+				await runHeavyTask(async () => {
+					await igaudio(
+						naze,
+						m,
+						text
+					);
+				}, { name: 'igaudio' });
             }
             break
 			case 'igvideo': {

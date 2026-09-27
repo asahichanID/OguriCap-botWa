@@ -15,7 +15,8 @@ import {
   apiSpotifyLyrics,
   apiSpotifyScrapTrack,
   apiSpotifyScrapAudio,
-  apiInstagramDownload
+  apiInstagramDownload,
+  apiInstagramScrapDownload
 } from '../apiGlobal/index.js'
 // ==============================================
 // YTMP3 - Unduh Audio YouTube
@@ -604,22 +605,24 @@ export const ttmp3 = async (naze, m, text) => {
 console.log('🎵 TTMP3 LOADED')
 
 // ==============================================
-// IG- Instagram Downloader 
+// IG - Instagram Downloader (Scraper Utama + API Backup)
 // ==============================================
 const MAX_LIST_MEDIA = 12
+
 export const instagram = async (naze, m, text) => {
-    if (!text) return m.reply('Contoh:\n.ig https://www.instagram.com/...')
-    if (!/instagram\.com/i.test(text)) return m.reply('❌ URL Instagram tidak valid.')
+    if (!text) return m.reply('Contoh:\n.ig https://www.instagram.com/p/xxxx\n.ig https://www.instagram.com/reel/xxxx')
+    if (!/instagram\.com|instagr\.am/i.test(text)) return m.reply('❌ URL Instagram tidak valid.')
         
     try {
         await m.react('⏳')
         const mulai = Date.now()
         const uma = getUmaQuote()
-        const { result, provider } = await apiInstagramDownload(text)
+        const { result, provider } = await apiInstagramScrapDownload(text)
         const medias = result?.urls || []
 
-        if (!medias.length) return m.reply('❌ Postingan tidak tersedia atau privat!')
-        const igCaption = result.caption || '-'
+        if (!medias.length) return m.reply('❌ Postingan tidak tersedia, dihapus, atau akun privat!')
+        const igCaption = (result.caption || result.title || '').trim()
+        const shortTitle = igCaption ? igCaption.slice(0, 100) : 'Instagram Post'
         const speed = Date.now() - mulai
 
         const caption =
@@ -631,129 +634,132 @@ export const instagram = async (naze, m, text) => {
 ╰─────────────❖
 
 💬 ${uma.name}
-"${uma.quote}"`
+"${uma.quote}"${igCaption ? `\n\n📝 *Caption:*\n${igCaption}` : ''}`
 
         const videos = medias.filter(v => v.is_video)
         const images = medias.filter(v => !v.is_video)
 
-        // === 1 MEDIA SAJA ===
+        // === KONDISI 1: 1 MEDIA SAJA (Single Image / Single Video) ===
         if (medias.length === 1) {
             const media = medias[0]
-            await naze.sendMessage(
-                m.chat,
-                media.is_video
-                    ? { video: { url: media.url }, mimetype: 'video/mp4', caption }
-                    : { image: { url: media.url }, caption },
-                { quoted: m }
-            )
+            if (media.is_video) {
+                await naze.sendMessage(
+                    m.chat,
+                    {
+                        video: { url: media.url },
+                        mimetype: 'video/mp4',
+                        caption
+                    },
+                    { quoted: m }
+                )
+            } else {
+                await naze.sendMessage(
+                    m.chat,
+                    {
+                        image: { url: media.url },
+                        caption
+                    },
+                    { quoted: m }
+                )
+            }
         }
 
-      // === SEMUA GAMBAR ===
-        else if (!videos.length) {
+        // === KONDISI 2: SEMUA GAMBAR (Carousel Swipable Seperti Pinterest) ===
+        else if (!videos.length && images.length > 0) {
             await naze.sendCarouselMsg(
                 m.chat,
                 caption,
-                '🛡️ Oguri Cap Instagram',
+                `🛡️ ${global.botname} • Instagram`,
                 images
                     .slice(0, MAX_LIST_MEDIA)
                     .map((img, i) => ({
                         type: 'image',
                         url: img.url,
-                        body: `📸 Foto ${i + 1}/${images.length}`,
+                        body: `📸 Foto ${i + 1} / ${images.length}\n\n🎬 ${shortTitle}`,
                         footer: `Provider : ${provider || '-'}`,
-                        buttons: []
+                        buttons: [
+                            {
+                                name: 'quick_reply',
+                                buttonParamsJson: JSON.stringify({
+                                    display_text: '🎵 Download Audio',
+                                    id: `.igaudio ${text}`
+                                })
+                            }
+                        ]
                     })),
                 { quoted: m }
             )
         }
         
-        // === SEMUA VIDEO ===
-        else if (!images.length) {
+        // === KONDISI 3: SEMUA VIDEO (Carousel Video) ===
+        else if (!images.length && videos.length > 0) {
             await naze.sendCarouselMsg(
                 m.chat,
                 caption,
-                '🛡️ Oguri Cap Instagram',
+                `🛡️ ${global.botname} • Instagram`,
                 videos
                     .slice(0, MAX_LIST_MEDIA)
                     .map((vid, i) => ({
                         type: 'video',
                         url: vid.url,
-                        body: `🎥 Video ${i + 1}/${videos.length}`,
+                        body: `🎥 Video ${i + 1} / ${videos.length}\n\n🎬 ${shortTitle}`,
                         footer: `Provider : ${provider || '-'}`,
-                        buttons: []
+                        buttons: [
+                            {
+                                name: 'quick_reply',
+                                buttonParamsJson: JSON.stringify({
+                                    display_text: '🎵 Download Audio',
+                                    id: `.igaudio ${text}`
+                                })
+                            }
+                        ]
                     })),
                 { quoted: m }
             )
         }
 
-        // === CAMPURAN VIDEO + GAMBAR ===
+        // === KONDISI 4: CAMPURAN VIDEO & FOTO (Video Pertama + Teks Lengkap, Foto Carousel Tanpa Duplikat Teks) ===
         else {
-            const sessionId = Date.now().toString(36) + Math.random().toString(36).slice(2, 15)
-            global.instagramSession ??= new Map()
-            global.instagramSession.set(sessionId, {
-                provider,
-                caption,
-                videos,
-                images,
-                created: Date.now()
-            })
+            // 1. Kirim Video Terlebih Dahulu (Video Pertama memuat teks lengkap)
+            for (let i = 0; i < videos.length; i++) {
+                const vid = videos[i]
+                await naze.sendMessage(
+                    m.chat,
+                    {
+                        video: { url: vid.url },
+                        mimetype: 'video/mp4',
+                        caption: i === 0 ? caption : `🎥 Video ${i + 1} / ${videos.length}`
+                    },
+                    { quoted: m }
+                )
+            }
 
-            const rowsVideo = [
-            {
-                title: '🎥 Ambil Semua Video',
-                description: `${videos.length} Video`,
-                id: `.igvideoall ${sessionId}`
-            },
-            ...videos.slice(0, MAX_LIST_MEDIA).map((v, i) => ({
-                title: `🎥 Video ${i + 1}`,
-                description: 'Kirim video ini',
-                id: `.igvideo ${sessionId} ${i}`
-            }))
-        ]
-        
-        if (videos.length > MAX_LIST_MEDIA) {
-            rowsVideo.push({
-                title: '➡️ Lihat Selengkapnya',
-                description: `${videos.length - MAX_LIST_MEDIA} video lainnya`,
-                id: `.igvideolist ${sessionId} ${MAX_LIST_MEDIA}`
-            })
-        }
-        
-        const rowsImage = [
-            {
-                title: '🖼️ Ambil Semua Gambar',
-                description: `${images.length} Gambar`,
-                id: `.igimageall ${sessionId}`
-            },
-            ...images.slice(0, MAX_LIST_MEDIA).map((v, i) => ({
-                title: `🖼️ Gambar ${i + 1}`,
-                description: 'Kirim gambar ini',
-                id: `.igimage ${sessionId} ${i}`
-            }))
-        ]
-        
-        if (images.length > MAX_LIST_MEDIA) {
-            rowsImage.push({
-                title: '➡️ Lihat Selengkapnya',
-                description: `${images.length - MAX_LIST_MEDIA} gambar lainnya`,
-                id: `.igimagelist ${sessionId} ${MAX_LIST_MEDIA}`
-            })
-        }
-        
-            await naze.sendListMsg(
-                m.chat,
-                {
-                    title: '📸 Instagram Downloader',
-                    text: caption,
-                    footer: '🛡️ Oguri Cap Instagram',
-                    buttonText: '📂 Pilih Media',
-                    sections: [
-                        { title: `🎥 Video (${videos.length})`, rows: rowsVideo },
-                        { title: `🖼️ Gambar (${images.length})`, rows: rowsImage }
-                    ]
-                },
-                { quoted: m }
-            )
+            // 2. Kirim Carousel Foto di Bawahnya (Tanpa teks duplikat pada header carousel)
+            if (images.length > 0) {
+                await naze.sendCarouselMsg(
+                    m.chat,
+                    '', // Tanpa duplikasi teks header
+                    `🛡️ ${global.botname} • Instagram`,
+                    images
+                        .slice(0, MAX_LIST_MEDIA)
+                        .map((img, i) => ({
+                            type: 'image',
+                            url: img.url,
+                            body: `📸 Foto ${i + 1} / ${images.length}\n\n🎬 ${shortTitle}`,
+                            footer: `Provider : ${provider || '-'}`,
+                            buttons: [
+                                {
+                                    name: 'quick_reply',
+                                    buttonParamsJson: JSON.stringify({
+                                        display_text: '🎵 Download Audio',
+                                        id: `.igaudio ${text}`
+                                    })
+                                }
+                            ]
+                        })),
+                    { quoted: m }
+                )
+            }
         }
 
         await m.react('✅')
@@ -762,6 +768,52 @@ export const instagram = async (naze, m, text) => {
         console.error('❌ IG →', error)
         await m.react('❌')
         return handleOguriError({ err: error, m, naze, command: 'instagram', text })
+    }
+}
+
+// ==============================================
+// IGAUDIO - Unduh Audio Instagram
+// ==============================================
+export const igaudio = async (naze, m, text) => {
+    if (!text) return m.reply('Contoh:\n.igaudio https://www.instagram.com/reel/xxxx')
+    if (!/instagram\.com|instagr\.am/i.test(text)) return m.reply('❌ URL Instagram tidak valid.')
+
+    await m.react('⏳')
+    try {
+        const { result } = await apiInstagramScrapDownload(text)
+        const audioUrl = result?.audio || result?.music
+
+        if (audioUrl) {
+            await naze.sendMessage(m.chat, {
+                audio: { url: audioUrl },
+                mimetype: 'audio/mpeg',
+                fileName: `${result?.title || 'Instagram Audio'}.mp3`
+            }, { quoted: m })
+            await m.react('✅')
+            return
+        }
+
+        // Jika tidak ada direct audio, ambil video pertama dan convert ke mp3
+        const videos = (result?.urls || []).filter(v => v.is_video)
+        if (videos.length > 0) {
+            const audio = await convertToMp3(videos[0].url, `${result?.title || 'Instagram Audio'}.mp3`)
+            if (audio?.buffer) {
+                await naze.sendMessage(m.chat, {
+                    audio: audio.buffer,
+                    mimetype: 'audio/mpeg',
+                    fileName: `${result?.title || 'Instagram Audio'}.mp3`
+                }, { quoted: m })
+                await m.react('✅')
+                return
+            }
+        }
+
+        await m.react('❌')
+        return m.reply('❌ Audio tidak ditemukan atau gagal diekstrak dari postingan ini.')
+    } catch (err) {
+        console.error('❌ IGAUDIO →', err)
+        await m.react('❌')
+        return handleOguriError({ err, m, naze, command: 'igaudio', text })
     }
 }
 

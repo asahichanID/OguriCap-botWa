@@ -29,6 +29,7 @@ export { apiPlay } from './services/downloader/play.js';
 export { apiTiktokDownload } from './services/downloader/tiktok.js';
 export { apiTiktokScrapDownload } from './services/downloader/tiktok-scrap.js';
 export { apiInstagramDownload } from './services/downloader/instagram.js';
+export { apiInstagramScrapDownload, scrapeInstagram } from './services/downloader/ig-scrap.js';
 export { apiFacebookDownload } from './services/downloader/facebook.js';
 export { apiMediafireDownload } from './services/downloader/mediafire.js';
 export { apiSpotifySearch, apiSpotifyDownload } from './services/downloader/spotify.js';
