@@ -16,6 +16,7 @@ export const botLock = {
   allLocked: false,
   lockedAt: null,
   groups: {},
+  schedules: {},
   cache: {
     synced: false,
     lastSync: 0
@@ -38,8 +39,9 @@ export function loadLockStorage() {
         botLock.allLocked = Boolean(data.allLocked)
         botLock.lockedAt = data.lockedAt || null
         botLock.groups = (data.groups && typeof data.groups === "object") ? data.groups : {}
+        botLock.schedules = (data.schedules && typeof data.schedules === "object") ? data.schedules : {}
         botLock.aktif = botLock.allLocked || Object.values(botLock.groups).some(g => g.locked === true)
-        console.log(`🔒 [KUNCI] Berhasil memuat ${Object.keys(botLock.groups).length} grup dari database. AllLocked: ${botLock.allLocked}`)
+        console.log(`🔒 [KUNCI] Berhasil memuat ${Object.keys(botLock.groups).length} grup & ${Object.keys(botLock.schedules).length} jadwal dari database. AllLocked: ${botLock.allLocked}`)
         return
       }
     }
@@ -50,6 +52,7 @@ export function loadLockStorage() {
   botLock.allLocked = false
   botLock.lockedAt = null
   botLock.groups = {}
+  botLock.schedules = {}
   botLock.aktif = false
   saveLockStorage()
 }
@@ -67,7 +70,8 @@ export function saveLockStorage() {
       allLocked: Boolean(botLock.allLocked),
       lockedAt: botLock.lockedAt || null,
       updatedAt: Date.now(),
-      groups: botLock.groups || {}
+      groups: botLock.groups || {},
+      schedules: botLock.schedules || {}
     }
 
     const tmpFile = `${DB_FILE}.tmp`
@@ -322,5 +326,111 @@ export const syncGroups = async (conn) => {
     console.error("[GroupLock Sync Error]", e.message || e)
     return getAllGroups()
   }
+}
+
+// ======================================================
+// JADWAL KUNCI BOT OTOMATIS (SCHEDULED LOCK MANAGER)
+// ======================================================
+
+/**
+ * Pasang jadwal kunci otomatis pada grup tertentu
+ */
+export const setGroupScheduleLock = (chat, name, targetTime, targetTimeStr, reason, setBy) => {
+  const cleanId = cleanJid(chat)
+  if (!cleanId) return null
+
+  botLock.schedules = botLock.schedules || {}
+  const scheduleData = {
+    id: cleanId,
+    name: name || botLock.groups?.[cleanId]?.name || "Grup WhatsApp",
+    targetTime: Number(targetTime),
+    targetTimeStr: String(targetTimeStr),
+    reason: String(reason || "").trim(),
+    setBy: setBy || "Owner",
+    createdAt: Date.now()
+  }
+
+  botLock.schedules[cleanId] = scheduleData
+  saveLockStorage()
+  return scheduleData
+}
+
+/**
+ * Batalkan jadwal kunci otomatis pada grup tertentu
+ */
+export const cancelGroupScheduleLock = (chat) => {
+  const cleanId = cleanJid(chat)
+  if (!cleanId || !botLock.schedules?.[cleanId]) return false
+
+  delete botLock.schedules[cleanId]
+  saveLockStorage()
+  return true
+}
+
+/**
+ * Dapatkan data jadwal kunci grup
+ */
+export const getGroupScheduleLock = (chat) => {
+  const cleanId = cleanJid(chat)
+  return botLock.schedules?.[cleanId] || null
+}
+
+/**
+ * Periksa dan eksekusi jadwal kunci otomatis yang telah tiba waktunya
+ * Mengirimkan pesan pemberitahuan resmi ke grup yang bersangkutan lalu mengunci grup.
+ */
+export const checkAndExecuteScheduleLocks = async (conn) => {
+  if (!conn || !botLock.schedules || typeof botLock.schedules !== "object") return
+
+  const now = Date.now()
+  const scheduleKeys = Object.keys(botLock.schedules)
+
+  for (const cleanId of scheduleKeys) {
+    const item = botLock.schedules[cleanId]
+    if (!item || !item.targetTime) continue
+
+    if (now >= item.targetTime) {
+      // 1. Kunci grup di database
+      const lockedGroup = lockGroup(cleanId, item.name)
+      const groupName = lockedGroup?.name || item.name || "Grup Ini"
+      const timeStr = item.targetTimeStr || "Waktu Terjadwal"
+      const pesanAlasan = item.reason ? item.reason : "Waktu operasional bot telah berakhir."
+
+      // 2. Kirim pesan pengumuman ke grup yang bersangkutan
+      const notifPesan =
+`╭─❖「 🔒 𝐁𝐎𝐓 𝐃𝐈𝐊𝐔𝐍𝐂𝐈 🌸 」
+│
+├ ⏰ *Waktu:* ${timeStr}
+├ 📝 *Pesan:* ${pesanAlasan}
+├ 🛡️ *Status:* Bot sekarang terkunci di grup ini.
+│
+├ 💡 *Catatan:*
+│ • Bot tidak akan merespon perintah member grup.
+│ • Owner dapat membuka kembali dengan *.buka ini*.
+╰─────────────❖`;
+
+      try {
+        await conn.sendMessage(cleanId, { text: notifPesan })
+      } catch (err) {
+        console.error(`[SCHEDULE LOCK] Gagal mengirim notif ke ${cleanId}:`, err.message)
+      }
+
+      // 3. Hapus jadwal dari antrean
+      delete botLock.schedules[cleanId]
+      saveLockStorage()
+      console.log(`🔒 [SCHEDULE LOCK EXECUTED] ${groupName} (${cleanId}) berhasil dikunci otomatis pada ${timeStr}`)
+    }
+  }
+}
+
+// Background scheduler interval runner
+let _scheduleTimer = null
+export const initScheduleLockTimer = (conn) => {
+  if (_scheduleTimer) return
+  _scheduleTimer = setInterval(() => {
+    checkAndExecuteScheduleLocks(conn).catch(e => {
+      console.error("[SCHEDULE LOCK CHECK ERROR]:", e.message)
+    })
+  }, 10000)
 }
 

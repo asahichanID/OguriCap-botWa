@@ -146,7 +146,8 @@ import { itsukiAI, clearItsukiMemory, getItsukiRelationship, setItsukiRelationsh
 import { isItsukiTrigger } from './ai/itsuki/trigger.js'
 import { tampilkanKunciGrup, prosesTombolKunci } from "./group/kuncigrup.js"
 import { tampilkanBukaGrup, prosesTombolBuka } from "./group/bukagrup.js"
-import { isLocked } from './group/kunci.js';
+import { handleKuncibot } from "./group/kuncibot.js"
+import { isLocked, initScheduleLockTimer } from './group/kunci.js';
 import { absoluteGuard, GUARD_CONFIG } from './src/guard.js'
 import { getKhodam, buildKhodamText } from './game/khodamData.js'
 import { cekRandomHandler } from './random/cekrandom.js'
@@ -177,6 +178,7 @@ const naze = async (naze, m, msg, store) => {
 	const cases = global.db.cases;
 
 	await LoadDataBase(naze, m);
+	try { initScheduleLockTimer(naze); } catch {}
 	const db = global.db || {};
 	
 	const botNumber = naze.decodeJid(naze.user.id);
@@ -3145,6 +3147,20 @@ break
             } catch (err) {
                 console.error("❌ [BUKA ERROR]", err)
                 m.reply("❌ Terjadi kesalahan saat memproses perintah buka kunci grup.")
+            }
+            global._dbDirty = true
+        } break
+
+        case 'kuncibot':
+        case 'lockbot':
+        case 'autolock':
+        case 'kuncibotwaktu': {
+            if (!isCreator) return m.reply(global.mess.owner)
+            try {
+                await handleKuncibot(naze, m, args)
+            } catch (err) {
+                console.error("❌ [KUNCIBOT ERROR]", err)
+                m.reply("❌ Terjadi kesalahan saat mengatur jadwal kunci bot.")
             }
             global._dbDirty = true
         } break

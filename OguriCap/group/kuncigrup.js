@@ -17,7 +17,6 @@ async function ensureSync(conn) {
   const now = Date.now()
   if (!botLock.cache?.synced || now - cache.lastSync > cache.ttl) {
     try {
-      // Jalankan sync dengan safety catch agar tidak memblokir
       syncGroups(conn).then(() => {
         botLock.cache = { ...(botLock.cache || {}), synced: true }
         cache.lastSync = Date.now()
@@ -29,7 +28,7 @@ async function ensureSync(conn) {
 }
 
 /**
- * Tampilkan antarmuka Kunci Grup
+ * Tampilkan antarmuka Kunci Grup (100% Silent ke grup target)
  * Mode 1: args[0] === 'semua' / 'all' -> Kunci seluruh grup tanpa sisa
  * Mode 2: args[0] === 'ini' / 'here' -> Kunci grup saat ini
  * Mode 3: args[0] === <angka> -> Kunci grup berdasarkan nomor urut di daftar grup dibuka
@@ -51,24 +50,21 @@ export async function tampilkanKunciGrup(conn, m, args = []) {
       const listSemua = lockAllGroups()
       const total = listSemua.length
 
-      const pesanKunciSemua = [
-        "🔒 *KUNCI SEMUA GRUP BERHASIL*",
-        "━━━━━━━━━━━━━━━━━━━━━━",
-        `📊 *Total Grup Terkunci:* ${total} Grup`,
-        "🛡️ *Status:* SELURUH GRUP TELAH DIKUNCI TANPA SISA!",
-        "💾 *Penyimpanan:* PERMANEN (database/locked_groups.json)",
-        "",
-        "🛑 *Pengaruh Penguncian:*",
-        "• Bot mengabaikan seluruh pesan dan perintah member di SEMUA grup.",
-        "• Bot tidak akan merespon siapapun di grup sampai dibuka kembali oleh Owner.",
-        "• Penguncian bersifat *MANDIRI & PERMANEN* (tetap aman meski server/file berubah).",
-        "• Khusus Owner tetap bebas menggunakan perintah di manapun.",
-        "",
-        "━━━━━━━━━━━━━━━━━━━━━━",
-        "💡 *Perintah Terkait:*",
-        "• Ketik *.buka semua* untuk membuka kembali seluruh grup sekaligus.",
-        "• Ketik *.buka ini* atau *.buka <nomor>* untuk membuka grup tertentu."
-      ].join("\n")
+      const pesanKunciSemua =
+`╭─❖「 🔒 𝐊𝐔𝐍𝐂𝐈 𝐒𝐄𝐌𝐔𝐀 𝐆𝐑𝐔𝐏 🌸 」
+│
+├ 📊 *Total Terkunci:* ${total} Grup
+├ 🛡️ *Status:* SELURUH GRUP TELAH DIKUNCI
+├ 🤫 *Mode:* 100% Silent (Tanpa Notifikasi Grup)
+├ 💾 *Penyimpanan:* Terpusat & Permanen
+│
+├ 🛑 *Pengaruh:*
+│ • Bot mengabaikan seluruh pesan member di semua grup
+│ • Khusus Owner tetap bebas menggunakan bot di mana saja
+│
+├ 💡 *Perintah Buka:*
+│ • Ketik *.buka semua* untuk membuka kembali
+╰─────────────❖`;
 
       return conn.sendMessage(m.chat, { text: pesanKunciSemua }, { quoted: m })
     }
@@ -108,25 +104,20 @@ export async function tampilkanKunciGrup(conn, m, args = []) {
       const g = lockGroup(cleanTarget, targetName)
       const finalName = g?.name || targetName || "Grup WhatsApp"
 
-      const pesan = [
-        "🔒 *SUKSES DIKUNCI*",
-        "━━━━━━━━━━━━━━━━━━━━━━",
-        `📛 *Nama Grup* : ${finalName}`,
-        `🆔 *ID Grup*   : ${cleanTarget}`,
-        "✅ Bot sekarang membisukan diri di grup ini sampai dibuka kembali oleh Owner.",
-        "💾 Status tersimpan mandiri & permanen di database."
-      ].join("\n")
+      const pesan =
+`╭─❖「 🔒 𝐆𝐑𝐔𝐏 𝐁𝐄𝐑𝐇𝐀𝐒𝐈𝐋 𝐃𝐈𝐊𝐔𝐍𝐂𝐈 🌸 」
+│
+├ 📛 *Nama Grup:* ${finalName}
+├ 🆔 *ID Grup:* ${cleanTarget}
+├ 🤫 *Mode:* Silent (Tanpa Pesan ke Grup)
+├ 🛡️ *Status:* Bot Membisu di Grup Tersebut
+├ 💾 *Penyimpanan:* Permanen di Database
+╰─────────────❖`;
 
       try {
         await m.reply(pesan)
       } catch {
         await conn.sendMessage(m.chat, { text: pesan }).catch(() => {})
-      }
-
-      if (m.chat !== cleanTarget && cleanTarget.endsWith('@g.us')) {
-        await conn.sendMessage(cleanTarget, {
-          text: "🔒 *PEMBERITAHUAN*\n━━━━━━━━━━━━━━━━━━━━━━\n🛑 Bot telah dikunci oleh Owner dan dinonaktifkan sementara di grup ini."
-        }).catch(() => {})
       }
       return
     }
@@ -168,39 +159,35 @@ export async function tampilkanKunciGrup(conn, m, args = []) {
           id: "none"
         }]
 
-    // 3. Teks Ringkasan Pesan (Dipisah Atas & Bawah)
+    // 3. Teks Ringkasan Pesan
     const listTextDibuka = grupDibuka.length
-      ? grupDibuka.map((g, i) => `${i + 1}. 🟢 ${g.name || "Grup"} (\`${g.id.slice(0, 22)}\`)`).join("\n")
-      : "_Tidak ada grup yang dibuka (semua dalam status terkunci)._"
+      ? grupDibuka.map((g, i) => `├  ${i + 1}. 🟢 ${g.name || "Grup"} (\`${g.id.slice(0, 22)}\`)`).join("\n")
+      : "├ _Tidak ada (semua grup terkunci)_"
 
     const listTextDikunci = grupDikunci.length
-      ? grupDikunci.map((g, i) => `${i + 1}. 🔴 ${g.name || "Grup"} (\`${g.id.slice(0, 22)}\`)`).join("\n")
-      : "_Belum ada grup yang dikunci (semua aktif)._"
+      ? grupDikunci.map((g, i) => `├  ${i + 1}. 🔴 ${g.name || "Grup"} (\`${g.id.slice(0, 22)}\`)`).join("\n")
+      : "├ _Belum ada (semua grup aktif)_"
 
-    const textMsg = [
-      "🔒 *PANEL KELOLA KUNCI GRUP*",
-      "━━━━━━━━━━━━━━━━━━━━━━",
-      `📊 *Ringkasan Status Grup:*`,
-      `• Total Grup   : ${totalGrup}`,
-      `• Grup Dibuka  : ${grupDibuka.length} 🟢`,
-      `• Grup Dikunci : ${grupDikunci.length} 🔴`,
-      botLock.allLocked ? "⚠️ *Status Global:* SEMUA GRUP DIKUNCI (ALL LOCKED)\n" : "",
-      "━━━━━━━━━━━━━━━━━━━━━━",
-      "🟢 *DAFTAR GRUP DIBUKA (AKTIF):*",
-      listTextDibuka,
-      "",
-      "🔴 *DAFTAR GRUP DIKUNCI:*",
-      listTextDikunci,
-      "━━━━━━━━━━━━━━━━━━━━━━",
-      "💡 *Opsi Penggunaan Cepat:*",
-      "• Klik tombol *📋 KELOLA KUNCI GRUP* di bawah:",
-      "  ↳ *Atas*: Grup dibuka (klik utk mengunci).",
-      "  ↳ *Bawah*: Grup dikunci (klik utk membuka).",
-      "• Ketik *.kunci semua* untuk mengunci seluruh grup.",
-      "• Ketik *.buka semua* untuk membuka seluruh grup.",
-      "• Ketik *.kunci <nomor>* untuk mengunci grup tertentu (misal: *.kunci 1*).",
-      "• Ketik *.buka <nomor>* untuk membuka grup tertentu (misal: *.buka 1*)."
-    ].join("\n")
+    const textMsg =
+`╭─❖「 🔒 𝐏𝐀𝐍𝐄𝐋 𝐊𝐔𝐍𝐂𝐈 𝐆𝐑𝐔𝐏 🌸 」
+│
+├ 📊 *Total Grup:* ${totalGrup}
+├ 🟢 *Dibuka:* ${grupDibuka.length} Grup
+├ 🔴 *Dikunci:* ${grupDikunci.length} Grup
+${botLock.allLocked ? "├ ⚠️ *Status Global:* ALL LOCKED\n" : ""}│
+├ 🟢 *DAFTAR GRUP DIBUKA (AKTIF):*
+${listTextDibuka}
+│
+├ 🔴 *DAFTAR GRUP DIKUNCI:*
+${listTextDikunci}
+│
+├ 💡 *Panduan Cepat (100% Silent):*
+│ • Klik tombol *📋 KELOLA KUNCI GRUP* di bawah
+│ • Ketik *.kunci semua* untuk mengunci semua grup
+│ • Ketik *.buka semua* untuk membuka semua grup
+│ • Ketik *.kunci <nomor>* untuk mengunci grup tertentu
+│ • Ketik *.buka <nomor>* untuk membuka grup tertentu
+╰─────────────❖`;
 
     // 4. Kirim Pesan Interaktif dengan fallback teks yang aman
     try {
@@ -239,7 +226,7 @@ export async function tampilkanKunciGrup(conn, m, args = []) {
 }
 
 /**
- * Memproses klik tombol interaktif kunci atau buka secara mandiri & instan
+ * Memproses klik tombol interaktif kunci atau buka secara mandiri & 100% Silent
  */
 export async function prosesTombolKunci(conn, m) {
   try {
@@ -285,63 +272,71 @@ export async function prosesTombolKunci(conn, m) {
 
     if (!id || id === "none") return false
 
-    // Aksi Mengunci Grup (lock_JID)
+    // Aksi Mengunci Grup (lock_JID) - 100% SILENT ke grup target
     if (id.startsWith("lock_")) {
       const rawJid = id.slice(5)
       const jid = cleanJid(rawJid)
       const g = lockGroup(jid)
       const namaGrup = g?.name || botLock.groups?.[jid]?.name || "Grup WhatsApp"
-      const pesan = [
-        "🔒 *SUKSES DIKUNCI*",
-        "━━━━━━━━━━━━━━━━━━━━━━",
-        `📛 *Nama Grup* : ${namaGrup}`,
-        `🆔 *ID Grup*   : ${jid}`,
-        "✅ Bot sekarang membisukan diri di grup ini sampai dibuka kembali oleh Owner.",
-        "💾 Status tersimpan permanen di database."
-      ].join("\n")
+
+      const pesan =
+`╭─❖「 🔒 𝐆𝐑𝐔𝐏 𝐁𝐄𝐑𝐇𝐀𝐒𝐈𝐋 𝐃𝐈𝐊𝐔𝐍𝐂𝐈 🌸 」
+│
+├ 📛 *Nama Grup:* ${namaGrup}
+├ 🆔 *ID Grup:* ${jid}
+├ 🤫 *Mode:* Silent (Tanpa Pemberitahuan ke Grup)
+├ 🛡️ *Status:* Bot Dinonaktifkan di Grup Ini
+├ 💾 *Penyimpanan:* Database Terpusat
+╰─────────────❖`;
 
       try {
         await m.reply(pesan)
       } catch {
         await conn.sendMessage(m.chat, { text: pesan }).catch(() => {})
       }
-      console.log(`🔒 [KUNCI] Grup dikunci → ${namaGrup} (${jid})`)
-
-      if (m.chat !== jid && jid.endsWith('@g.us')) {
-        await conn.sendMessage(jid, {
-          text: `🔒 *PEMBERITAHUAN*\n━━━━━━━━━━━━━━━━━━━━━━\n🛑 Bot telah dikunci oleh Owner dan dinonaktifkan sementara di grup ini.`
-        }).catch(() => {})
-      }
+      console.log(`🔒 [KUNCI SILENT] Grup dikunci → ${namaGrup} (${jid})`)
       return true
     }
 
-    // Aksi Membuka Kunci Grup (unlock_JID)
+    // Aksi Membuka Kunci Grup (unlock_JID) - 100% SILENT ke grup target
     if (id.startsWith("unlock_")) {
       const rawJid = id.slice(7)
+      if (rawJid === "all") {
+        unlockAllGroups()
+        const pesan =
+`╭─❖「 🔓 𝐒𝐄𝐌𝐔𝐀 𝐆𝐑𝐔𝐏 𝐃𝐈𝐁𝐔𝐊𝐀 🌸 」
+│
+├ ✅ Seluruh kunci grup telah dibuka kembali
+├ 🤫 *Mode:* Silent (Tanpa Notifikasi Grup)
+╰─────────────❖`;
+        try {
+          await m.reply(pesan)
+        } catch {
+          await conn.sendMessage(m.chat, { text: pesan }).catch(() => {})
+        }
+        return true
+      }
+
       const jid = cleanJid(rawJid)
       const g = unlockGroup(jid)
       const namaGrup = g?.name || botLock.groups?.[jid]?.name || "Grup WhatsApp"
-      const pesan = [
-        "🔓 *SUKSES DIBUKA*",
-        "━━━━━━━━━━━━━━━━━━━━━━",
-        `📛 *Nama Grup* : ${namaGrup}`,
-        `🆔 *ID Grup*   : ${jid}`,
-        "✅ Bot sudah aktif kembali merespon di grup ini.",
-        "💾 Status tersimpan permanen di database."
-      ].join("\n")
+
+      const pesan =
+`╭─❖「 🔓 𝐆𝐑𝐔𝐏 𝐁𝐄𝐑𝐇𝐀𝐒𝐈𝐋 𝐃𝐈𝐁𝐔𝐊𝐀 🌸 」
+│
+├ 📛 *Nama Grup:* ${namaGrup}
+├ 🆔 *ID Grup:* ${jid}
+├ 🤫 *Mode:* Silent (Tanpa Pemberitahuan ke Grup)
+├ 🛡️ *Status:* Bot Aktif Kembali di Grup Ini
+├ 💾 *Penyimpanan:* Database Terpusat
+╰─────────────❖`;
 
       try {
         await m.reply(pesan)
       } catch {
         await conn.sendMessage(m.chat, { text: pesan }).catch(() => {})
       }
-      console.log(`🔓 [KUNCI] Grup dibuka → ${namaGrup} (${jid})`)
-
-      if (m.chat !== jid && jid.endsWith('@g.us')) {
-        await conn.sendMessage(jid, {
-          text: `🔓 *PEMBERITAHUAN*\n━━━━━━━━━━━━━━━━━━━━━━\n✅ Bot telah dibuka kuncinya oleh Owner dan kini aktif kembali merespon seluruh perintah di grup ini.`
-        }).catch(() => {})
-      }
+      console.log(`🔓 [BUKA SILENT] Grup dibuka → ${namaGrup} (${jid})`)
       return true
     }
 
@@ -352,5 +347,4 @@ export async function prosesTombolKunci(conn, m) {
   }
 }
 
-console.log("✅ [MODUL] Pengunci Grup Siap")
-
+console.log("✅ [MODUL] Pengunci Grup Siap & Terpusat (100% Silent)")
