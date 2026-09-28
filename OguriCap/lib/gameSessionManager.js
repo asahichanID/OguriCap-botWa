@@ -220,7 +220,8 @@ export async function handleIncomingGameAnswer({ naze, m, budy, body, db }) {
 		if (famKey && famObj[famKey]) {
 			const room = famObj[famKey];
 			const teks = normalizeAnswer(primaryGuess);
-			const isSurender = /^((me)?nyerah|surr?ender)$/i.test(teks);
+			const rawClean = primaryGuess.replace(/^[.!#/$%^&+=~]/, '').trim().toLowerCase();
+			const isSurender = /^((me)?nyerah|surr?ender)$/i.test(teks) || /^((me)?nyerah|surr?ender)$/i.test(rawClean);
 			let index = -1;
 
 			if (!isSurender && Array.isArray(room.jawaban)) {
@@ -246,20 +247,31 @@ export async function handleIncomingGameAnswer({ naze, m, budy, body, db }) {
 				}
 
 				const isWin = room.terjawab.length === room.terjawab.filter(v => v).length;
-				let caption = `
-🎮 *FAMILY 100* 🎮
+				const terjawabCount = room.terjawab.filter(v => v).length;
 
-📜 *Soal:* ${room.soal}
+				const listJawaban = room.jawaban.map((jawaban, idx) => {
+					if (room.terjawab[idx]) {
+						return `├  ${idx + 1}. *${jawaban}* (@${room.terjawab[idx].split('@')[0]}) ✅`;
+					}
+					return `├  ${idx + 1}. ${isSurender ? `*${jawaban}* (Terbuka)` : '• • • • • • • • • •'}`;
+				}).join('\n');
 
-💡 *Terditeksi:* ${room.terjawab.filter(v => v).length} dari ${room.jawaban.length} Terjawab
-${isSurender ? '\n🏳️ *Menyerah! Jawaban Terbuka:*' : ''}
-${room.jawaban.map((jawaban, idx) => {
-	return `(${idx + 1}) ${room.terjawab[idx] ? `${jawaban} (@${room.terjawab[idx].split('@')[0]})` : (isSurender ? jawaban : '.............')}`;
-}).join('\n')}
-
-${isSurender ? 'Game dibatalkan karena menyerah.' : isWin ? `🏆 *SEMUA JAWABAN TERTEBAK!* Game Selesai.` : `💰 +3.499 Money & 🌟 +${bonusExpFam} EXP tiap jawaban benar!`}`.trim();
+				let caption =
+`╭─❖「 🎮 𝐅𝐀𝐌𝐈𝐋𝐘 𝟏𝟎𝟎 🌸 」
+│
+├ 📜 *Survei:* ${room.soal}
+│
+├ 📊 *Progress:* ${terjawabCount} dari ${room.jawaban.length} Terjawab
+│
+${listJawaban}
+│
+├ 🎁 *Reward:* ${isSurender ? '🏳️ *Sesi Berakhir (Menyerah)*' : isWin ? '🏆 *SEMUA JAWABAN TERTEBAK!* Game Selesai.' : `+3.499 Money & +${bonusExpFam} EXP`}
+╰─────────────❖`;
 
 				if (isWin || isSurender) {
+					if (room.timer) {
+						try { clearTimeout(room.timer); } catch {}
+					}
 					delete famObj[famKey];
 					if (global.db?.game?.family100) {
 						delete global.db.game.family100[famKey];

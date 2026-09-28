@@ -5716,26 +5716,72 @@ break
 			}
 			break
 			case 'family100': {
-				if (family100.hasOwnProperty(m.chat)) return m.reply('Masih Ada Sesi Yang Belum Diselesaikan!')
+				if (family100.hasOwnProperty(m.chat) || global.db?.game?.family100?.[m.chat]) {
+					return m.reply('Masih ada sesi Family 100 yang belum diselesaikan di chat ini!\nKetik *nyerah* untuk mengakhiri sesi.');
+				}
 				const { result: hasil } = await apiGameFamily100();
-				let resMsg = await m.reply(`🎮 Family 100 Berikut :\n\n${hasil.soal}\n\nWaktu : 5m\nHadiah *+3499 Money & +EXP per jawaban*`);
+				if (!hasil || !hasil.soal || !Array.isArray(hasil.jawaban) || hasil.jawaban.length === 0) {
+					return m.reply('❌ Gagal memuat soal Family 100, silakan coba lagi.');
+				}
+
+				const startCard =
+`╭─❖「 🎮 𝐅𝐀𝐌𝐈𝐋𝐘 𝟏𝟎𝟎 🌸 」
+│
+├ 📜 *Survei:* ${hasil.soal}
+│
+├ 📊 *Total Jawaban:* ${hasil.jawaban.length} Jawaban
+├ ⏳ *Waktu:* 5 Menit (300 Detik)
+├ 🎁 *Hadiah:* +3.499 Money & +EXP per jawaban benar
+│
+├ 💡 *Petunjuk:*
+│ • Jawab langsung di chat tanpa command
+│ • Ketik *nyerah* untuk mengakhiri sesi
+╰─────────────❖`;
+
+				let resMsg = await m.reply(startCard);
 				let sId = resMsg?.key?.id || resMsg?.id || String(Date.now());
 				const sessionData = {
 					soal: hasil.soal,
 					jawaban: hasil.jawaban,
 					terjawab: Array.from(hasil.jawaban, () => false),
 					id: sId,
-					chat: m.chat
+					chat: m.chat,
+					startTime: Date.now(),
+					timer: null
 				};
-				family100[m.chat] = sessionData;
-				(global.db.game.family100 ??= {})[m.chat] = sessionData;
-				setTimeout(() => {
-					if (family100.hasOwnProperty(m.chat) || global.db?.game?.family100?.[m.chat]) {
-						m.reply('Waktu Habis\nJawaban:\n- ' + (family100[m.chat]?.jawaban || global.db?.game?.family100?.[m.chat]?.jawaban || []).join('\n- '));
+
+				const timeoutDuration = 300000; // 5 Menit (300 Detik)
+
+				const timerRef = setTimeout(async () => {
+					const cur = family100[m.chat] || global.db?.game?.family100?.[m.chat];
+					// KUNCI: Pastikan timer ini HANYA membatalkan sesi jika ID-nya sama persis!
+					if (cur && cur.id === sId) {
+						const unanswered = (cur.jawaban || [])
+							.filter((_, idx) => !cur.terjawab[idx])
+							.map((j, idx) => `├  ${idx + 1}. *${j}*`)
+							.join('\n');
+
+						const timeOutCard =
+`╭─❖「 ⏰ 𝐖𝐀𝐊𝐓𝐔 𝐇𝐀𝐁𝐈𝐒 🌸 」
+│
+├ 🎮 *Game:* Family 100
+├ 📜 *Survei:* ${cur.soal}
+│
+├ 📝 *Jawaban yang Belum Tertebak:*
+${unanswered || '├ - (Semua telah terjawab)'}
+│
+├ ❌ Waktu 5 menit telah berakhir!
+╰─────────────❖`;
+
+						await naze.sendMessage(m.chat, { text: timeOutCard }).catch(() => {});
 						delete family100[m.chat];
 						if (global.db?.game?.family100) delete global.db.game.family100[m.chat];
 					}
-				}, 300000);
+				}, timeoutDuration);
+
+				sessionData.timer = timerRef;
+				family100[m.chat] = sessionData;
+				(global.db.game.family100 ??= {})[m.chat] = sessionData;
 			}
 			break
 			case 'susunkata': {
