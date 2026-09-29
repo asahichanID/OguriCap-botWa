@@ -329,25 +329,56 @@ export const syncGroups = async (conn) => {
 }
 
 // ======================================================
-// JADWAL KUNCI BOT OTOMATIS (SCHEDULED LOCK MANAGER)
+// JADWAL KUNCI BOT OTOMATIS (SCHEDULED LOCK & AUTO-UNLOCK MANAGER V5)
 // ======================================================
 
+const _executingScheduleMap = new Set()
+
 /**
- * Pasang jadwal kunci otomatis pada grup tertentu
+ * Pasang jadwal kunci otomatis pada grup tertentu (bisa single lock atau range lock | unlock)
  */
-export const setGroupScheduleLock = (chat, name, targetTime, targetTimeStr, reason, setBy) => {
+export const setGroupScheduleLock = (
+  chat,
+  name,
+  lockTargetTime,
+  lockTargetTimeStr,
+  lockReason,
+  setBy,
+  options = {}
+) => {
   const cleanId = cleanJid(chat)
   if (!cleanId) return null
 
   botLock.schedules = botLock.schedules || {}
+
+  const hasAutoUnlock = Boolean(options.hasAutoUnlock && options.unlockTargetTime)
+  const isDirectUnlock = options.phase === 'unlock'
+
   const scheduleData = {
     id: cleanId,
     name: name || botLock.groups?.[cleanId]?.name || "Grup WhatsApp",
-    targetTime: Number(targetTime),
-    targetTimeStr: String(targetTimeStr),
-    reason: String(reason || "").trim(),
     setBy: setBy || "Owner",
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+
+    // Current phase: 'lock' | 'unlock'
+    phase: isDirectUnlock ? 'unlock' : 'lock',
+    action: isDirectUnlock ? 'unlock' : 'lock',
+
+    // Data Penguncian
+    targetTime: Number(isDirectUnlock ? options.unlockTargetTime : lockTargetTime),
+    targetTimeStr: String(isDirectUnlock ? options.unlockTargetTimeStr : lockTargetTimeStr),
+    reason: String((isDirectUnlock ? options.unlockReason : lockReason) || "").trim(),
+
+    lockTargetTime: isDirectUnlock ? null : Number(lockTargetTime),
+    lockTargetTimeStr: isDirectUnlock ? null : String(lockTargetTimeStr),
+    lockReason: isDirectUnlock ? "" : String(lockReason || "").trim(),
+
+    // Data Auto-Unlock (jika ada pembatas |)
+    hasAutoUnlock: hasAutoUnlock,
+    unlockTargetTime: hasAutoUnlock ? Number(options.unlockTargetTime) : null,
+    unlockTargetTimeStr: hasAutoUnlock ? String(options.unlockTargetTimeStr) : null,
+    unlockReason: hasAutoUnlock ? String(options.unlockReason || "").trim() : ""
   }
 
   botLock.schedules[cleanId] = scheduleData
@@ -356,19 +387,20 @@ export const setGroupScheduleLock = (chat, name, targetTime, targetTimeStr, reas
 }
 
 /**
- * Batalkan jadwal kunci otomatis pada grup tertentu
+ * Batalkan jadwal kunci / buka otomatis pada grup tertentu
  */
 export const cancelGroupScheduleLock = (chat) => {
   const cleanId = cleanJid(chat)
   if (!cleanId || !botLock.schedules?.[cleanId]) return false
 
   delete botLock.schedules[cleanId]
+  _executingScheduleMap.delete(cleanId)
   saveLockStorage()
   return true
 }
 
 /**
- * Dapatkan data jadwal kunci grup
+ * Dapatkan data jadwal kunci / buka grup
  */
 export const getGroupScheduleLock = (chat) => {
   const cleanId = cleanJid(chat)
@@ -376,51 +408,125 @@ export const getGroupScheduleLock = (chat) => {
 }
 
 /**
- * Periksa dan eksekusi jadwal kunci otomatis yang telah tiba waktunya
- * Mengirimkan pesan pemberitahuan resmi ke grup yang bersangkutan lalu mengunci grup.
+ * Eksekusi satu jadwal grup secara terisolasi (Independent Lane)
  */
-export const checkAndExecuteScheduleLocks = async (conn) => {
-  if (!conn || !botLock.schedules || typeof botLock.schedules !== "object") return
+async function processSingleGroupSchedule(conn, cleanId, item, now) {
+  if (!item || !item.targetTime) return
+  if (_executingScheduleMap.has(cleanId)) return
 
-  const now = Date.now()
-  const scheduleKeys = Object.keys(botLock.schedules)
+  // 1. CEK APAKAH SUDAH TIBA WAKTUNYA
+  if (now < item.targetTime) return
 
-  for (const cleanId of scheduleKeys) {
-    const item = botLock.schedules[cleanId]
-    if (!item || !item.targetTime) continue
+  _executingScheduleMap.add(cleanId)
 
-    if (now >= item.targetTime) {
-      // 1. Kunci grup di database
-      const lockedGroup = lockGroup(cleanId, item.name)
-      const groupName = lockedGroup?.name || item.name || "Grup Ini"
-      const timeStr = item.targetTimeStr || "Waktu Terjadwal"
-      const pesanAlasan = item.reason ? item.reason : "Waktu operasional bot telah berakhir."
+  try {
+    const groupName = item.name || botLock.groups?.[cleanId]?.name || "Grup Ini"
+    const currentPhase = item.phase || item.action || 'lock'
 
-      // 2. Kirim pesan pengumuman ke grup yang bersangkutan
-      const notifPesan =
+    if (currentPhase === 'lock') {
+      // === FASE 1: KUNCI GRUP ===
+      const lockedGroup = lockGroup(cleanId, groupName)
+      const timeStr = item.lockTargetTimeStr || item.targetTimeStr || "Waktu Terjadwal"
+      const pesanAlasan = item.lockReason || item.reason || "Waktu operasional bot telah berakhir."
+
+      let notifPesan =
 `╭─❖「 🔒 𝐁𝐎𝐓 𝐃𝐈𝐊𝐔𝐍𝐂𝐈 🌸 」
 │
-├ ⏰ *Waktu:* ${timeStr}
-├ 📝 *Pesan:* ${pesanAlasan}
+├ ⏰ *Waktu Kunci:* ${timeStr}
+├ 📝 *Pesan:* ${pesanAlasan}`;
+
+      if (item.hasAutoUnlock && item.unlockTargetTimeStr) {
+        notifPesan += `\n├ 🔓 *Jadwal Auto-Buka:* ${item.unlockTargetTimeStr}`;
+      }
+
+      notifPesan += `
 ├ 🛡️ *Status:* Bot sekarang terkunci di grup ini.
 │
 ├ 💡 *Catatan:*
-│ • Bot tidak akan merespon perintah member grup.
-│ • Owner dapat membuka kembali dengan *.buka ini*.
-╰─────────────❖`;
+│ • Bot tidak akan merespon perintah member grup.`;
 
-      try {
-        await conn.sendMessage(cleanId, { text: notifPesan })
-      } catch (err) {
-        console.error(`[SCHEDULE LOCK] Gagal mengirim notif ke ${cleanId}:`, err.message)
+      if (item.hasAutoUnlock && item.unlockTargetTimeStr) {
+        notifPesan += `\n│ • Bot akan otomatis dibuka kembali pada pukul *${item.unlockTargetTimeStr}*.`;
+      } else {
+        notifPesan += `\n│ • Owner dapat membuka kembali dengan *.buka ini*.`;
       }
 
-      // 3. Hapus jadwal dari antrean
+      notifPesan += `\n╰─────────────❖`;
+
+      // Kirim notifikasi aman tanpa menahan jalur lain
+      if (conn?.sendMessage) {
+        await conn.sendMessage(cleanId, { text: notifPesan }).catch(err => {
+          console.warn(`[SCHEDULE LOCK] Notice gagal kirim ke ${cleanId}:`, err.message || err)
+        })
+      }
+
+      // Jika ada jadwal auto-unlock kelanjutan, alihkan fase ke 'unlock'
+      if (item.hasAutoUnlock && item.unlockTargetTime) {
+        item.phase = 'unlock'
+        item.action = 'unlock'
+        item.targetTime = item.unlockTargetTime
+        item.targetTimeStr = item.unlockTargetTimeStr
+        item.reason = item.unlockReason || "Waktu istirahat selesai, bot aktif kembali!"
+        item.updatedAt = Date.now()
+        saveLockStorage()
+        console.log(`🔒 [SCHEDULE LOCK EXECUTED] ${groupName} terkunci. Fase beralih menunggu auto-buka pada ${item.unlockTargetTimeStr}`)
+      } else {
+        // Hapus jika tidak ada auto-unlock
+        delete botLock.schedules[cleanId]
+        saveLockStorage()
+        console.log(`🔒 [SCHEDULE LOCK EXECUTED] ${groupName} berhasil dikunci otomatis pada ${timeStr}`)
+      }
+
+    } else if (currentPhase === 'unlock') {
+      // === FASE 2: BUKA GRUP KEMBALI ===
+      unlockGroup(cleanId)
+      const timeStr = item.unlockTargetTimeStr || item.targetTimeStr || "Waktu Terjadwal"
+      const pesanAlasan = item.unlockReason || item.reason || "Waktu istirahat selesai, bot aktif kembali!"
+
+      const notifBuka =
+`╭─❖「 🔓 𝐁𝐎𝐓 𝐃𝐈𝐁𝐔𝐊𝐀 𝐊𝐄𝐌𝐁𝐀𝐋𝐈 🌸 」
+│
+├ ⏰ *Waktu Buka:* ${timeStr}
+├ 📝 *Pesan:* ${pesanAlasan}
+├ 🌐 *Status:* Bot telah aktif dan siap digunakan kembali oleh semua member!
+│
+├ 💡 *Selamat Beraktivitas!*
+╰─────────────❖`;
+
+      if (conn?.sendMessage) {
+        await conn.sendMessage(cleanId, { text: notifBuka }).catch(err => {
+          console.warn(`[SCHEDULE UNLOCK] Notice gagal kirim ke ${cleanId}:`, err.message || err)
+        })
+      }
+
+      // Hapus jadwal selesai
       delete botLock.schedules[cleanId]
       saveLockStorage()
-      console.log(`🔒 [SCHEDULE LOCK EXECUTED] ${groupName} (${cleanId}) berhasil dikunci otomatis pada ${timeStr}`)
+      console.log(`🔓 [SCHEDULE UNLOCK EXECUTED] ${groupName} berhasil dibuka otomatis pada ${timeStr}`)
     }
+
+  } catch (err) {
+    console.error(`[SCHEDULE LANE ERROR] ${cleanId}:`, err?.message || err)
+  } finally {
+    _executingScheduleMap.delete(cleanId)
   }
+}
+
+/**
+ * Periksa dan eksekusi jadwal kunci & auto-unlock otomatis
+ * Dilengkapi pengaman recovery bot crash / macet dan isolasi non-blocking antar grup.
+ */
+export const checkAndExecuteScheduleLocks = async (conn) => {
+  if (!botLock.schedules || typeof botLock.schedules !== "object") return
+
+  const now = Date.now()
+  const scheduleEntries = Object.entries(botLock.schedules)
+  if (scheduleEntries.length === 0) return
+
+  // Jalankan semua grup secara paralel non-blocking (Independent Lanes)
+  await Promise.allSettled(
+    scheduleEntries.map(([cleanId, item]) => processSingleGroupSchedule(conn, cleanId, item, now))
+  )
 }
 
 // Background scheduler interval runner
@@ -430,12 +536,19 @@ let _activeConn = null
 export const initScheduleLockTimer = (conn) => {
   if (conn) _activeConn = conn
   if (_scheduleTimer) return
+
+  // Watchdog & Scheduler Interval (1.5 detik per-tick, ringan & instan)
   _scheduleTimer = setInterval(() => {
     if (_activeConn) {
       checkAndExecuteScheduleLocks(_activeConn).catch(e => {
-        console.error("[SCHEDULE LOCK CHECK ERROR]:", e.message)
+        console.error("[SCHEDULE LOCK CHECK ERROR]:", e.message || e)
       })
     }
   }, 1500)
+
+  // Recovery run langsung saat inisialisasi
+  if (_activeConn) {
+    checkAndExecuteScheduleLocks(_activeConn).catch(() => {})
+  }
 }
 

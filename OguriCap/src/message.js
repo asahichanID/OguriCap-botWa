@@ -24,11 +24,12 @@ import { acquireCommandSlot } from './guard.js';
 import { hasAnyActiveGame } from '../lib/gameSessionManager.js';
 import { installOutgoingGuard, isBotSentMessage, recordSentBotMessage } from './botGuard.js';
 import { checkAndHandleBannedSticker } from '../plugins/bansticker.js';
+import { hasStickerPackSession } from '../plugins/stickerpack.js';
 import { runHeavyTask } from './heavyEngine.js';
 import { createSticker } from '../lib/sticker/sticker.js';
 import { imageToWebp, videoToWebp, writeExif, gifToWebp } from '../lib/exif.js';
 import { getBuffer, getSizeMedia, fetchJson, sleep, axiosss, fixBytes } from '../lib/function.js';
-import { jidNormalizedUser, proto, getBinaryNodeChildren, getBinaryNodeChildString, getBinaryNodeChild, generateMessageIDV2, jidEncode, encodeSignedDeviceIdentity, generateWAMessageContent, generateForwardMessageContent, prepareWAMessageMedia, delay, areJidsSameUser, extractMessageContent, generateMessageID, downloadContentFromMessage, generateWAMessageFromContent, jidDecode, generateWAMessage, toBuffer, getContentType, getDevice } from 'baileys';
+import { jidNormalizedUser, proto, getBinaryNodeChildren, getBinaryNodeChildString, getBinaryNodeChild, generateMessageIDV2, jidEncode, encodeSignedDeviceIdentity, generateWAMessageContent, generateForwardMessageContent, prepareWAMessageMedia, delay, areJidsSameUser, extractMessageContent, generateMessageID, downloadContentFromMessage, generateWAMessageFromContent, jidDecode, generateWAMessage, toBuffer, getContentType, getDevice, normalizeMessageContent } from 'baileys';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -644,7 +645,8 @@ async function MessagesUpsert(naze, message, store) {
 			const remoteJid = msg.key?.remoteJid;
 			const hasActiveMath = Boolean(global.__oguriMathSessionManager?.hasSession(remoteJid));
 			const hasActiveGameSession = Boolean(hasAnyActiveGame(remoteJid));
-			if (!hasActiveMath && !hasActiveGameSession && msg.key?.fromMe && (
+			const hasActiveStickerPack = Boolean(hasStickerPackSession(remoteJid, msg.key?.participant || remoteJid, msg));
+			if (!hasActiveMath && !hasActiveGameSession && !hasActiveStickerPack && msg.key?.fromMe && (
 				msg.key.id?.startsWith('3EB0') ||
 				msg.key.id?.includes('STARFALL') ||
 				msg.key.id?.startsWith('BAE5') ||
@@ -1145,32 +1147,40 @@ async function Solving(naze, store) {
 	}
 	
 	naze.downloadMediaMessage = async (message) => {
-		const msg = message.msg || message;
+		let msg = message.msg || message;
+		// Jika msg masih membungkus inner message (misal { imageMessage: { ... } })
+		if (msg && typeof msg === 'object') {
+			const subKey = Object.keys(msg).find(k => k.endsWith('Message'));
+			if (subKey && msg[subKey]?.mediaKey) {
+				msg = msg[subKey];
+			}
+		}
 		msg.mediaKey = fixBytes(msg.mediaKey);
 		msg.fileSha256 = fixBytes(msg.fileSha256);
 		msg.fileEncSha256 = fixBytes(msg.fileEncSha256);
-		const mime = msg.mimetype || '';
+		const mime = msg.mimetype || message.mime || '';
+
 		let messageType = (message.type || '').replace(/Message/gi, '');
-		if (!messageType || messageType === 'image') {
-			if (/webp/i.test(mime)) {
-				messageType = 'sticker';
-			} else if (mime.startsWith('video/')) {
-				messageType = 'video';
-			} else if (mime.startsWith('audio/')) {
-				messageType = 'audio';
-			} else if (mime.startsWith('image/')) {
-				messageType = 'image';
-			}
+		if (/webp/i.test(mime) || messageType === 'sticker') {
+			messageType = 'sticker';
+		} else if (mime.startsWith('video/') || messageType === 'video') {
+			messageType = 'video';
+		} else if (mime.startsWith('audio/') || messageType === 'audio') {
+			messageType = 'audio';
+		} else if (mime.startsWith('image/') || messageType === 'image') {
+			messageType = 'image';
+		} else if (messageType === 'document' || messageType === 'documentWithCaption' || mime) {
+			messageType = 'document';
+		} else {
+			messageType = 'image';
 		}
-		if (messageType === 'viewOnce') {
-			messageType = mime.startsWith('video') ? 'video' : 'image';
-		}
-		const stream = await downloadContentFromMessage(msg, messageType || 'image');
+
+		const stream = await downloadContentFromMessage(msg, messageType);
 		let buffer = Buffer.from([]);
 		for await (const chunk of stream) {
 			buffer = Buffer.concat([buffer, chunk]);
 		}
-		return buffer
+		return buffer;
 	}
 	
 	naze.downloadAndSaveMediaMessage = async (message, filename, attachExtension = true) => {
@@ -1640,8 +1650,16 @@ async function Serialize(naze, msg, store) {
 		}
 	}
 	if (m.message) {
-		m.type = getContentType(m.message) || Object.keys(m.message)[0]
-		m.msg = (/viewOnceMessage|viewOnceMessageV2Extension|editedMessage|ephemeralMessage/i.test(m.type) ? m.message[m.type].message[getContentType(m.message[m.type].message)] : (extractMessageContent(m.message[m.type]) || m.message[m.type]))
+		const normalizedContent = normalizeMessageContent(m.message) || m.message;
+		m.type = getContentType(normalizedContent) || getContentType(m.message) || Object.keys(m.message)[0];
+		m.msg = normalizedContent[m.type] || (/viewOnceMessage|viewOnceMessageV2|viewOnceMessageV2Extension|editedMessage|ephemeralMessage/i.test(m.type) ? m.message[m.type]?.message?.[getContentType(m.message[m.type]?.message)] : (extractMessageContent(m.message[m.type]) || m.message[m.type])) || m.message[m.type] || normalizedContent;
+		if (m.msg && typeof m.msg === 'object') {
+			const subKey = Object.keys(m.msg).find(k => k.endsWith('Message'));
+			if (subKey && m.msg[subKey]?.mimetype) {
+				m.type = subKey;
+				m.msg = m.msg[subKey];
+			}
+		}
 		let interactiveId = ''
 		try {
 			const nativeRes = m.msg?.interactiveResponseMessage?.nativeFlowResponseMessage

@@ -42,6 +42,7 @@ import { assertInstalled, customHttpsAgent } from './lib/function.js';
 import { GroupParticipantsUpdate, MessagesUpsert, Solving } from './src/message.js';
 import { getSentBotMessage } from './src/botGuard.js';
 import { startSholatScheduler } from './lib/sholat.js';
+import { initScheduleLockTimer } from './group/kunci.js';
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -597,6 +598,11 @@ async function startNazeBot() {
 			if (global.db?.set[botNumber] && !global.db?.set[botNumber]?.join) {
 				// [BAN PROTECTION] Auto-follow saluran dinonaktifkan secara permanen untuk mencegah ban WhatsApp
 				db.set[botNumber].join = true;
+			}
+			try {
+				initScheduleLockTimer(naze);
+			} catch (eLock) {
+				console.warn('⚠️ [LOCK SCHEDULER] Init error:', eLock?.message || eLock);
 			}
 		}
 		if (qr) {

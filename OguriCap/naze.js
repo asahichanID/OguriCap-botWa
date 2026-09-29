@@ -149,6 +149,7 @@ import { tampilkanBukaGrup, prosesTombolBuka } from "./group/bukagrup.js"
 import { handleKuncibot } from "./group/kuncibot.js"
 import { isLocked, initScheduleLockTimer } from './group/kunci.js';
 import { handleTandai, handleHapusTandai, handleListTandai, checkTandaiOnMessage, isUserMarked } from './plugins/tandai.js';
+import { handleStickerPackCommand, handleStickerPackIncoming, hasStickerPackSession } from './plugins/stickerpack.js';
 import { absoluteGuard, GUARD_CONFIG } from './src/guard.js'
 import { getKhodam, buildKhodamText } from './game/khodamData.js'
 import { cekRandomHandler } from './random/cekrandom.js'
@@ -282,8 +283,9 @@ const naze = async (naze, m, msg, store) => {
 			m.sender === naze.decodeJid(naze.user?.lid || '')
 		);
 		const hasActiveMath = Boolean(mathSessionManager?.hasSession(m.chat));
+		const hasActiveStickerPack = Boolean(hasStickerPackSession(m.chat, m.sender, m));
 		// 🛡️ BOT ISOLATION: Abaikan pesan dari bot lain (mencegah loop antar bot & anti-spam trigger)
-		if (!isCreator && !hasActiveMath && isSenderBot) {
+		if (!isCreator && !hasActiveMath && !hasActiveStickerPack && isSenderBot) {
 			return;
 		}
 
@@ -323,8 +325,8 @@ const naze = async (naze, m, msg, store) => {
 		const isItsukiInteraction = isItsukiTrigger(body || budy || m.text) || isReplyToItsuki(m, db);
 		const hasActiveGameSession = Boolean(hasAnyActiveGame(m.chat));
 
-		// Jika pesan dari akun bot sendiri (fromMe) tapi bukan command ber-prefix resmi, eval owner, tombol kunci, kuis math, game aktif, atau interaksi Mahiru AI / Itsuki AI, buang
-		if (!hasActiveMath && !hasActiveGameSession && m.key.fromMe && !isCmd && !isOwnerEval && !isLockAction && !isMahiruInteraction && !isItsukiInteraction) {
+		// Jika pesan dari akun bot sendiri (fromMe) tapi bukan command ber-prefix resmi, eval owner, tombol kunci, kuis math, game aktif, interaksi Mahiru AI / Itsuki AI, atau sesi sticker pack aktif, buang
+		if (!hasActiveMath && !hasActiveGameSession && !hasActiveStickerPack && m.key.fromMe && !isCmd && !isOwnerEval && !isLockAction && !isMahiruInteraction && !isItsukiInteraction) {
 			return;
 		}
 		
@@ -540,7 +542,17 @@ const naze = async (naze, m, msg, store) => {
 		
 		// Auto Read & Console Log Activity
 		// Hanya log pesan jika memiliki konten teks / media yang nyata (bukan undefined / handshake internal / stub)
-		const messagePreview = (budy || m.text || m.body || (m.isMedia ? `[Media: ${m.type}]` : '')).trim();
+		const isImgMsg = Boolean(
+			m.type === 'imageMessage' ||
+			m.msg?.mimetype?.startsWith('image/') ||
+			m.mime?.startsWith('image/') ||
+			m.message?.imageMessage
+		);
+		const messagePreview = (
+			isImgMsg
+				? (budy || m.text || m.body ? `📷 [FOTO]: ${budy || m.text || m.body}` : '📷 [FOTO]: (Tanpa Caption)')
+				: (budy || m.text || m.body || (m.isMedia ? `[Media: ${m.type}]` : ''))
+		).trim();
 		const isInternalProtocol = [
 			'senderKeyDistributionMessage',
 			'protocolMessage',
@@ -586,7 +598,7 @@ const naze = async (naze, m, msg, store) => {
 				cmdAddHit(db.hit, command);
 			}
 			// 🛡️ BOT-GUARD: Smart Anti-Spam & Auto-Freeze (selalu aktif dan tidak ter-trigger oleh bot lain)
-			if (set.antispam !== false) {
+			if (set.antispam !== false && !hasActiveStickerPack) {
 				const spamCheck = antiSpam.check(m.sender, isCreator, isSenderBot);
 				if (!spamCheck.allowed) {
 					console.log(chalk.bgRed('[ SPAM BLOCKED ] : '), chalk.black(chalk.bgHex('#1CFFF7')(`From -> ${m.sender}`), chalk.bgHex('#E015FF')(` In ${m.isGroup ? m.chat : 'Private Chat'}`)));
@@ -781,6 +793,12 @@ const naze = async (naze, m, msg, store) => {
 		if (mathSessionManager.hasSession(m.chat)) {
 			const mathHandled = await handleMathAnswer(naze, m, budy, body, db);
 			if (mathHandled) return;
+		}
+
+		// 📦 Sticker Pack Session Handler (Multi-Photo -> Official WA Pack)
+		if (hasActiveStickerPack || hasStickerPackSession(m.chat, m.sender, m)) {
+			const spHandled = await handleStickerPackIncoming(naze, m);
+			if (spHandled) return;
 		}
 
 		// ============================================================
@@ -4204,6 +4222,19 @@ Select Bot Settings:
 					m.react('⏳')
 					await naze.sendAsSticker(m.chat, media, m, { packname: teks1, author: teks2 })
 				} else m.reply(`Kirim/reply gambar/video/gif dengan caption ${prefix + command}\nDurasi Video/Gif 1-9 Detik`)
+			}
+			break
+			case 'sp':
+			case 'stcp':
+			case 'stickerpack': {
+				await handleStickerPackCommand(naze, m, args);
+			}
+			break
+			case 'konfirmasi':
+			case 'confirm': {
+				if (hasActiveStickerPack || hasStickerPackSession(m.chat, m.sender, m)) {
+					await handleStickerPackIncoming(naze, m);
+				}
 			}
 			break
 			case 'smeme': case 'stickmeme': case 'stikmeme': case 'stickermeme': case 'stikermeme': {
