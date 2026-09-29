@@ -939,15 +939,20 @@ export const unduhSpotify = async (conn, m, urlLagu) => {
         coverUrl = coverUrl.replace('ab67616d0000b273', 'ab67616d00001e02')
       }
 
-      // Ambil lirik & unduh cover image buffer secara paralel
-      const [lyricsData, coverBuffer] = await Promise.all([
+      // Ambil lirik (max 2000ms non-blocking) & unduh cover image buffer secara paralel
+      const fetchLyricsFast = Promise.race([
         apiSpotifyLyrics(meta.title, meta.artist, `${meta.title} ${meta.artist}`),
+        new Promise(resolve => setTimeout(() => resolve({ hasLyrics: false, lyrics: null }), 2000))
+      ]).catch(() => ({ hasLyrics: false, lyrics: null }))
+
+      const [lyricsData, coverBuffer] = await Promise.all([
+        fetchLyricsFast,
         (async () => {
           try {
             if (coverUrl && coverUrl.startsWith('http')) {
               const imgRes = await axios.get(coverUrl, {
                 responseType: 'arraybuffer',
-                timeout: 2500,
+                timeout: 2000,
                 headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
               })
               if (imgRes.data && imgRes.data.length > 0) {
@@ -968,8 +973,19 @@ export const unduhSpotify = async (conn, m, urlLagu) => {
 
     const audioPromise = (async () => {
       const stream = await apiSpotifyScrapAudio(urlLagu)
-      const filename = stream.filename || 'spotify_track.mp3'
-      const audioData = await convertToMp3(stream.download || stream.url, filename)
+      const filename = stream.filename || `${stream.title || 'track'} - ${stream.artist || 'audio'}.mp3`
+      let audioData = null
+      try {
+        const directAudioUrl = stream.download || stream.url
+        if (directAudioUrl) {
+          audioData = await convertToMp3(directAudioUrl, filename).catch(err => {
+            console.warn('⚠️ Fast convertToMp3 fallback to direct url stream:', err?.message || err)
+            return null
+          })
+        }
+      } catch (eConv) {
+        console.warn('⚠️ Audio processing fallback:', eConv?.message || eConv)
+      }
       return { stream, audioData }
     })()
 

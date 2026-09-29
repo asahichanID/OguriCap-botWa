@@ -148,6 +148,7 @@ import { tampilkanKunciGrup, prosesTombolKunci } from "./group/kuncigrup.js"
 import { tampilkanBukaGrup, prosesTombolBuka } from "./group/bukagrup.js"
 import { handleKuncibot } from "./group/kuncibot.js"
 import { isLocked, initScheduleLockTimer } from './group/kunci.js';
+import { handleTandai, handleHapusTandai, handleListTandai, checkTandaiOnMessage, isUserMarked } from './plugins/tandai.js';
 import { absoluteGuard, GUARD_CONFIG } from './src/guard.js'
 import { getKhodam, buildKhodamText } from './game/khodamData.js'
 import { cekRandomHandler } from './random/cekrandom.js'
@@ -532,6 +533,8 @@ const naze = async (naze, m, msg, store) => {
 			if (m.isGroup) {
 				const isBannedHandled = await checkAndHandleBannedSticker({ naze, m });
 				if (isBannedHandled) return;
+				const groupMeta = store?.groupMetadata?.[m.chat] || m.metadata || (store ? (store.groupMetadata[m.chat] = await naze.groupMetadata(m.chat).catch(() => null)) : null);
+				await checkTandaiOnMessage(naze, m, groupMeta);
 			}
 			
 		
@@ -2487,6 +2490,37 @@ break
 				m.reply(`⭐ *Itsuki Nakano AI (The Quintessential Quintuplets) — Status Grup*\n\nStatus : ${status}\nOwner  : *Shiro-sama*\n\n*Perintah Pengaturan (Khusus Owner):*\n• ${prefix}itsuki on — Aktifkan interaksi di grup\n• ${prefix}itsuki off — Nonaktifkan interaksi di grup\n\n*Perintah Pengguna:*\n• ${prefix}itsuki clearmemory — Hapus ingatan obrolanmu\n• ${prefix}itsuki <pesan> — Tanya langsung ke Itsuki\n\n*Menu Khusus Shiro-sama (Owner):*\n• ${prefix}itsuki setrelasi @user pacar — Izinkan relasi pacar\n• ${prefix}itsuki delrelasi @user — Cabut relasi\n• ${prefix}itsuki listrelasi — Lihat daftar relasi\n\n_100% Free AI Scrape • Otentik Karakter Anime_ ⭐🥟✨`)
 			}
 			break
+			case 'tandai':
+			case 'mark': {
+				const groupMeta = store?.groupMetadata?.[m.chat] || m.metadata || (store ? (store.groupMetadata[m.chat] = await naze.groupMetadata(m.chat).catch(() => null)) : null);
+				await handleTandai(naze, m, args, {
+					isCreator,
+					isPremium,
+					isAdmins: Boolean(m.isAdmin),
+					groupMetadata: groupMeta
+				});
+			}
+			break
+
+			case 'untandai':
+			case 'deltandai':
+			case 'hapustandai':
+			case 'unmark': {
+				await handleHapusTandai(naze, m, args, {
+					isCreator,
+					isPremium,
+					isAdmins: Boolean(m.isAdmin)
+				});
+			}
+			break
+
+			case 'listtandai':
+			case 'tandailist':
+			case 'daftartandai': {
+				await handleListTandai(naze, m);
+			}
+			break
+
 			case 'group': case 'grup': case 'gc': {
 				if (!m.isGroup) return m.reply(global.mess.group)
 				if (!m.isAdmin) return m.reply(global.mess.admin)
@@ -3262,6 +3296,10 @@ ${sisaLimit <= 0 ? '❌ Energimu (limit) habis untuk hari ini.\nLimit akan otoma
 			}
 			break
 			case 'settag': {
+				if (isUserMarked(m.sender, m.chat)) {
+					// User sedang kena tandai - bot diam tidak membalas apa pun
+					return;
+				}
 				if (!text || !text.trim()) {
 					return m.reply(`🏷️ *Format Penggunaan:*\n\nContoh: *${prefix}settag RAJA IBLIS*\n_Tag gelar khusus profil kamu (maksimal 25 karakter)._`);
 				}

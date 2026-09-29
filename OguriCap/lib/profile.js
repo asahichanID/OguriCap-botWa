@@ -1,4 +1,5 @@
 import { getLevelInfo } from './xpGlobal.js';
+import { getUserTandaiInfo, detectCategory } from '../plugins/tandai.js';
 
 // Kumpulan quote pendek/random bertema Oguri Cap (natural/slang, pakai aku/kamu)
 const OGURI_QUOTES = [
@@ -134,8 +135,41 @@ export const profile = async (
     // 3. Keterangan (.setket / .setketerangan)
     const ketDisplay = infoUser.keterangan || infoUser.bio || 'Belum diatur (.setket)';
 
-    // 4. Tag (.settag)
-    const tagDisplay = infoUser.tagTitle ? `[ ${infoUser.tagTitle} ]` : 'Belum diatur (.settag)';
+    // 4. Tag (.settag) & Tandai Status Overrides
+    const tandaiInfo = getUserTandaiInfo(target, m.isGroup ? m.chat : null);
+    let tagDisplay = infoUser.tagTitle ? `[ ${infoUser.tagTitle} ]` : 'Belum diatur (.settag)';
+    let tandaiSection = '';
+    const mentionList = [target];
+
+    if (tandaiInfo) {
+      tagDisplay = `[ ${tandaiInfo.label} ] (🔒 TERKUNCI)`;
+      const cat = detectCategory(tandaiInfo.label);
+      const markerNum = (tandaiInfo.markedBy || '').split('@')[0];
+      if (tandaiInfo.markedBy) mentionList.push(tandaiInfo.markedBy);
+
+      if (cat === 'femboy') {
+        tandaiSection = `
+├───❖「 💅 𝗦𝗧𝗔𝗧𝗨𝗦 𝗞𝗛𝗨𝗦𝗨𝗦: 𝗙𝗘𝗠𝗕𝗢𝗬 ✨ 」
+│ ⚠️ *Peringatan:* User ini resmi ditandai sebagai *${tandaiInfo.label}*!
+│ 🌸 *Tag Khusus:* Terkunci otomatis oleh komando penandaan.
+│ 👮 *Ditandai Oleh:* @${markerNum}
+│ 👀 Harap perhatikan tingkah lakunya di grup!`;
+      } else if (cat === 'jomok') {
+        tandaiSection = `
+├───❖「 💀 𝗦𝗧𝗔𝗧𝗨𝗦 𝗕𝗔𝗛𝗔𝗬𝗔: 𝗝𝗢𝗠𝗢𝗞 ☠️ 」
+│ ☠️ *Siaga Satu:* User ini resmi ditandai sebagai *${tandaiInfo.label}*!
+│ 🔒 *Tag Khusus:* Terkunci total & masuk radar waspada.
+│ 👮 *Ditandai Oleh:* @${markerNum}
+│ 🛡️ Waspada shaf belakang dan amankan posisi!`;
+      } else {
+        tandaiSection = `
+├───❖「 🎯 𝗦𝗧𝗔𝗧𝗨𝗦 𝗞𝗛𝗨𝗦𝗨𝗦: 𝐓𝐀𝐑𝐆𝐄𝐓 📌 」
+│ 📌 *Perhatian:* User ini resmi masuk daftar *${tandaiInfo.label}*!
+│ 🔒 *Tag Khusus:* Terkunci sementara oleh instruksi grup.
+│ 👮 *Ditandai Oleh:* @${markerNum}
+│ 📢 Tetap pantau gerak-gerik target di grup!`;
+      }
+    }
 
     // 5. XP Global & Level
     const levelInfo = getLevelInfo(infoUser.exp || 0);
@@ -159,7 +193,7 @@ export const profile = async (
 │ 🏷️ *Tag Khusus* : ${tagDisplay}
 │ 🎂 *Umur*       : ${ageDisplay}
 │ 📝 *Keterangan* : ${ketDisplay}
-│ 🎖️ *Status*     : ${role}
+│ 🎖️ *Status*     : ${role}${tandaiSection}
 │
 ├───❖「 📊 𝗦𝗧𝗔𝗧𝗨𝗦 & 𝗚𝗔𝗠𝗘 」
 │
@@ -193,13 +227,13 @@ export const profile = async (
       return await naze.sendMessage(m.chat, {
         image: { url: ppUrl },
         caption,
-        mentions: [target]
+        mentions: Array.from(new Set(mentionList))
       }, { quoted: m });
     }
 
     return await naze.sendMessage(m.chat, {
       text: caption,
-      mentions: [target]
+      mentions: Array.from(new Set(mentionList))
     }, { quoted: m });
   } catch (err) {
     console.error('[PROFILE]', err);

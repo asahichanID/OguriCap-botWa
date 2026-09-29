@@ -1,3 +1,4 @@
+import moment from "moment-timezone"
 import {
   setGroupScheduleLock,
   cancelGroupScheduleLock,
@@ -6,17 +7,20 @@ import {
   initScheduleLockTimer
 } from "./kunci.js"
 
+const TIMEZONE = "Asia/Jakarta" // Zona Waktu Jawa Barat / WIB (UTC+7)
+
 /**
- * Format durasi sisa waktu menjadi teks human-readable
+ * Format durasi sisa waktu menjadi teks human-readable presisi
  * @param {number} ms 
  * @returns {string}
  */
 function formatCountdown(ms) {
   if (ms <= 0) return "Sebentar lagi"
-  const seconds = Math.floor((ms / 1000) % 60)
-  const minutes = Math.floor((ms / (1000 * 60)) % 60)
-  const hours = Math.floor((ms / (1000 * 60 * 60)) % 24)
-  const days = Math.floor(ms / (1000 * 60 * 60 * 24))
+  const totalSeconds = Math.floor(ms / 1000)
+  const seconds = totalSeconds % 60
+  const minutes = Math.floor((totalSeconds / 60) % 60)
+  const hours = Math.floor((totalSeconds / 3600) % 24)
+  const days = Math.floor(totalSeconds / 86400)
 
   const parts = []
   if (days > 0) parts.push(`${days} hari`)
@@ -27,7 +31,7 @@ function formatCountdown(ms) {
 }
 
 /**
- * Parsing waktu dari input pengguna (format jam "22.00", "22:00", atau durasi "30m", "1h")
+ * Parsing waktu dari input pengguna persis zona waktu Jawa Barat / WIB (Asia/Jakarta)
  * @param {string} timeStr 
  * @param {string} timezone 
  * @returns {{ targetMs: number, label: string } | null}
@@ -36,7 +40,7 @@ function parseTargetTime(timeStr, timezone = "Asia/Jakarta") {
   if (!timeStr) return null
   const cleaned = timeStr.trim().toLowerCase()
 
-  // 1. Format Durasi Relatif (misal: 30m, 1h, 2j, 45menit)
+  // 1. Format Durasi Relatif (misal: 10s, 30m, 1h, 2j, 45menit)
   const durMatch = cleaned.match(/^(\d+)\s*(s|detik|m|menit|h|jam|j|d|hari)$/i)
   if (durMatch) {
     const val = parseInt(durMatch[1], 10)
@@ -48,16 +52,14 @@ function parseTargetTime(timeStr, timezone = "Asia/Jakarta") {
     else if (unit === "d" || unit === "hari") multiplier = 24 * 60 * 60 * 1000
 
     const targetMs = Date.now() + (val * multiplier)
-    const targetDate = new Date(targetMs)
-    const hours = String(targetDate.getHours()).padStart(2, '0')
-    const mins = String(targetDate.getMinutes()).padStart(2, '0')
+    const targetMoment = moment(targetMs).tz(timezone)
     return {
       targetMs,
-      label: `${hours}:${mins} WIB (dalam ${val} ${unit})`
+      label: `${targetMoment.format('HH:mm')} WIB (dalam ${val} ${unit})`
     }
   }
 
-  // 2. Format Jam Spesifik (misal: 22.00, 22:00, 07.30, 23)
+  // 2. Format Jam Spesifik WIB (misal: 22.00, 22:00, 22.10, 07.30, 23)
   const timeMatch = cleaned.match(/^(\d{1,2})(?:[:.](\d{1,2}))?$/)
   if (timeMatch) {
     const targetHour = parseInt(timeMatch[1], 10)
@@ -67,19 +69,23 @@ function parseTargetTime(timeStr, timezone = "Asia/Jakarta") {
       return null
     }
 
-    const now = new Date()
-    const target = new Date(now)
-    target.setHours(targetHour, targetMin, 0, 0)
+    // Ambil waktu saat ini tepat di zona WIB (Asia/Jakarta / Jawa Barat)
+    const nowWib = moment().tz(timezone)
 
-    // Jika waktu target hari ini sudah lewat, jadwalkan untuk besok
-    if (target.getTime() <= now.getTime()) {
-      target.setDate(target.getDate() + 1)
+    // Buat target hari ini di zona WIB
+    const targetWib = nowWib.clone().hour(targetHour).minute(targetMin).second(0).millisecond(0)
+
+    // Jika waktu target hari ini sudah lewat (misal sekarang 22:20 dan user set 22:10), jadwalkan untuk besok
+    if (targetWib.valueOf() <= nowWib.valueOf()) {
+      targetWib.add(1, 'day')
     }
 
+    const targetMs = targetWib.valueOf()
     const labelHour = String(targetHour).padStart(2, '0')
     const labelMin = String(targetMin).padStart(2, '0')
+
     return {
-      targetMs: target.getTime(),
+      targetMs,
       label: `${labelHour}:${labelMin} WIB`
     }
   }
@@ -97,7 +103,7 @@ export async function handleKuncibot(conn, m, args = []) {
       return m.reply("❌ Perintah *.kuncibot* hanya bisa digunakan di dalam grup yang ingin dikunci.")
     }
 
-    // Pastikan background timer scheduler aktif
+    // Pastikan background timer scheduler aktif dengan socket fresh
     initScheduleLockTimer(conn)
 
     const rawFirst = (args[0] || "").toLowerCase().trim()
@@ -145,9 +151,11 @@ export async function handleKuncibot(conn, m, args = []) {
         return conn.sendMessage(m.chat, { text: pesanStatus }, { quoted: m })
       }
 
+      const nowWibStr = moment().tz(TIMEZONE).format('HH:mm')
       const panduanTeks =
 `╭─❖「 ⏱️ 𝐊𝐔𝐍𝐂𝐈 𝐁𝐎𝐓 𝐎𝐓𝐎𝐌𝐀𝐓𝐈𝐒 🌸 」
 │
+├ 🕒 *Jam Sekarang (WIB):* *${nowWibStr} WIB*
 ├ 💡 *Format Perintah:*
 │ • *.kuncibot <waktu> [pesan]*
 │
@@ -155,11 +163,11 @@ export async function handleKuncibot(conn, m, args = []) {
 │ • *.kuncibot 22.00*
 │ • *.kuncibot 22.00 tidur besok main lagi*
 │ • *.kuncibot 23:30 istirahat malam*
+│ • *.kuncibot 10m* (10 menit lagi)
 │ • *.kuncibot 1h* (1 jam dari sekarang)
-│ • *.kuncibot 30m istirahat dulu*
 │ • *.kuncibot batal* (batalkan jadwal)
 │
-├ 🛡️ *Fitur:*
+├ 🛡️ *Fitur Presisi:*
 │ Saat jam yang ditentukan tiba, bot otomatis mengirim pesan
 │ pemberitahuan ke grup ini dan langsung terkunci.
 ╰─────────────❖`
@@ -167,7 +175,7 @@ export async function handleKuncibot(conn, m, args = []) {
     }
 
     // 3. PARSING WAKTU & PESAN
-    const parsed = parseTargetTime(rawFirst, global.timezone || "Asia/Jakarta")
+    const parsed = parseTargetTime(rawFirst, TIMEZONE)
     if (!parsed) {
       return m.reply(
 `❌ Format waktu tidak valid!
@@ -175,8 +183,8 @@ export async function handleKuncibot(conn, m, args = []) {
 Contoh yang benar:
 • *.kuncibot 22.00*
 • *.kuncibot 22:00 tidur besok main lagi*
-• *.kuncibot 1h* (1 jam dari sekarang)
-• *.kuncibot 30m istirahat dulu*`
+• *.kuncibot 10m* (10 menit lagi)
+• *.kuncibot 1h* (1 jam dari sekarang)`
       )
     }
 

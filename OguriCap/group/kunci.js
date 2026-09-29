@@ -425,12 +425,17 @@ export const checkAndExecuteScheduleLocks = async (conn) => {
 
 // Background scheduler interval runner
 let _scheduleTimer = null
+let _activeConn = null
+
 export const initScheduleLockTimer = (conn) => {
+  if (conn) _activeConn = conn
   if (_scheduleTimer) return
   _scheduleTimer = setInterval(() => {
-    checkAndExecuteScheduleLocks(conn).catch(e => {
-      console.error("[SCHEDULE LOCK CHECK ERROR]:", e.message)
-    })
-  }, 10000)
+    if (_activeConn) {
+      checkAndExecuteScheduleLocks(_activeConn).catch(e => {
+        console.error("[SCHEDULE LOCK CHECK ERROR]:", e.message)
+      })
+    }
+  }, 1500)
 }
 
