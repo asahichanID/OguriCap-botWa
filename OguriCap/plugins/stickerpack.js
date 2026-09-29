@@ -4,7 +4,7 @@
  * Fitur Pembuat Sticker Pack Resmi WhatsApp (Multi-Photo to WA Sticker Pack)
  *
  * Fitur Unggulan:
- *  - Mengumpulkan 2 hingga 15 foto dari pengguna dalam satu sesi interaktif.
+ *  - Mengumpulkan 2 hingga 25 foto dari pengguna dalam satu sesi interaktif.
  *  - Auto-Edit Pesan: Pesan hasil perintah .sp otomatis ter-edit setiap ada
  *    foto baru yang masuk untuk memperbarui jumlah foto terkumpul real-time!
  *  - Konfirmasi Tanpa Reply: Pengguna cukup mengetik "konfirmasi" langsung di chat.
@@ -34,7 +34,7 @@ const activeSessions = new Map();
 const userCooldownMap = new Map();
 
 const MIN_PHOTOS = 2;
-const MAX_PHOTOS = 15;
+const MAX_PHOTOS = 25;
 const SESSION_TIMEOUT_MS = 10 * 60 * 1000; // 10 Menit batas sesi
 
 /**
@@ -141,6 +141,7 @@ export function clearStickerPackSession(chatId, senderJid, m = null) {
   const session = getSession(chatId, senderJid, m);
   if (session) {
     if (session.timeoutTimer) clearTimeout(session.timeoutTimer);
+    if (session.editTimer) clearTimeout(session.editTimer);
     for (const [key, val] of activeSessions.entries()) {
       if (val === session) {
         activeSessions.delete(key);
@@ -176,7 +177,7 @@ function buildCardTeks(session) {
 │
 ├ 📋 *PETUNJUK:*
 │ 1️⃣ Kirim foto satu per satu atau sekaligus (bisa ber-caption/tanpa).
-│ 2️⃣ Pesan ini *otomatis ter-update* setiap foto baru masuk! 🔄
+│ 2️⃣ Total foto dihitung kilat di server & pesan ter-update otomatis! ⚡
 │ 3️⃣ Jika semua foto sudah dikirim, langsung ketik:
 │    👉 *konfirmasi* (tanpa perlu reply)
 │ 4️⃣ Bot akan mengirimkan *Paket Stiker Resmi WhatsApp*
@@ -186,6 +187,39 @@ function buildCardTeks(session) {
 │
 ├ ⏳ *Waktu Sesi:* 10 Menit
 ╰─────────────❖`;
+}
+
+/**
+ * Update kartu pesan .sp secara cerdas & instan (Debounced Batch Update)
+ * Mencegah pengeditan berantai satu per satu saat pengguna mengirim album/kumpulan foto (8, 10, atau 15 foto sekaligus).
+ * Di Pterodactyl, seluruh foto dihitung secepat kilat di background tanpa spam react di WA, lalu pesan langsung di-edit 1x
+ * dengan total angka yang akurat dan bersih tanpa error race-condition.
+ */
+function triggerDebouncedCardUpdate(naze, session, delay = 750) {
+  if (!session || !session.msgKey) return;
+
+  if (session.editTimer) {
+    clearTimeout(session.editTimer);
+    session.editTimer = null;
+  }
+
+  // Jika sudah mencapai batas maksimal (15), eksekusi lebih cepat agar tidak tertunda
+  const effectiveDelay = session.photos.length >= MAX_PHOTOS ? 80 : delay;
+
+  session.editTimer = setTimeout(async () => {
+    session.editTimer = null;
+    if (!session.msgKey) return;
+    try {
+      const updatedCard = buildCardTeks(session);
+      await naze.sendMessage(session.chatId, {
+        text: updatedCard,
+        edit: session.msgKey
+      });
+      console.log(chalk.black.bgGreen(' [STICKERPACK] ') + chalk.whiteBright(` 🔄 Pesan berhasil di-edit otomatis dengan total akurat: ${session.photos.length}/${MAX_PHOTOS} foto`));
+    } catch (errEdit) {
+      console.warn('[STICKERPACK] Gagal meng-edit pesan .sp:', errEdit?.message || errEdit);
+    }
+  }, effectiveDelay);
 }
 
 /**
@@ -293,7 +327,9 @@ export async function handleStickerPackCommand(naze, m, args = []) {
     msgKey: null, // Key pesan hasil .sp untuk diedit otomatis
     createdAt: Date.now(),
     lastActivity: Date.now(),
-    timeoutTimer: null
+    timeoutTimer: null,
+    editTimer: null,
+    warnedMax: false
   };
 
   // Auto-cleanup setelah 10 menit jika idle
@@ -382,6 +418,11 @@ export async function handleStickerPackIncoming(naze, m) {
 
   // 2. OPSI KONFIRMASI DAN PROSES (konfirmasi / confirm / proses dsb) — TANPA PERLU REPLY
   if (isConfirm) {
+    if (session.editTimer) {
+      clearTimeout(session.editTimer);
+      session.editTimer = null;
+    }
+
     const totalPhotos = session.photos.length;
 
     // Validasi Minimal Foto (Minimal 2)
@@ -560,13 +601,17 @@ export async function handleStickerPackIncoming(naze, m) {
   if (isImage) {
     // Cek batas maksimum (15 Foto)
     if (session.photos.length >= MAX_PHOTOS) {
-      await m.reply(
+      if (!session.warnedMax) {
+        session.warnedMax = true;
+        setTimeout(() => { if (session) session.warnedMax = false; }, 4000);
+        await m.reply(
 `╭─❖「 ⚠️ 𝐁𝐀𝐓𝐀𝐒 𝐌𝐀𝐊𝐒𝐈𝐌𝐀𝐋 🌸 」
 │
 ├ 📦 Kuota maksimal *${MAX_PHOTOS} foto* sudah terpenuhi!
-├ 💡 Ketik *konfirmasi* untuk langsung membuat sticker pack.
+├ 💡 Langsung ketik *konfirmasi* untuk membuat sticker pack.
 ╰─────────────❖`
-      );
+        ).catch(() => {});
+      }
       return true;
     }
 
@@ -610,8 +655,8 @@ export async function handleStickerPackIncoming(naze, m) {
         session.photos.push(mediaBuf);
         session.lastActivity = Date.now();
 
-        // LOG KONSOL RESMI AGAR SELALU TERPANTAU DI PTERODACTYL
-        console.log(chalk.black.bgMagenta(' [STICKERPACK] ') + chalk.greenBright(` 📸 Foto #${session.photos.length}/${MAX_PHOTOS} berhasil dibaca & disimpan dari ${session.fromMe ? 'Bot/Owner (Self)' : '@' + session.senderNum} di ${chatId}`));
+        // LOG KONSOL RESMI AGAR SELALU TERPANTAU DI PTERODACTYL DENGAN CEPAT
+        console.log(chalk.black.bgMagenta(' [STICKERPACK] ') + chalk.greenBright(` 📸 Foto #${session.photos.length}/${MAX_PHOTOS} berhasil dihitung di Pterodactyl dari ${session.fromMe ? 'Bot/Owner (Self)' : '@' + session.senderNum}`));
 
         // Refresh timeout timer 10 menit
         if (session.timeoutTimer) clearTimeout(session.timeoutTimer);
@@ -621,31 +666,15 @@ export async function handleStickerPackIncoming(naze, m) {
           }
         }, SESSION_TIMEOUT_MS);
 
-        // 1. React kamera 📸 pada foto yang dikirim
-        try {
-          if (typeof m.react === 'function') {
-            await m.react('📸');
-          } else {
-            await naze.sendMessage(chatId, { react: { text: '📸', key: m.key } }).catch(() => {});
-          }
-        } catch {}
-
-        // 2. Edit pesan .sp awal secara otomatis untuk memperbarui nilai foto terkumpul
-        if (session.msgKey) {
-          const updatedCard = buildCardTeks(session);
-          await naze.sendMessage(chatId, {
-            text: updatedCard,
-            edit: session.msgKey
-          }).catch(errEdit => {
-            console.warn('[STICKERPACK] Gagal meng-edit pesan .sp:', errEdit?.message || errEdit);
-          });
-        }
+        // Jangan pasang react pada foto (cukup di Pterodactyl yang hitung)
+        // Edit kartu pesan secara cerdas (debounced batch) agar tidak berantai satu per satu
+        // dan langsung meng-update total yang akurat
+        triggerDebouncedCardUpdate(naze, session);
 
         return true;
       }
     } catch (errDown) {
       console.warn('[STICKERPACK] Gagal mengunduh foto:', errDown.message);
-      await m.reply('❌ Gagal mengunduh foto yang dikirim. Silakan coba kirim ulang fotonya.');
       return true;
     }
   }
