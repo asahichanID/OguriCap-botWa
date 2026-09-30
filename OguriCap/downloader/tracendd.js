@@ -559,7 +559,7 @@ const photoList = Array.isArray(images)
 • 🔄 Shares: ${formatNumber(shares)}
 • ⭐ Saved: ${formatNumber(saved)}
 
-🎵 *Audio:* Otomatis dikirim bersamaan ✨`
+⚡ *Status:* Media & Audio MP3 otomatis dikirim secepat kilat`
 
     // ==============================================
     // 1. TASK PENGIRIMAN MEDIA (VIDEO / FOTO SLIDE)
@@ -719,7 +719,8 @@ const photoList = Array.isArray(images)
             {
               audio: validAudio.buffer,
               mimetype: 'audio/mpeg',
-              fileName: `${audioTitle}.mp3`
+              fileName: `${audioTitle}.mp3`,
+              ptt: false
             },
             { quoted: m }
           )
@@ -730,7 +731,8 @@ const photoList = Array.isArray(images)
             {
               audio: { url: audioCandidates[0] },
               mimetype: 'audio/mpeg',
-              fileName: `${audioTitle}.mp3`
+              fileName: `${audioTitle}.mp3`,
+              ptt: false
             },
             { quoted: m }
           )

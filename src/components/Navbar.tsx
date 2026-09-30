@@ -4,8 +4,8 @@ import { BotState } from '../types';
 
 interface NavbarProps {
   state: BotState;
-  activeTab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'catur' | 'tebakbom' | 'guide';
-  setActiveTab: (tab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'catur' | 'tebakbom' | 'guide') => void;
+  activeTab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'catur' | 'tebakbom' | 'dino' | 'guide';
+  setActiveTab: (tab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'catur' | 'tebakbom' | 'dino' | 'guide') => void;
   onRefresh: () => void;
   isRefreshing: boolean;
   onOpenDownloadZip: () => void;
@@ -195,6 +195,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Bomb className="w-3.5 h-3.5 text-sky-500" />
               Tebak Bom
+            </button>
+            <button
+              id="tab-dino-btn"
+              onClick={() => setActiveTab('dino')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                activeTab === 'dino'
+                  ? 'bg-emerald-100 text-emerald-950 shadow-xs font-bold ring-1 ring-emerald-500'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+              }`}
+            >
+              <span className="text-sm">🦖</span>
+              Chrome Dino
             </button>
             <button
               id="tab-guide-btn"

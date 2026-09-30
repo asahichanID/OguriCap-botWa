@@ -1,0 +1,26 @@
+{
+  "claimedCodes": {
+    "DN-9999-50-250-H-MUO9ZMEH-B5CC023E": {
+      "jid": "628123456789@s.whatsapp.net",
+      "name": "Trainer",
+      "score": 9999,
+      "coins": 50,
+      "xp": 365,
+      "ending": "happy",
+      "claimedAt": 1790783046960
+    }
+  },
+  "autoUnlockedUsers": {
+    "6281111": {
+      "unlockedAt": 1790783314973,
+      "token": "DINO-AUTO-281111-C53845",
+      "phone": "6281111"
+    },
+    "6281111@s.whatsapp.net": {
+      "unlockedAt": 1790783314973,
+      "token": "DINO-AUTO-281111-C53845",
+      "phone": "6281111"
+    }
+  },
+  "activeSessions": {}
+}

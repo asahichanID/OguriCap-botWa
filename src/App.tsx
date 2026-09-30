@@ -9,12 +9,13 @@ import { SholatTab } from './components/SholatTab';
 import { HdTestTab } from './components/HdTestTab';
 import { CaturTab } from './components/CaturTab';
 import { TebakBomTab } from './components/TebakBomTab';
+import { DinoTab } from './components/DinoTab';
 import { DownloadZipModal } from './components/DownloadZipModal';
 import { BotState, LogEntry, SystemStats } from './types';
 import { safeFetchJson, safeJsonParse } from './lib/safeJson';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'catur' | 'tebakbom' | 'guide'>('control');
+  const [activeTab, setActiveTab] = useState<'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'catur' | 'tebakbom' | 'dino' | 'guide'>('control');
   const [isDownloadZipOpen, setIsDownloadZipOpen] = useState(false);
   const [botState, setBotState] = useState<BotState>({
     status: 'stopped',
@@ -39,7 +40,7 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // Auto-switch ke tab catur atau tebakbom jika ada param tab
+  // Auto-switch ke tab catur, tebakbom, atau dino jika ada param tab
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tabParam = params.get('tab');
@@ -47,6 +48,8 @@ export default function App() {
       setActiveTab('catur');
     } else if (tabParam === 'tebakbom' || tabParam === 'bom' || tabParam === 'tb') {
       setActiveTab('tebakbom');
+    } else if (tabParam === 'dino' || tabParam === 'chromedino' || tabParam === 'dinorun') {
+      setActiveTab('dino');
     }
   }, []);
 
@@ -329,6 +332,8 @@ export default function App() {
         {activeTab === 'catur' && <CaturTab />}
 
         {activeTab === 'tebakbom' && <TebakBomTab />}
+
+        {activeTab === 'dino' && <DinoTab />}
 
         {activeTab === 'guide' && (
           <GuideTab onOpenDownloadZip={() => setIsDownloadZipOpen(true)} />

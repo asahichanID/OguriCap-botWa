@@ -152,6 +152,9 @@ Sesuai konfigurasi keamanan akun dan aturan limit:
 
 | Perintah / Command | Format / Argumen | Status Limit | Deskripsi Singkat |
 | :--- | :--- | :---: | :--- |
+| `.dino` / `.dinorun` | `.dino` | 🆓 **Gratis** | Game Chrome Dino Offline (4 Hearts darah, koin, XP, Ending 9.999 Poin, cutscene pasangan Dino) |
+| `.klaimdino` | `.klaimdino <kode>` | 🆓 **Gratis** | Klaim hadiah koin & XP resmi dari hasil bermain game Chrome Dino (anti-farming) |
+| `.bayardinoauto` | `.bayardinoauto` | 🆓 **Gratis** | Beli aktivasi Mode Automatic Dino (150rb Koin masuk ke Kas Bank) agar AI memainkan game anti gagal |
 | `.sonic` | `.sonic` | 🆓 **Gratis** | Balapan Sonic Dash mini-game |
 | `.blackjack` | `.blackjack` | 🆓 **Gratis** | Permainan kartu 21 Blackjack |
 | `.dadu` | `.dadu` | 🆓 **Gratis** | Lempar dadu angka 1-6 |

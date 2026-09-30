@@ -10,6 +10,7 @@ import { getUlarTanggaHtml } from './OguriCap/game/ulartangga.js';
 import { buildTebakBomHTML } from './OguriCap/game/tebakbom.js';
 import { getTopLeaderboard } from './OguriCap/game/tebakbomData.js';
 import { CaturManager } from './OguriCap/game/caturWs.js';
+import { DINO_HTML } from './OguriCap/game/dino.js';
 import {
   getSholatConfig,
   saveSholatConfig,
@@ -1176,6 +1177,16 @@ app.get('/api/catur/room/:code', (req, res) => {
 app.get('/catur', (req, res) => {
   const room = req.query.room ? `&room=${req.query.room}` : '';
   res.redirect(`/?tab=catur${room}`);
+});
+
+app.get('/dino', (_req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(DINO_HTML);
+});
+
+app.get('/game/dino', (_req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(DINO_HTML);
 });
 
 async function startServer() {

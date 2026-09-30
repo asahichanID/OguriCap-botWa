@@ -67,6 +67,7 @@ import { runHeavyTask, getHeavyEngineStats } from './src/heavyEngine.js';
 import { kirimAngryBirds } from './game/angry_birds.js';
 import { kirimBalap } from './game/balap.js';
 import { kirimDino } from './game/dino.js';
+import { verifyAndClaimDinoCode, unlockDinoAuto, isDinoAutoUnlocked } from './game/dinoData.js';
 import { kirimSnake } from './game/snake.js';
 import { kirimStickman } from './game/stickman.js';
 import { kirimSuperMario } from './game/supermario.js';
@@ -182,6 +183,7 @@ function isUserBanned(sender, db, naze, store) {
 	if (num) {
 		const waJid = num + '@s.whatsapp.net';
 		if (db.users[waJid]?.ban) return true;
+		if (db.users[num]?.ban) return true;
 	}
 	if (typeof naze?.findJidByLid === 'function') {
 		try {
@@ -409,7 +411,7 @@ const naze = async (naze, m, msg, store) => {
 		const setv = pickRandom(global.listv)
 		
 		const isVip = isCreator || (db.users[m.sender] ? db.users[m.sender].vip : false)
-		const isBan = isCreator || (db.users[m.sender] ? db.users[m.sender].ban : false)
+		const isBan = !isCreator && isUserBanned(m.sender, db, naze, store)
 		const isLimit = isCreator || isVip || !isLimitedCommand(command) || (db.users[m.sender] ? (db.users[m.sender].limit > 0) : false)
 		const isPremium = isCreator || checkStatus(m.sender, premium) || false
 		const isNsfw = m.isGroup ? db.groups[m.chat].nsfw : false
@@ -603,8 +605,37 @@ const naze = async (naze, m, msg, store) => {
 		
 		// Filter Bot & Ban
 		if (m.isBot) return
-		if (db.users[m.sender]?.ban && !isCreator) return
+		if (!isCreator && isUserBanned(m.sender, db, naze, store)) return
 		
+		// Auto-Detect Kode Klaim Dino (DN-...)
+		const trimmedBody = (m.body || '').trim();
+		if (trimmedBody.toUpperCase().startsWith('DN-') && trimmedBody.split('-').length >= 6) {
+			const userLevel = (db.users[m.sender]?.level) || 1;
+			const claimRes = verifyAndClaimDinoCode(trimmedBody, m.sender, m.pushName || 'Trainer', userLevel);
+			if (!claimRes.success) {
+				return m.reply(`❌ *Klaim Dino Gagal:*\n${claimRes.message}`);
+			}
+			if (!db.users[m.sender]) db.users[m.sender] = {};
+			db.users[m.sender].money = (db.users[m.sender].money || 0) + claimRes.coins;
+			db.users[m.sender].exp = (db.users[m.sender].exp || 0) + claimRes.xp;
+			global._dbDirty = true;
+
+			const endTitle = claimRes.ending === 'happy' ? '🎉 HAPPY ENDING (9.999 Poin)' : claimRes.ending === 'bad' ? '💔 BAD ENDING (-2.999 Poin)' : '🏁 RUN SELESAI';
+			return await m.reply(
+				`╭───❖「 🦖 𝗞𝗟𝗔𝗜𝗠 𝗗𝗜𝗡𝗢 𝗕𝗘𝗥𝗛𝗔𝗦𝗜𝗟 」\n` +
+				`│\n` +
+				`│ 👤 *Pemain   :* ${m.pushName || 'Trainer'}\n` +
+				`│ 🏆 *Hasil     :* ${endTitle}\n` +
+				`│ 🎯 *Skor      :* ${claimRes.score.toLocaleString('id-ID')} Poin\n` +
+				`│ 🪙 *Koin      :* +${claimRes.coins.toLocaleString('id-ID')} Koin\n` +
+				`│ ⭐ *XP Bonus  :* +${claimRes.xp.toLocaleString('id-ID')} XP\n` +
+				`│\n` +
+				`│ 💰 *Saldo Koin Sekarang :* ${(db.users[m.sender].money || 0).toLocaleString('id-ID')} Koin\n` +
+				`│ 📈 *Total XP Sekarang   :* ${(db.users[m.sender].exp || 0).toLocaleString('id-ID')} XP\n` +
+				`╰───────────────────────────❖`
+			);
+		}
+
 		// Filter Set Api Key
 		if (cases.includes(command) && isCmd && (command !== 'setapikey')) {
 			const currentKey = global.APIKeys[global.APIs.naze];
@@ -1434,6 +1465,21 @@ ${statusText}
 				if (!db.users) db.users = {};
 				if (!db.users[target]) db.users[target] = {};
 				db.users[target].ban = true;
+				const numClean = target.replace(/[^0-9]/g, '');
+				if (numClean) {
+					const waJid = numClean + '@s.whatsapp.net';
+					if (!db.users[waJid]) db.users[waJid] = {};
+					db.users[waJid].ban = true;
+					if (!db.users[numClean]) db.users[numClean] = {};
+					db.users[numClean].ban = true;
+					try {
+						const lidJid = typeof naze.findJidByLid === 'function' ? naze.findJidByLid(waJid, store) : null;
+						if (lidJid) {
+							if (!db.users[lidJid]) db.users[lidJid] = {};
+							db.users[lidJid].ban = true;
+						}
+					} catch {}
+				}
 				global._dbDirty = true;
 
 				const targetName = db.users[target]?.customName || db.users[target]?.name || (await naze.getName(target).catch(() => 'User')) || 'User';
@@ -1457,6 +1503,16 @@ ${statusText}
 				if (!db.users) db.users = {};
 				if (!db.users[target]) db.users[target] = {};
 				db.users[target].ban = false;
+				const numClean = target.replace(/[^0-9]/g, '');
+				if (numClean) {
+					const waJid = numClean + '@s.whatsapp.net';
+					if (db.users[waJid]) db.users[waJid].ban = false;
+					if (db.users[numClean]) db.users[numClean].ban = false;
+					try {
+						const lidJid = typeof naze.findJidByLid === 'function' ? naze.findJidByLid(waJid, store) : null;
+						if (lidJid && db.users[lidJid]) db.users[lidJid].ban = false;
+					} catch {}
+				}
 				global._dbDirty = true;
 
 				const targetName = db.users[target]?.customName || db.users[target]?.name || (await naze.getName(target).catch(() => 'User')) || 'User';
@@ -5573,13 +5629,122 @@ break
 				}
 			}
 			break
-			case 'dino': case 'dinorun': case 'dinosaur': {
+			case 'dino': case 'dinorun': case 'dinosaur': case 'chromedino': {
 				try {
-					await kirimDino(naze, m.chat)
+					await kirimDino(naze, m.chat);
+					const isAuto = isDinoAutoUnlocked(m.sender);
+					const autoInfo = isAuto ? '✅ *Mode Automatic:* AKTIF (Anti Gagal)' : '🔒 *Mode Automatic:* Terkunci (Ketik `.bayardinoauto` seharga 150rb Koin)';
+					await m.reply(
+						`🦖 *[ CHROME DINO OFFLINE ]* 🦖\n\n` +
+						`Game Chrome Dino Offline telah dikirimkan ke chat ini!\n\n` +
+						`🎮 *Fitur Permainan:*\n` +
+						`• ❤️ 4 Heart Darah (Kena kaktus: -1 heart & berkedip 1 detik)\n` +
+						`• 🪙 Koin & ⭐ XP yang bisa dikumpulkan\n` +
+						`• 🏆 Capai 9.999 Poin untuk Happy Ending / Bad Ending (-2.999 poin)!\n` +
+						`• 📋 Salin kode di akhir game lalu kirim ke bot: \`${prefix}klaimdino <kode>\`\n\n` +
+						`🤖 ${autoInfo}\n` +
+						`_Selamat bermain & raih rekor tertinggi!_`
+					);
 				} catch (e) {
-					console.error('[DINO]', e?.message || e)
-					await m.reply('❌ Gagal mengirim game: ' + (e?.message || e))
+					console.error('[DINO]', e?.message || e);
+					await m.reply('❌ Gagal mengirim game: ' + (e?.message || e));
 				}
+			}
+			break
+			case 'klaimdino':
+			case 'claimdino': {
+				const codeToClaim = (args[0] || text || '').trim();
+				if (!codeToClaim || !codeToClaim.toUpperCase().startsWith('DN-')) {
+					return m.reply(
+						`📌 *[ KLAIM HADIAH DINO RUN ]*\n\n` +
+						`Silakan masukkan kode klaim yang Anda dapatkan setelah menyelesaikan game Dino!\n` +
+						`Contoh:\n\`${prefix + command} DN-9999-50-250-H-XXXX-XXXX\``
+					);
+				}
+				const userLevel = (db.users[m.sender]?.level) || 1;
+				const claimRes = verifyAndClaimDinoCode(codeToClaim, m.sender, m.pushName || 'Trainer', userLevel);
+				if (!claimRes.success) {
+					return m.reply(`❌ *Klaim Gagal:*\n${claimRes.message}`);
+				}
+
+				if (!db.users[m.sender]) db.users[m.sender] = {};
+				db.users[m.sender].money = (db.users[m.sender].money || 0) + claimRes.coins;
+				db.users[m.sender].exp = (db.users[m.sender].exp || 0) + claimRes.xp;
+				global._dbDirty = true;
+
+				const endTitle = claimRes.ending === 'happy' ? '🎉 HAPPY ENDING (9.999 Poin)' : claimRes.ending === 'bad' ? '💔 BAD ENDING (-2.999 Poin)' : '🏁 RUN SELESAI';
+				await m.reply(
+					`╭───❖「 🦖 𝗞𝗟𝗔𝗜𝗠 𝗗𝗜𝗡𝗢 𝗕𝗘𝗥𝗛𝗔𝗦𝗜𝗟 」\n` +
+					`│\n` +
+					`│ 👤 *Pemain   :* ${m.pushName || 'Trainer'}\n` +
+					`│ 🏆 *Hasil     :* ${endTitle}\n` +
+					`│ 🎯 *Skor      :* ${claimRes.score.toLocaleString('id-ID')} Poin\n` +
+					`│ 🪙 *Koin      :* +${claimRes.coins.toLocaleString('id-ID')} Koin\n` +
+					`│ ⭐ *XP Bonus  :* +${claimRes.xp.toLocaleString('id-ID')} XP\n` +
+					`│\n` +
+					`│ 💰 *Saldo Koin Sekarang :* ${(db.users[m.sender].money || 0).toLocaleString('id-ID')} Koin\n` +
+					`│ 📈 *Total XP Sekarang   :* ${(db.users[m.sender].exp || 0).toLocaleString('id-ID')} XP\n` +
+					`╰───────────────────────────❖`
+				);
+			}
+			break
+			case 'bayardinoauto':
+			case 'autodino':
+			case 'dinoauto': {
+				const autoCost = 150000;
+				if (!db.users[m.sender]) db.users[m.sender] = {};
+				const userBalance = Number(db.users[m.sender].money || 0);
+
+				if (isDinoAutoUnlocked(m.sender)) {
+					return m.reply(`✅ *Mode Automatic Dino Anda sudah aktif!*\n\nAnda sudah memiliki akses ke mode komputer anti-gagal sebelumnya. Silakan buka game dengan perintah \`${prefix}dino\` dan langsung mainkan Mode Auto!`);
+				}
+
+				if (userBalance < autoCost) {
+					return m.reply(
+						`❌ *SALDO KOIN TIDAK MENCUKUPI!*\n\n` +
+						`Untuk membeli *Mode Automatic Dino (Anti Gagal)*, dibutuhkan:\n` +
+						`💰 *Biaya   :* 150.000 Koin\n` +
+						`👛 *Koin Anda :* ${userBalance.toLocaleString('id-ID')} Koin\n` +
+						`Kurang : ${(autoCost - userBalance).toLocaleString('id-ID')} Koin lagi.\n\n` +
+						`💡 *Tips:* Dapatkan koin dengan bermain game lain, klaim harian (\`${prefix}claim\`), atau top up koin!`
+					);
+				}
+
+				// Potong saldo koin user
+				db.users[m.sender].money = userBalance - autoCost;
+
+				// Masukkan dana ke Kas Bank
+				if (!global.db.bank) global.db.bank = { kas: 1000000000, danaMasuk: 0, danaKeluar: 0, totalPembelian: 0, aktivitas: [] };
+				global.db.bank.kas = (global.db.bank.kas || 0) + autoCost;
+				global.db.bank.danaMasuk = (global.db.bank.danaMasuk || 0) + autoCost;
+				global.db.bank.totalPembelian = (global.db.bank.totalPembelian || 0) + autoCost;
+				if (!Array.isArray(global.db.bank.aktivitas)) global.db.bank.aktivitas = [];
+				global.db.bank.aktivitas.unshift({
+					tipe: 'Pembelian Auto Dino',
+					user: m.sender,
+					nama: m.pushName || 'Trainer',
+					jumlah: autoCost,
+					waktu: Date.now()
+				});
+
+				const { token, phone } = unlockDinoAuto(m.sender);
+				db.users[m.sender].dinoAuto = true;
+				global._dbDirty = true;
+
+				await m.reply(
+					`╭───❖「 ✅ 𝗣𝗘𝗠𝗕𝗔𝗬𝗔𝗥𝗔𝗡 𝗕𝗘𝗥𝗛𝗔𝗦𝗜𝗟 」\n` +
+					`│\n` +
+					`│ 🎮 *Layanan   :* Mode Automatic Dino Chrome (Anti Gagal)\n` +
+					`│ 💰 *Harga     :* 150.000 Koin (Masuk ke Kas Bank)\n` +
+					`│ 🏦 *Kas Bank  :* Rp ${(global.db.bank.kas || 0).toLocaleString('id-ID')}\n` +
+					`│ 🔑 *Token     :* \`${token}\`\n` +
+					`│ 📱 *Nomor WA  :* ${phone}\n` +
+					`│\n` +
+					`│ ⚡ *Status:* AKTIF! Komputer akan memainkan game\n` +
+					`│             secara otomatis tanpa gagal sampai 9999!\n` +
+					`│ 🕹️ *Mulai:* Ketik \`${prefix}dino\` untuk membuka game.\n` +
+					`╰───────────────────────────❖`
+				);
 			}
 			break
 			case 'snake': case 'ular': case 'ularrimba': case 'snakegame': {
