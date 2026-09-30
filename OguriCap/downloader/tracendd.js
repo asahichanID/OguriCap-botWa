@@ -266,6 +266,64 @@ untuk Trainer Premium.
 
 console.log('🎥 YTMP4 V1.5 LOADED')
 
+/**
+ * Unduh dan validasi buffer video TikTok asli.
+ * Mencegah pengiriman file HTML 503/403 atau buffer korup ke WhatsApp.
+ * Menjamin file memiliki container MP4 valid (ftyp/moov/mdat) tanpa merusak atau mengompresi kualitas aslinya.
+ */
+async function downloadValidTikTokVideo(candidates = []) {
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Referer': 'https://www.tiktok.com/',
+    'Accept': '*/*'
+  };
+
+  const urls = candidates.filter(u => typeof u === 'string' && u.trim().startsWith('http'));
+
+  for (const url of urls) {
+    try {
+      const res = await axios.get(url, {
+        headers,
+        responseType: 'arraybuffer',
+        timeout: 30000,
+        maxContentLength: 100 * 1024 * 1024
+      });
+
+      if (!res.data) continue;
+      const buf = Buffer.from(res.data);
+
+      if (buf.length < 20480) continue;
+
+      const headSample = buf.slice(0, 120).toString().toLowerCase();
+      if (
+        headSample.includes('<html') ||
+        headSample.includes('<!doctype') ||
+        headSample.includes('503 service') ||
+        headSample.includes('403 forbidden') ||
+        headSample.includes('accessdenied')
+      ) {
+        continue;
+      }
+
+      const hasFtyp = buf.slice(4, 8).toString() === 'ftyp' || buf.includes(Buffer.from('ftyp'));
+      const hasMoov = buf.includes(Buffer.from('moov'));
+      const hasMdat = buf.includes(Buffer.from('mdat'));
+
+      if (hasFtyp || (hasMoov && hasMdat)) {
+        return {
+          buffer: buf,
+          url,
+          size: buf.length
+        };
+      }
+    } catch (e) {
+      // Coba kandidat berikutnya
+    }
+  }
+
+  return null;
+}
+
 // ==============================================
 // TIKTOK - Unduh Video TikTok
 // ==============================================
@@ -423,15 +481,19 @@ const photoList = Array.isArray(images)
       return Number(num).toLocaleString('id-ID')
     }
 
-    const videoUrl =
-      result.download?.video?.nowm_hd ||
-      result.download?.video?.nowm ||
-      result.download?.video?.wm
+    const candidateUrls = [
+      result.download?.video?.nowm_hd,
+      result.download?.video?.nowm,
+      result.download?.video?.wm,
+      result.video?.playUrl,
+      result.video?.url,
+      ...(Array.isArray(result.download?.video?.candidates) ? result.download.video.candidates : [])
+    ].filter(Boolean)
 
     const isPhoto =
       photoList.length > 0
 
-    if (!isPhoto && !videoUrl)
+    if (!isPhoto && candidateUrls.length === 0)
       return m.reply(
         '❌ Video tidak ditemukan'
       )
@@ -507,41 +569,52 @@ const photoList = Array.isArray(images)
         )
       }
     } else {
-      try {
-        await naze.sendListMsg(
-          m.chat,
-          {
-            text: caption,
-            footer: `🛡️ Oguri Cap • ${global.botname}`,
-            video: {
-              url: videoUrl
-            },
-            fileName: `${result.author?.nickname || 'tiktok'}.mp4`,
-            mimetype: 'video/mp4',
-            buttons: [
-              {
-                name: 'quick_reply',
-                buttonParamsJson: JSON.stringify({
-                  display_text: '🎵 Download Audio',
-                  id: `.ttmp3 ${text}`
-                })
-              }
-            ]
-          },
-          {
-            quoted: m
-          }
-        )
-      } catch (e) {
+      // 1. Unduh dan validasi buffer video MP4 asli tanpa re-encoding (kualitas tetap original HD)
+      let validVideo = await downloadValidTikTokVideo(candidateUrls)
+
+      // Jika seluruh kandidat scraper utama gagal, coba dari provider backup
+      if (!validVideo) {
+        try {
+          const backup = await apiTiktokDownload(text, { withMetadata: true })
+          const backupCandidates = [
+            backup.result?.download?.video?.nowm_hd,
+            backup.result?.download?.video?.nowm,
+            backup.result?.download?.video?.wm
+          ].filter(Boolean)
+          validVideo = await downloadValidTikTokVideo(backupCandidates)
+        } catch (errBackup) {}
+      }
+
+      const cleanFileName = (result.author?.nickname || result.author?.name || 'tiktok').replace(/[^\w\s-]/gi, '').trim() || 'tiktok'
+      const videoCaption = `${caption}\n\n_💡 Ketik *.ttmp3 ${text}* untuk unduh audio MP3._`
+
+      if (validVideo?.buffer) {
+        // Kirimkan buffer MP4 asli yang telah tervalidasi via native WhatsApp Video Message
+        // Format native ini 100% kompatibel di semua platform WA, bisa langsung dipencet & diputar lancar
         await naze.sendMessage(
           m.chat,
           {
-            video: { url: videoUrl },
-            caption: `${caption}\n\n_Ketik *.ttmp3 ${text}* untuk unduh audio._`,
-            mimetype: 'video/mp4'
+            video: validVideo.buffer,
+            caption: videoCaption,
+            mimetype: 'video/mp4',
+            fileName: `${cleanFileName}.mp4`
           },
           { quoted: m }
         )
+      } else if (candidateUrls[0]) {
+        // Fallback ke direct URL jika buffer gagal
+        await naze.sendMessage(
+          m.chat,
+          {
+            video: { url: candidateUrls[0] },
+            caption: videoCaption,
+            mimetype: 'video/mp4',
+            fileName: `${cleanFileName}.mp4`
+          },
+          { quoted: m }
+        )
+      } else {
+        return m.reply('❌ Gagal memproses video TikTok. File video tidak dapat diakses atau dibatasi.')
       }
     }
 
@@ -551,7 +624,7 @@ const photoList = Array.isArray(images)
       provider: 'TikTok',
       creator: authorName,
       photo: photoList.length,
-      video: !!videoUrl,
+      video: !isPhoto && candidateUrls.length > 0,
       likes,
       comments,
       shares,

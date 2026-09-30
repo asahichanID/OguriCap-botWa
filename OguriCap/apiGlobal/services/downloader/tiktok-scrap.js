@@ -61,13 +61,29 @@ export function normalizeTikTokScraper(data) {
   const shares = Number(data.share_count ?? data.shareCount ?? data.shares ?? 0) || 0;
   const saved = Number(data.collect_count ?? data.collectCount ?? data.saved ?? 0) || 0;
 
-  const nowmHd = data.hdplay || data.hd_play || data.play || data.nowm_hd || null;
-  const nowm = data.play || data.nowm || data.hdplay || null;
-  const wm = data.wmplay || data.wm_play || data.wm || null;
+  const ensureFullUrl = (u) => {
+    if (!u || typeof u !== 'string') return null;
+    const str = u.trim();
+    if (!str) return null;
+    if (str.startsWith('//')) return `https:${str}`;
+    if (str.startsWith('/')) return `https://www.tikwm.com${str}`;
+    return str;
+  };
 
-  const audioUrl = data.music || data.music_info?.play || data.audio || null;
+  const nowmHd = ensureFullUrl(data.hdplay || data.hd_play || null);
+  const nowm = ensureFullUrl(data.play || data.nowm || null);
+  const wm = ensureFullUrl(data.wmplay || data.wm_play || data.wm || null);
+
+  const audioUrl = ensureFullUrl(data.music || data.music_info?.play || data.audio || null);
   const audioTitle = data.music_info?.title || data.music_title || 'TikTok Audio';
   const audioAuthor = data.music_info?.author || data.music_author || data.author?.nickname || 'TikTok Creator';
+
+  const videoCandidates = [nowmHd, nowm, wm].filter(Boolean);
+  if (data.id) {
+    videoCandidates.push(`https://www.tikwm.com/video/media/hdplay/${data.id}.mp4`);
+    videoCandidates.push(`https://www.tikwm.com/video/media/play/${data.id}.mp4`);
+    videoCandidates.push(`https://www.tikwm.com/video/media/wmplay/${data.id}.mp4`);
+  }
 
   const authorUniqueId = (data.author?.unique_id || data.author?.uniqueId || '').replace(/^@/, '').trim();
   const authorNickname = (data.author?.nickname || data.author?.name || authorUniqueId || '').trim();
@@ -197,9 +213,10 @@ export function normalizeTikTokScraper(data) {
 
     download: {
       video: {
-        nowm_hd: nowmHd,
-        nowm: nowm,
-        wm: wm
+        nowm_hd: nowmHd || nowm,
+        nowm: nowm || nowmHd,
+        wm: wm,
+        candidates: videoCandidates
       },
       audio: audioUrl,
       music: audioUrl,

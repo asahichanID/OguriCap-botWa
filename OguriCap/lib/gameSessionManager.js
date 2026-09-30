@@ -1,5 +1,5 @@
 import { jidNormalizedUser } from 'baileys';
-import { normalizeAnswer, similarity } from './function.js';
+import { normalizeAnswer, similarity, levenshtein } from './function.js';
 import { getLevelInfo, generateBaseXP, addExp } from './xpGlobal.js';
 
 export const TEXT_GAME_KEYS = [
@@ -17,6 +17,134 @@ export const TEXT_GAME_KEYS = [
 ];
 
 /**
+ * Pembersih kata awalan/akhiran obrolan santai
+ */
+function cleanGuessText(raw) {
+	if (!raw) return '';
+	return String(raw)
+		.replace(/^[.!#/$%^&+=~]+/, '')
+		.replace(/^(jawab(annya)?|jwb|pasti|mungkin|kayaknya|keknya|tebak(an)?|itu|adalah|pilih)\s*[:=-]?\s*/i, '')
+		.replace(/\s*(kak|bang|min|bot|deh|dong|kan|sih|ya|nih|lah|keknya|kali)$/i, '')
+		.trim();
+}
+
+/**
+ * Pembersih kata penggolong / kategori awalan umum (misal: "negara sri lanka" -> "sri lanka")
+ */
+function stripCategoryFiller(text) {
+	if (!text) return '';
+	return text.replace(/^(negara|provinsi|kota|kabupaten|desa|pulau|benua|hewan|binatang|ikan|burung|buah|kue|makanan|minuman|bunga|warna|alat|kendaraan|olahraga)\s+/i, '').trim();
+}
+
+/**
+ * Pembersih imbuhan awalan/akhiran kata kerja bahasa Indonesia
+ */
+function stripIndonesianAffixes(word) {
+	if (!word || word.length < 5) return word;
+	return word
+		.replace(/^(meng|meny|mem|me|ber|ter|di|pe|peng|peny|pem|se)/, '')
+		.replace(/(kan|an|i)$/, '');
+}
+
+/**
+ * Normalisasi fonetik ringan bahasa Indonesia
+ * Mengatasi variasi ejaan umum seperti sri langka <-> srilangka, ikhlas <-> iklas, dll
+ */
+const phoneticIndo = s => s
+	.replace(/ngk/g, 'nk')
+	.replace(/kh/g, 'k')
+	.replace(/sy/g, 's')
+	.replace(/sh/g, 's')
+	.replace(/ch/g, 'c')
+	.replace(/v/g, 'f')
+	.replace(/z/g, 'j')
+	.replace(/(.)\1+/g, '$1');
+
+/**
+ * Pencocokan cerdas jawaban Family 100
+ * Menangani toleransi spasi ("sri lanka" vs "srilangka"), variasi fonetik (ngk vs nk),
+ * kata penggolong kategori ("negara sri lanka"), tanda kurung penjelasan, imbuhan kata,
+ * serta kata kunci yang relevan/nyambung tanpa melenceng jauh.
+ * @param {string} userGuess - Tebakan user
+ * @param {string} targetAnswer - Kunci jawaban dari survei Family 100
+ * @returns {boolean}
+ */
+export function isFamily100Match(userGuess, targetAnswer) {
+	if (!userGuess || !targetAnswer) return false;
+
+	const rawG = cleanGuessText(userGuess);
+	const normG = normalizeAnswer(rawG);
+	const strippedG = stripCategoryFiller(normG);
+	const guessVariants = [normG, strippedG].filter(Boolean);
+
+	// Bongkar variasi target jika terdapat penjelasan di dalam tanda kurung
+	const targets = [targetAnswer];
+	const bracketMatch = String(targetAnswer).match(/\(([^)]+)\)/);
+	if (bracketMatch) targets.push(bracketMatch[1]);
+	const noBracket = String(targetAnswer).replace(/\([^)]*\)/g, '').trim();
+	if (noBracket && noBracket !== targetAnswer) targets.push(noBracket);
+
+	for (const t of targets) {
+		const tNorm = normalizeAnswer(t);
+		const tStripped = stripCategoryFiller(tNorm);
+		const targetVariants = [tNorm, tStripped].filter(Boolean);
+
+		for (const g of guessVariants) {
+			for (const tar of targetVariants) {
+				// 1. Exact match
+				if (g === tar) return true;
+
+				// 2. Exact match tanpa spasi (misal "sri lanka" vs "srilangka", "sepak bola" vs "sepakbola")
+				const gNoSpace = g.replace(/\s+/g, '');
+				const tarNoSpace = tar.replace(/\s+/g, '');
+				if (gNoSpace === tarNoSpace) return true;
+
+				// 3. Normalisasi fonetik Indonesia (ngk <-> nk, srilangka <-> sri lanka, dll)
+				if (phoneticIndo(gNoSpace) === phoneticIndo(tarNoSpace)) return true;
+
+				// 4. Jarak Levenshtein pada no-space (mengatasi spasi + typo/variasi 1-2 huruf)
+				const distNoSpace = levenshtein(gNoSpace, tarNoSpace);
+				const maxLenNoSpace = Math.max(gNoSpace.length, tarNoSpace.length);
+				const simNoSpace = similarity(gNoSpace, tarNoSpace);
+
+				// Beda 1 huruf untuk kata >= 4 huruf (srilanka vs srilangka, singapur vs singapura)
+				if (distNoSpace <= 1 && maxLenNoSpace >= 4) return true;
+				// Beda 2 huruf untuk kata >= 6 huruf dengan sim >= 0.72
+				if (distNoSpace <= 2 && maxLenNoSpace >= 6 && simNoSpace >= 0.72) return true;
+				if (simNoSpace >= 0.75) return true;
+
+				// 5. Similarity normal dengan spasi
+				const sim = similarity(g, tar);
+				if (sim >= 0.72) return true;
+
+				// 6. Word-based token matching (kata-kata kunci cocok)
+				const gWords = g.split(' ').filter(w => w.length >= 3);
+				const tarWords = tar.split(' ').filter(w => w.length >= 3);
+
+				// Jika tebakan mengandung kata kunci utama di target (panjang >= 4)
+				const hasMajorWord = gWords.some(gw => gw.length >= 4 && tarWords.some(tw => tw === gw || phoneticIndo(tw) === phoneticIndo(gw) || similarity(gw, tw) >= 0.8));
+				if (hasMajorWord && (gWords.length === 1 || tarWords.length <= 3)) return true;
+
+				// Kecocokan bentuk dasar / kata imbuhan (contoh: "mencuci piring" vs "cuci piring")
+				const gRoot = gWords.map(stripIndonesianAffixes).join(' ');
+				const tarRoot = tarWords.map(stripIndonesianAffixes).join(' ');
+				if (gRoot && tarRoot && gRoot === tarRoot) return true;
+
+				// 7. Substring overlap untuk kata majemuk / frasa relevan
+				if (gNoSpace.length >= 4 && tarNoSpace.length >= 4) {
+					if (gNoSpace.includes(tarNoSpace) || tarNoSpace.includes(gNoSpace)) {
+						const ratio = Math.min(gNoSpace.length, tarNoSpace.length) / Math.max(gNoSpace.length, tarNoSpace.length);
+						if (ratio >= 0.45) return true;
+					}
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+/**
  * Cek apakah ada sesi game aktif di chat tertentu
  * @param {string} chatId - JID grup atau private chat
  * @returns {boolean}
@@ -27,8 +155,23 @@ export function hasAnyActiveGame(chatId) {
 	const normChat = jidNormalizedUser(chatId);
 	const cleanChat = String(chatId).split('@')[0].split(':')[0];
 
-	// Cek Family 100
-	if (g.family100 && (g.family100[chatId] || g.family100[normChat])) return true;
+	// Cek Family 100 secara komprehensif
+	if (g.family100 && typeof g.family100 === 'object') {
+		const fKeys = Object.keys(g.family100);
+		for (const fk of fKeys) {
+			if (
+				fk === chatId ||
+				fk === normChat ||
+				fk.startsWith(chatId) ||
+				fk.startsWith(normChat) ||
+				(cleanChat && fk.includes(cleanChat)) ||
+				g.family100[fk]?.chat === chatId ||
+				g.family100[fk]?.chat === normChat
+			) {
+				return true;
+			}
+		}
+	}
 
 	for (const k of TEXT_GAME_KEYS) {
 		const sessionObj = g[k];
@@ -96,6 +239,13 @@ export function isAnswerCorrect(userText, targetAnswer, gameName = '') {
 		// 4. Similarity Levenshtein dengan toleransi typo cerdas
 		const sim = similarity(guessNorm, targetNorm);
 		if (sim >= 0.75) return true;
+
+		// Toleransi no-space typo (misal kata majemuk / ejaan 1 huruf k/g)
+		const distNoSpace = levenshtein(guessNoSpace, targetNoSpace);
+		if (distNoSpace <= 1 && Math.max(guessNoSpace.length, targetNoSpace.length) >= 4) return true;
+		const simNoSpace = similarity(guessNoSpace, targetNoSpace);
+		if (simNoSpace >= 0.78) return true;
+
 		if (sim >= 0.65 && /tekateki|tebaklirik|tebaklagu|tebakkata|tebaknegara|tebakbendera|tebakgambar|susunkata|caklontong/.test(gameName)) {
 			return true;
 		}
@@ -214,24 +364,49 @@ export async function handleIncomingGameAnswer({ naze, m, budy, body, db }) {
 	}
 
 	// 2. PEMERIKSAAN FAMILY 100
-	const famObj = db.game?.family100;
+	const famObj = db.game?.family100 || global.db?.game?.family100;
 	if (famObj && typeof famObj === 'object') {
-		const famKey = Object.keys(famObj).find(k => k === m.chat || k === normChat || (cleanChat && k.includes(cleanChat)));
+		const famKey = Object.keys(famObj).find(k => (
+			k === m.chat ||
+			k === normChat ||
+			k.startsWith(m.chat) ||
+			k.startsWith(normChat) ||
+			(cleanChat && k.includes(cleanChat)) ||
+			famObj[k]?.chat === m.chat ||
+			famObj[k]?.chat === normChat
+		));
+
 		if (famKey && famObj[famKey]) {
 			const room = famObj[famKey];
-			const teks = normalizeAnswer(primaryGuess);
-			const rawClean = primaryGuess.replace(/^[.!#/$%^&+=~]/, '').trim().toLowerCase();
-			const isSurender = /^((me)?nyerah|surr?ender)$/i.test(teks) || /^((me)?nyerah|surr?ender)$/i.test(rawClean);
+			
+			// Deteksi menyerah yang fleksibel (.nyerah, nyerah, surrender, aku nyerah, dll)
+			let isSurender = false;
+			for (const cand of guessCandidates) {
+				const cStr = String(cand).trim().toLowerCase();
+				const cClean = cStr.replace(/^[.!#/$%^&+=~]+/, '').trim();
+				if (
+					/^((me)?nyerah|surr?ender)(\s+(lah|dong|deh|aja|min|bot|dah|udah|wis))?$/i.test(cClean) ||
+					/^(aku|kita|kami|saya|gw|gua)\s+((me)?nyerah|surr?ender)$/i.test(cClean)
+				) {
+					isSurender = true;
+					break;
+				}
+			}
+
 			let index = -1;
 
 			if (!isSurender && Array.isArray(room.jawaban)) {
-				index = room.jawaban.findIndex(v => {
-					const jNorm = normalizeAnswer(v);
-					if (jNorm === teks) return true;
-					if (jNorm.replace(/\s+/g, '') === teks.replace(/\s+/g, '')) return true;
-					if (similarity(teks, jNorm) >= 0.8) return true;
-					return false;
-				});
+				// Cari terlebih dahulu di antara jawaban yang BELUM terjawab dengan pencocokan cerdas isFamily100Match
+				for (const cand of guessCandidates) {
+					const foundIdx = room.jawaban.findIndex((v, idx) => {
+						if (room.terjawab[idx]) return false; // Abaikan yang sudah terjawab
+						return isFamily100Match(cand, v);
+					});
+					if (foundIdx !== -1) {
+						index = foundIdx;
+						break;
+					}
+				}
 			}
 
 			if (isSurender || (index !== -1 && !room.terjawab[index])) {
@@ -275,6 +450,13 @@ ${listJawaban}
 					delete famObj[famKey];
 					if (global.db?.game?.family100) {
 						delete global.db.game.family100[famKey];
+						delete global.db.game.family100[m.chat];
+						delete global.db.game.family100[normChat];
+					}
+					if (db.game?.family100) {
+						delete db.game.family100[famKey];
+						delete db.game.family100[m.chat];
+						delete db.game.family100[normChat];
 					}
 				}
 
