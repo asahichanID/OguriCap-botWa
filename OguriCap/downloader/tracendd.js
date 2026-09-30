@@ -324,6 +324,56 @@ async function downloadValidTikTokVideo(candidates = []) {
   return null;
 }
 
+/**
+ * Unduh dan validasi buffer audio TikTok MP3/M4A secepat kilat.
+ * Mencegah file HTML 503/403 dan memastikan file audio utuh & normal.
+ */
+async function downloadValidTikTokAudio(candidates = []) {
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Referer': 'https://www.tiktok.com/',
+    'Accept': '*/*'
+  };
+
+  const urls = candidates.filter(u => typeof u === 'string' && u.trim().startsWith('http'));
+
+  for (const url of urls) {
+    try {
+      const res = await axios.get(url, {
+        headers,
+        responseType: 'arraybuffer',
+        timeout: 15000,
+        maxContentLength: 30 * 1024 * 1024
+      });
+
+      if (!res.data) continue;
+      const buf = Buffer.from(res.data);
+      if (buf.length < 2048) continue;
+
+      const headSample = buf.slice(0, 120).toString().toLowerCase();
+      if (
+        headSample.includes('<html') ||
+        headSample.includes('<!doctype') ||
+        headSample.includes('503 service') ||
+        headSample.includes('403 forbidden') ||
+        headSample.includes('accessdenied')
+      ) {
+        continue;
+      }
+
+      return {
+        buffer: buf,
+        url,
+        size: buf.length
+      };
+    } catch (e) {
+      // Coba kandidat berikutnya
+    }
+  }
+
+  return null;
+}
+
 // ==============================================
 // TIKTOK - Unduh Video TikTok
 // ==============================================
@@ -507,116 +557,191 @@ const photoList = Array.isArray(images)
 • ❤️ Likes: ${formatNumber(likes)}
 • 💬 Comments: ${formatNumber(comments)}
 • 🔄 Shares: ${formatNumber(shares)}
-• ⭐ Saved: ${formatNumber(saved)}`
+• ⭐ Saved: ${formatNumber(saved)}
 
-    if (isPhoto) {
-      if (photoList.length === 1) {
-        try {
-          await naze.sendListMsg(
-            m.chat,
-            {
-              text: caption,
-              footer: `🛡️ Tiktok • ${global.botname}`,
-              image: {
-                url: photoList[0]
-              },
-              buttons: [
+🎵 *Audio:* Otomatis dikirim bersamaan ✨`
+
+    // ==============================================
+    // 1. TASK PENGIRIMAN MEDIA (VIDEO / FOTO SLIDE)
+    // ==============================================
+    const sendMediaTask = async () => {
+      try {
+        if (isPhoto) {
+          if (photoList.length === 1) {
+            try {
+              await naze.sendListMsg(
+                m.chat,
                 {
-                  name: 'quick_reply',
-                  buttonParamsJson: JSON.stringify({
-                    display_text: '🎵 Download Audio',
-                    id: `.ttmp3 ${text}`
-                  })
+                  text: caption,
+                  footer: `🛡️ Tiktok • ${global.botname}`,
+                  image: {
+                    url: photoList[0]
+                  },
+                  buttons: [
+                    {
+                      name: 'quick_reply',
+                      buttonParamsJson: JSON.stringify({
+                        display_text: '🎵 Audio Terkirim Otomatis',
+                        id: `.ttmp3 ${text}`
+                      })
+                    }
+                  ]
+                },
+                {
+                  quoted: m
                 }
-              ]
-            },
-            {
-              quoted: m
+              )
+            } catch (e) {
+              await naze.sendMessage(
+                m.chat,
+                {
+                  image: { url: photoList[0] },
+                  caption
+                },
+                { quoted: m }
+              )
             }
-          )
-        } catch (e) {
+          } else {
+            await naze.sendCarouselMsg(
+              m.chat,
+              caption,
+              `🛡️ Oguri Cap • ${global.botname}`,
+              photoList.map((url, i) => ({
+                url,
+                body: `📸 Foto ${i + 1} / ${photoList.length}\n\n🎬 ${title}`,
+                footer: global.botname,
+                buttons: [
+                  {
+                    name: 'quick_reply',
+                    buttonParamsJson: JSON.stringify({
+                      display_text: '🎵 Audio Terkirim Otomatis',
+                      id: `.ttmp3 ${text}`
+                    })
+                  }
+                ]
+              })),
+              {
+                quoted: m
+              }
+            )
+          }
+        } else {
+          // Unduh dan validasi buffer video MP4 asli tanpa re-encoding (kualitas tetap original HD)
+          let validVideo = await downloadValidTikTokVideo(candidateUrls)
+
+          // Jika seluruh kandidat scraper utama gagal, coba dari provider backup
+          if (!validVideo) {
+            try {
+              const backup = await apiTiktokDownload(text, { withMetadata: true })
+              const backupCandidates = [
+                backup.result?.download?.video?.nowm_hd,
+                backup.result?.download?.video?.nowm,
+                backup.result?.download?.video?.wm
+              ].filter(Boolean)
+              validVideo = await downloadValidTikTokVideo(backupCandidates)
+            } catch (errBackup) {}
+          }
+
+          const cleanFileName = (result.author?.nickname || result.author?.name || 'tiktok').replace(/[^\w\s-]/gi, '').trim() || 'tiktok'
+
+          if (validVideo?.buffer) {
+            // Kirimkan buffer MP4 asli yang telah tervalidasi via native WhatsApp Video Message
+            await naze.sendMessage(
+              m.chat,
+              {
+                video: validVideo.buffer,
+                caption,
+                mimetype: 'video/mp4',
+                fileName: `${cleanFileName}.mp4`
+              },
+              { quoted: m }
+            )
+          } else if (candidateUrls[0]) {
+            // Fallback ke direct URL jika buffer gagal
+            await naze.sendMessage(
+              m.chat,
+              {
+                video: { url: candidateUrls[0] },
+                caption,
+                mimetype: 'video/mp4',
+                fileName: `${cleanFileName}.mp4`
+              },
+              { quoted: m }
+            )
+          } else {
+            m.reply('❌ Gagal memproses video TikTok. File video tidak dapat diakses atau dibatasi.')
+          }
+        }
+      } catch (errMedia) {
+        console.error('❌ Error kirim media TikTok:', errMedia.message)
+      }
+    }
+
+    // ==============================================
+    // 2. TASK PENGIRIMAN AUDIO OTOMATIS (SECEPAT KILAT & NON-BLOCKING)
+    // ==============================================
+    const sendAudioTask = async () => {
+      try {
+        const audioCandidates = [
+          result.download?.music,
+          result.download?.audio,
+          result.music?.playUrl,
+          result.music?.play_url,
+          result.music?.url,
+          result.audio
+        ].filter(Boolean)
+
+        // Jika belum ada audio URL, coba ambil dari API backup
+        if (audioCandidates.length === 0) {
+          try {
+            const backup = await apiTiktokDownload(text, { withMetadata: false })
+            if (backup?.result?.download?.music) audioCandidates.push(backup.result.download.music)
+            if (backup?.result?.download?.audio) audioCandidates.push(backup.result.download.audio)
+          } catch {}
+        }
+
+        if (audioCandidates.length === 0) return
+
+        const audioTitle = (
+          result.download?.music_info?.title ||
+          result.music?.title ||
+          result.music?.name ||
+          title ||
+          'TikTok Audio'
+        ).replace(/[^\w\s-]/gi, '').trim() || 'TikTok Audio'
+
+        // Unduh dan validasi buffer audio secepat kilat
+        const validAudio = await downloadValidTikTokAudio(audioCandidates)
+
+        if (validAudio?.buffer) {
           await naze.sendMessage(
             m.chat,
             {
-              image: { url: photoList[0] },
-              caption: `${caption}\n\n_Ketik *.ttmp3 ${text}* untuk unduh audio._`
+              audio: validAudio.buffer,
+              mimetype: 'audio/mpeg',
+              fileName: `${audioTitle}.mp3`
+            },
+            { quoted: m }
+          )
+        } else if (audioCandidates[0]) {
+          // Fallback via URL audio langsung
+          await naze.sendMessage(
+            m.chat,
+            {
+              audio: { url: audioCandidates[0] },
+              mimetype: 'audio/mpeg',
+              fileName: `${audioTitle}.mp3`
             },
             { quoted: m }
           )
         }
-      } else {
-        await naze.sendCarouselMsg(
-          m.chat,
-          caption,
-          `🛡️ Oguri Cap • ${global.botname}`,
-          photoList.map((url, i) => ({
-            url,
-            body: `📸 Foto ${i + 1} / ${photoList.length}\n\n🎬 ${title}`,
-            footer: global.botname,
-            buttons: [
-              {
-                name: 'quick_reply',
-                buttonParamsJson: JSON.stringify({
-                  display_text: '🎵 Download Audio',
-                  id: `.ttmp3 ${text}`
-                })
-              }
-            ]
-          })),
-          {
-            quoted: m
-          }
-        )
-      }
-    } else {
-      // 1. Unduh dan validasi buffer video MP4 asli tanpa re-encoding (kualitas tetap original HD)
-      let validVideo = await downloadValidTikTokVideo(candidateUrls)
-
-      // Jika seluruh kandidat scraper utama gagal, coba dari provider backup
-      if (!validVideo) {
-        try {
-          const backup = await apiTiktokDownload(text, { withMetadata: true })
-          const backupCandidates = [
-            backup.result?.download?.video?.nowm_hd,
-            backup.result?.download?.video?.nowm,
-            backup.result?.download?.video?.wm
-          ].filter(Boolean)
-          validVideo = await downloadValidTikTokVideo(backupCandidates)
-        } catch (errBackup) {}
-      }
-
-      const cleanFileName = (result.author?.nickname || result.author?.name || 'tiktok').replace(/[^\w\s-]/gi, '').trim() || 'tiktok'
-      const videoCaption = `${caption}\n\n_💡 Ketik *.ttmp3 ${text}* untuk unduh audio MP3._`
-
-      if (validVideo?.buffer) {
-        // Kirimkan buffer MP4 asli yang telah tervalidasi via native WhatsApp Video Message
-        // Format native ini 100% kompatibel di semua platform WA, bisa langsung dipencet & diputar lancar
-        await naze.sendMessage(
-          m.chat,
-          {
-            video: validVideo.buffer,
-            caption: videoCaption,
-            mimetype: 'video/mp4',
-            fileName: `${cleanFileName}.mp4`
-          },
-          { quoted: m }
-        )
-      } else if (candidateUrls[0]) {
-        // Fallback ke direct URL jika buffer gagal
-        await naze.sendMessage(
-          m.chat,
-          {
-            video: { url: candidateUrls[0] },
-            caption: videoCaption,
-            mimetype: 'video/mp4',
-            fileName: `${cleanFileName}.mp4`
-          },
-          { quoted: m }
-        )
-      } else {
-        return m.reply('❌ Gagal memproses video TikTok. File video tidak dapat diakses atau dibatasi.')
+      } catch (errAudio) {
+        console.warn('⚠️ Gagal mengirim audio TikTok otomatis:', errAudio.message)
       }
     }
+
+    // Jalankan media (video/foto) dan audio secara paralel (bersamaan) tanpa saling membatasi!
+    await Promise.allSettled([sendMediaTask(), sendAudioTask()])
 
     await m.react('✅')
 

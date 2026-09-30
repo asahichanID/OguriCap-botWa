@@ -523,6 +523,24 @@ const listBanSticker = async ({ naze, m, isCreator, prefix }) => {
 	}
 };
 
+/**
+ * Mengambil salinan daftar stiker yang sedang di-ban
+ */
+function getBannedStickers() {
+	return [...bannedList];
+}
+
+/**
+ * Menghapus seluruh stiker yang di-ban (unban massal stiker)
+ */
+function unbanAllStickers() {
+	const count = bannedList.length;
+	bannedList = [];
+	bannedHashSet.clear();
+	saveDB();
+	return count;
+}
+
 // Export semua fungsi utama di bagian paling bawah
 export {
 	banSticker,
@@ -535,5 +553,7 @@ export {
 	addPermanentBannedUser,
 	removePermanentBannedUser,
 	clearPermanentBannedUsers,
-	isUserStickerBannedPermanently
+	isUserStickerBannedPermanently,
+	getBannedStickers,
+	unbanAllStickers
 };

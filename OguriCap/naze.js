@@ -175,6 +175,23 @@ const fileContent = fs.readFileSync(__filename, 'utf-8');
 const TOTAL_CASE = (fileContent.match(/case '/g) || []).length
 const casesArray = [...fileContent.matchAll(/case\s+['"]([^'"]+)['"]/g)].map(match => match[1]);
 
+function isUserBanned(sender, db, naze, store) {
+	if (!sender || !db?.users) return false;
+	if (db.users[sender]?.ban) return true;
+	const num = String(sender).replace(/[^0-9]/g, '');
+	if (num) {
+		const waJid = num + '@s.whatsapp.net';
+		if (db.users[waJid]?.ban) return true;
+	}
+	if (typeof naze?.findJidByLid === 'function') {
+		try {
+			const resolved = naze.findJidByLid(sender, store, true);
+			if (resolved && db.users[resolved]?.ban) return true;
+		} catch {}
+	}
+	return false;
+}
+
 const naze = async (naze, m, msg, store) => {
 	if (!global.db) global.db = {};
 	global.db.cases = global.db.cases || casesArray;
@@ -336,6 +353,13 @@ const naze = async (naze, m, msg, store) => {
 		// ==========================================
 		if (m.isGroup && isLocked(m.chat) && !isCreator) {
 			return; // Bot mengabaikan pesan sepenuhnya jika grup dikunci oleh owner
+		}
+
+		// ==========================================
+		// 🛡️ STRICT USER BAN FILTER: User yang di-ban DILARANG KERAS menggunakan bot
+		// ==========================================
+		if (!isCreator && isUserBanned(m.sender, db, naze, store)) {
+			return; // 100% diblokir dari semua fitur, interaksi, game, AI, dan command bot
 		}
 		const args = body.trim().split(/ +/).slice(1)
 		const quoted = m.quoted ? m.quoted : m
@@ -1390,15 +1414,53 @@ ${statusText}
 			}
 			break
 			case 'ban':
-			case 'banned':
-			case 'banp': {
-				await handleBans({ naze, m, args, text, isCreator, prefix, command, db, store });
+			case 'banned': {
+				if (!isCreator) return m.reply(global.mess.owner);
+				let target = m.mentionedJid?.[0] || (m.quoted && m.quoted.sender) || null;
+				if (!target && text) {
+					const numOnly = text.replace(/[^0-9]/g, '');
+					if (numOnly.length >= 5) {
+						const findJid = typeof naze.findJidByLid === 'function' ? naze.findJidByLid(numOnly + '@lid', store) : null;
+						const klss = numOnly + (findJid ? '@lid' : '@s.whatsapp.net');
+						target = typeof naze.findJidByLid === 'function' ? naze.findJidByLid(klss, store, true) : klss;
+					}
+				}
+				if (!target) return m.reply(`Kirim/tag nomernya atau reply pesannya!\nContoh:\n${prefix + command} @user\n${prefix + command} 62xxx`);
+
+				const botNumber = naze.decodeJid(naze.user.id);
+				if (target === botNumber) return m.reply('❌ Tidak dapat mem-ban nomor bot sendiri!');
+				if (target === m.sender) return m.reply('❌ Tidak dapat mem-ban nomor Anda sendiri!');
+
+				if (!db.users) db.users = {};
+				if (!db.users[target]) db.users[target] = {};
+				db.users[target].ban = true;
+				global._dbDirty = true;
+
+				const targetName = db.users[target]?.customName || db.users[target]?.name || (await naze.getName(target).catch(() => 'User')) || 'User';
+				await m.reply(`✅ *User Berhasil Di-Ban!*\n\n👤 *Nama :* ${targetName}\n📱 *User :* @${target.split('@')[0]}\n🔒 *Status :* BANNED (Tidak dapat menggunakan bot lagi selagi belum di-unban)`, { mentions: [target] });
 			}
 			break
 			case 'unban':
-			case 'unbanned':
-			case 'unbanp': {
-				await handleUnbans({ naze, m, args, text, isCreator, prefix, command, db, store });
+			case 'unbanned': {
+				if (!isCreator) return m.reply(global.mess.owner);
+				let target = m.mentionedJid?.[0] || (m.quoted && m.quoted.sender) || null;
+				if (!target && text) {
+					const numOnly = text.replace(/[^0-9]/g, '');
+					if (numOnly.length >= 5) {
+						const findJid = typeof naze.findJidByLid === 'function' ? naze.findJidByLid(numOnly + '@lid', store) : null;
+						const klss = numOnly + (findJid ? '@lid' : '@s.whatsapp.net');
+						target = typeof naze.findJidByLid === 'function' ? naze.findJidByLid(klss, store, true) : klss;
+					}
+				}
+				if (!target) return m.reply(`Kirim/tag nomernya atau reply pesannya!\nContoh:\n${prefix + command} @user\n${prefix + command} 62xxx`);
+
+				if (!db.users) db.users = {};
+				if (!db.users[target]) db.users[target] = {};
+				db.users[target].ban = false;
+				global._dbDirty = true;
+
+				const targetName = db.users[target]?.customName || db.users[target]?.name || (await naze.getName(target).catch(() => 'User')) || 'User';
+				await m.reply(`✅ *User Berhasil Di-Unban!*\n\n👤 *Nama :* ${targetName}\n📱 *User :* @${target.split('@')[0]}\n🔓 *Status :* UNBANNED (Sudah bisa menggunakan bot kembali)`, { mentions: [target] });
 			}
 			break
 			case 'addowner': {
