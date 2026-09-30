@@ -62,6 +62,7 @@ import { getLevelInfo, generateBaseXP, addExp, handleBackgroundCommandXp, checkA
 import { hasAnyActiveGame, handleIncomingGameAnswer } from './lib/gameSessionManager.js';
 import { setLvl } from './plugins/cheat.js';
 import { banSticker, unbanSticker, listBanSticker, checkAndHandleBannedSticker } from './plugins/bansticker.js';
+import { handleUnbans, handleBans } from './plugins/userBanManager.js';
 import { runHeavyTask, getHeavyEngineStats } from './src/heavyEngine.js';
 import { kirimAngryBirds } from './game/angry_birds.js';
 import { kirimBalap } from './game/balap.js';
@@ -1109,7 +1110,7 @@ try {
 			if (!allowed) return;
 
 			// 🔮 XP DIBALIK LAYAR UNTUK COMMAND VALID (1-7 XP)
-			if (!['setlvl', 'setlevel', 'bans', 'bansticker', 'banstiker', 'unbans', 'unbansticker', 'delbans', 'listbans', 'listbansticker'].includes(targetCmd)) {
+			if (!['setlvl', 'setlevel', 'bans', 'bansp', 'banp', 'unbansp', 'unbanp', 'bansticker', 'banstiker', 'unbans', 'unbansticker', 'delbans', 'listbans', 'listbansticker'].includes(targetCmd)) {
 				await handleBackgroundCommandXp({ db, jid: m.sender, command: targetCmd, naze, m }).catch(() => {});
 			}
 		}
@@ -1388,28 +1389,16 @@ ${statusText}
 				} else m.reply(`Example: ${prefix + command} 62xxx`)
 			}
 			break
-			case 'ban': case 'banned': {
-				if (!isCreator) return m.reply(global.mess.owner)
-				if (!text) return m.reply(`Kirim/tag Nomernya!\nExample:\n${prefix + command} 62xxx`)
-				const findJid = naze.findJidByLid(text.replace(/[^0-9]/g, '') + '@lid', store);
-				const klss = text.replace(/[^0-9]/g, '') + (findJid ? '@lid' :  '@s.whatsapp.net')
-				const nmrnya = naze.findJidByLid(klss, store, true)
-				if (db.users[nmrnya] && !db.users[nmrnya].ban) {
-					db.users[nmrnya].ban = true
-					m.reply(global.mess.done)
-				} else m.reply('User tidak terdaftar di database!')
+			case 'ban':
+			case 'banned':
+			case 'banp': {
+				await handleBans({ naze, m, args, text, isCreator, prefix, command, db, store });
 			}
 			break
-			case 'unban': case 'unbanned': {
-				if (!isCreator) return m.reply(global.mess.owner)
-				if (!text) return m.reply(`Kirim/tag Nomernya!\nExample:\n${prefix + command} 62xxx`)
-				const findJid = naze.findJidByLid(text.replace(/[^0-9]/g, '') + '@lid', store);
-				const klss = text.replace(/[^0-9]/g, '') + (findJid ? '@lid' :  '@s.whatsapp.net')
-				const nmrnya = naze.findJidByLid(klss, store, true)
-				if (db.users[nmrnya] && db.users[nmrnya].ban) {
-					db.users[nmrnya].ban = false
-					m.reply(global.mess.done)
-				} else m.reply('User tidak terdaftar di database!')
+			case 'unban':
+			case 'unbanned':
+			case 'unbanp': {
+				await handleUnbans({ naze, m, args, text, isCreator, prefix, command, db, store });
 			}
 			break
 			case 'addowner': {
@@ -1534,14 +1523,22 @@ break
 			}
 			break
 			case 'bans':
+			case 'bansp': {
+				await handleBans({ naze, m, args, text, isCreator, prefix, command, db, store });
+			}
+			break
 			case 'bansticker':
 			case 'banstiker': {
 				await banSticker({ naze, m, args, text, isCreator, prefix, command });
 			}
 			break
 			case 'unbans':
-			case 'unbansticker':
+			case 'unbansp':
 			case 'delbans': {
+				await handleUnbans({ naze, m, args, text, isCreator, prefix, command, db, store });
+			}
+			break
+			case 'unbansticker': {
 				await unbanSticker({ naze, m, args, text, isCreator, prefix, command });
 			}
 			break

@@ -306,8 +306,9 @@ Sesuai konfigurasi keamanan akun dan aturan limit:
 | `.delppbot` | `.delppbot` | 👑 **Owner** | Hapus foto profil avatar bot WhatsApp |
 | `.block` | `.block @user` | 👑 **Owner** | Blokir kontak WhatsApp dari bot |
 | `.unblock` | `.unblock @user` | 👑 **Owner** | Buka blokir kontak WhatsApp |
-| `.ban` | `.ban @user` | 👑 **Owner** | Banned nomor agar tidak bisa menggunakan semua perintah bot |
-| `.unban` | `.unban @user` | 👑 **Owner** | Cabut status banned pengguna |
+| `.ban` / `.bans` | `.ban @user` / `.bans 62xxx` | 👑 **Owner** | Banned nomor user agar tidak bisa menggunakan perintah bot, atau reply stiker untuk ban stiker spesifik |
+| `.bans p` / `.bans permanen` | `.bans p @user` | 👑 **Owner** | Banned stiker permanen untuk user: semua stiker apa pun yang dikirim user ini di grup otomatis langsung dihapus silent |
+| `.unban` / `.unbans` | `.unbans` / `.unbans all` | 👑 **Owner** | Buka panel mengambang interaktif untuk memilih unban user berdasarkan nama, atau unban semua user sekaligus |
 | `.adduang` | `.adduang @user <jumlah>` | 👑 **Owner** | Tambah saldo rekening Tracen Bank milik pengguna |
 | `.addlimit` | `.addlimit @user <jumlah>` | 👑 **Owner** | Tambah kuota limit harian pengguna tertentu |
 | `.setlimitbot` | `.setlimitbot <angka>` | 👑 **Owner** | Atur batas limit default harian untuk pengguna gratis |

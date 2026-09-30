@@ -207,6 +207,33 @@ function isStickerBanned(m) {
 	return false;
 }
 
+// Set user yang di-ban permanen stiker (.bans p / .bans permanen)
+const permanentBannedUsers = new Set();
+
+function addPermanentBannedUser(jid) {
+	if (!jid) return;
+	permanentBannedUsers.add(String(jid));
+	permanentBannedUsers.add(String(jid).toLowerCase());
+}
+
+function removePermanentBannedUser(jid) {
+	if (!jid) return;
+	permanentBannedUsers.delete(String(jid));
+	permanentBannedUsers.delete(String(jid).toLowerCase());
+}
+
+function clearPermanentBannedUsers() {
+	permanentBannedUsers.clear();
+}
+
+function isUserStickerBannedPermanently(jid) {
+	if (!jid) return false;
+	const s = String(jid);
+	return permanentBannedUsers.has(s) ||
+		permanentBannedUsers.has(s.toLowerCase()) ||
+		Boolean(global.db?.users?.[s]?.banStickerPermanent);
+}
+
 /**
  * Deteksi dan langsung hapus stiker terlarang di grup secara silent dan secepat kilat
  * @returns {Promise<boolean>} true jika stiker terdeteksi dan ditangani, false jika bukan
@@ -218,8 +245,13 @@ async function checkAndHandleBannedSticker({ naze, m }) {
 	try {
 		if (!isStickerMessage(m)) return false;
 
-		const banned = isStickerBanned(m);
-		if (!banned) return false;
+		const senderJid = m.sender || m.key?.participant;
+		// 1. Cek apakah pengirim stiker di-ban permanen stiker (.bans p)
+		const isPermUser = isUserStickerBannedPermanently(senderJid);
+		// 2. Cek apakah stiker ini masuk daftar hash stiker terlarang (.bans biasa)
+		const isHashBanned = !isPermUser && isStickerBanned(m);
+
+		if (!isPermUser && !isHashBanned) return false;
 
 		// Jika terbukti stiker terlarang dan bot adalah admin di grup:
 		if (m.isBotAdmin) {
@@ -228,12 +260,13 @@ async function checkAndHandleBannedSticker({ naze, m }) {
 					remoteJid: m.chat,
 					fromMe: false,
 					id: m.id || m.key?.id,
-					participant: m.sender || m.key?.participant
+					participant: senderJid
 				}
 			}, { urgent: true }).catch(() => {});
 		}
 		// Logging jelas di console server
-		console.log(`[BANSTICKER] ⚡ Berhasil menghapus stiker terlarang dari @${(m.sender || '').split('@')[0]} di grup ${m.chat}`);
+		const reason = isPermUser ? 'bans permanen user (.bans p)' : 'stiker terdaftar';
+		console.log(`[BANSTICKER] ⚡ Berhasil menghapus stiker (${reason}) dari @${(senderJid || '').split('@')[0]} di grup ${m.chat}`);
 		return true;
 	} catch (e) {
 		console.error('[BANSTICKER] Error in checkAndHandleBannedSticker:', e.message);
@@ -496,5 +529,11 @@ export {
 	unbanSticker,
 	listBanSticker,
 	checkAndHandleBannedSticker,
-	isStickerBanned
+	isStickerBanned,
+	isQuotedSticker,
+	isStickerMessage,
+	addPermanentBannedUser,
+	removePermanentBannedUser,
+	clearPermanentBannedUsers,
+	isUserStickerBannedPermanently
 };
