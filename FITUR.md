@@ -298,7 +298,9 @@ Sesuai konfigurasi keamanan akun dan aturan limit:
 | `.profile` / `.me` | `.profile` | 🆓 **Gratis** | Cek kartu identitas Trainer, saldo uang, status VIP, dan sisa limit |
 | `.limit` / `.ceklimit` | `.limit` | 🆓 **Gratis** | Cek sisa kuota limit harian untuk fitur downloader |
 | `.totalfitur` | `.totalfitur` | 🆓 **Gratis** | Tampilkan ringkasan seluruh jumlah fitur yang tersedia di bot |
-| `.backup` | `.backup` | 👑 **Owner** | Backup file database pengguna bot ke berkas aman |
+| `.bd` / `.backdata` / `.backup database` | `.bd` / `.bd auto on/off` / `.bd status` | 👑 **Owner** | Backup riwayat user & profile (level, koin, exp, limit, inventory) ke JSON. Mendukung pengiriman semi-otomatis tiap 48 jam (2 hari) berupa dokumen file doang tanpa teks langsung ke chat nomor owner |
+| `.impd` / `.importdata` | Balas file .json backup dengan `.impd` | 👑 **Owner** | Buka pembungkus file JSON backup, bongkar isinya, dan pulihkan seluruh riwayat profil, level, dan koin user kembali normal |
+| `.backup` | `.backup ‹all/session/database›` | 👑 **Owner** | Backup file database pengguna bot ke berkas aman |
 | `.update` | `.update` | 👑 **Owner** | Tarik dan pasang pembaruan script terbaru dari repository |
 | `.shutdown` / `.off` | `.shutdown` | 👑 **Owner** | Matikan server bot secara manual |
 | `.setbio` | `.setbio <teks bio>` | 👑 **Owner** | Ganti bio teks "About" WhatsApp pada nomor bot |

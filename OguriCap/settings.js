@@ -27,7 +27,7 @@ global.tempatDB = 'database.json' // Taruh url mongodb di sini jika menggunakan 
 global.tempatStore = 'baileys_store.json' // Taruh url mongodb di sini jika menggunakan mongodb. Format : 'mongodb+srv://...'
 global.pairing_code = true
 global.number_bot = '' // Kalo pake panel bisa masukin nomer di sini, jika belum ambil session. Format : '628xx'
-global.custom_pairing_code = '' // Kosongkan agar menggunakan kode pairing standar resmi Baileys (paling stabil & kompatibel)
+global.custom_pairing_code = 'OGURICAP' // Kode pairing kustom resmi OguriCap (8 karakter)
 
 const thumbPath = path.join(__dirname, 'src/media/naze.png');
 const fakePdfPath = path.join(__dirname, 'src/media/fake.pdf');

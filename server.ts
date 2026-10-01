@@ -65,7 +65,7 @@ const botState: BotState = {
   status: 'stopped',
   pairingCode: null,
   botNumber: null,
-  customCode: null,
+  customCode: 'OGURICAP',
   connectedUser: null,
   startedAt: null,
   pid: null,
@@ -194,10 +194,10 @@ function startBot(options?: { botNumber?: string; customCode?: string }) {
   if (botNumber.startsWith('08')) {
     botNumber = '628' + botNumber.slice(2);
   }
-  const customCode = options?.customCode ? options.customCode.toUpperCase().replace(/[^A-Z0-9]/g, '').trim() : '';
+  const customCode = (options?.customCode ? options.customCode : (process.env.CUSTOM_PAIRING_CODE || 'OGURICAP')).toUpperCase().replace(/[^A-Z0-9]/g, '').trim() || 'OGURICAP';
 
   botState.botNumber = botNumber || null;
-  botState.customCode = customCode || null;
+  botState.customCode = customCode;
   botState.status = 'starting';
   botState.startedAt = Date.now();
   botState.hasSession = checkHasSession();
@@ -1237,7 +1237,7 @@ async function startServer() {
       setTimeout(() => {
         startBot({
           botNumber: process.env.BOT_NUMBER,
-          customCode: process.env.CUSTOM_PAIRING_CODE,
+          customCode: process.env.CUSTOM_PAIRING_CODE || 'OGURICAP',
         });
       }, 1500);
     }

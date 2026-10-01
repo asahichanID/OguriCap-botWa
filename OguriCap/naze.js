@@ -63,6 +63,13 @@ import { hasAnyActiveGame, handleIncomingGameAnswer } from './lib/gameSessionMan
 import { setLvl } from './plugins/cheat.js';
 import { banSticker, unbanSticker, listBanSticker, checkAndHandleBannedSticker } from './plugins/bansticker.js';
 import { handleUnbans, handleBans } from './plugins/userBanManager.js';
+import {
+	handleBackupCommand,
+	handleImportCommand,
+	initAutoBackup48hScheduler,
+	isPendingImport,
+	clearPendingImport
+} from './plugins/userBackupManager.js';
 import { runHeavyTask, getHeavyEngineStats } from './src/heavyEngine.js';
 import { kirimAngryBirds } from './game/angry_birds.js';
 import { kirimBalap } from './game/balap.js';
@@ -236,6 +243,7 @@ const naze = async (naze, m, msg, store) => {
     let werewolf = db.game.werewolf
 	
 	const ownerNumber = set.owner = [...new Set([...global.owner, botNumber.split('@')[0], ...set?.owner || []])];
+	try { initAutoBackup48hScheduler(naze, () => global.db, () => ownerNumber); } catch {}
 	
 	try {
 		await GroupUpdate(naze, m, store);
@@ -367,6 +375,21 @@ const naze = async (naze, m, msg, store) => {
 		const quoted = m.quoted ? m.quoted : m
 		const command = isCmd ? body.slice(prefix.length).trim().split(/ +/).shift().toLowerCase() : '';
 		const modeMassal = args[0]?.toLowerCase() || ''
+
+		// Interseptor file dokumen JSON dari Owner jika ada sesi pending import aktif
+		if (isCreator && isPendingImport(m.sender) && !isCmd) {
+			const isDoc = Boolean(
+				m.type === 'documentMessage' ||
+				m.msg?.mimetype?.includes('json') ||
+				(typeof m.msg?.fileName === 'string' && m.msg.fileName.toLowerCase().endsWith('.json')) ||
+				m.mime?.includes('json')
+			);
+			if (isDoc) {
+				clearPendingImport(m.sender);
+				await handleImportCommand({ naze, m, db, args: [], text: '', isCreator, prefix, command: 'importdata', store });
+				return;
+			}
+		}
 		db.game.playlist ??= {}
 		db.mahiruRelationships ??= {}
 		db.mahiruMemory ??= {}
@@ -1892,7 +1915,12 @@ break
 			break
 			case 'backup': {
 				if (!isCreator) return m.reply(global.mess.owner)
-				switch (args[0]) {
+				const sub = (args[0] || '').toLowerCase();
+				if (['database', 'db', 'user', 'users', 'data', ''].includes(sub)) {
+					await handleBackupCommand({ naze, m, db, args: args.slice(1), text, isCreator, prefix, command, ownerNumber });
+					break;
+				}
+				switch (sub) {
 					case 'all':
 					let bekup = './database/backup_all.tar.gz';
 					tarBackup('./', bekup).then(() => {
@@ -1904,9 +1932,7 @@ break
 					}).catch(e => m.reply('Gagal backup: ', + e))
 					break
 					case 'auto':
-					if (set.autobackup) return m.reply('Sudah Aktif Sebelumnya!')
-					set.autobackup = true
-					m.reply('Sukses Mengaktifkan Auto Backup')
+					await handleBackupCommand({ naze, m, db, args: ['auto', ...args.slice(1)], text, isCreator, prefix, command, ownerNumber });
 					break
 					case 'session':
 					await m.reply({
@@ -1915,22 +1941,23 @@ break
 						fileName: 'creds.json'
 					});
 					break
-					case 'database':
-					let tglnya = new Date().toISOString().replace(/[:.]/g, '-');
-					let datanya = './database/' + global.tempatDB;
-					if (global.tempatDB.startsWith('mongodb')) {
-						datanya = './database/backup_database.json';
-						fs.writeFileSync(datanya, JSON.stringify(global.db, null, 2), 'utf-8');
-					}
-					await m.reply({
-						document: fs.readFileSync(datanya),
-						mimetype: 'application/json',
-						fileName: tglnya + '_database.json'
-					})
-					break
 					default:
-					m.reply('Gunakan perintah:\n- backup all\n- backup auto\n- backup session\n- backup database');
+					await handleBackupCommand({ naze, m, db, args, text, isCreator, prefix, command, ownerNumber });
 				}
+			}
+			break
+			case 'bd':
+			case 'backdata':
+			case 'backupdata':
+			case 'backupdb': {
+				await handleBackupCommand({ naze, m, db, args, text, isCreator, prefix, command, ownerNumber });
+			}
+			break
+			case 'importdata':
+			case 'impd':
+			case 'restordata':
+			case 'restoredata': {
+				await handleImportCommand({ naze, m, db, args, text, isCreator, prefix, command, store });
 			}
 			break
 			case 'getsession': {
@@ -6909,6 +6936,8 @@ break
 │ ▫ ${prefix}getsession / ${prefix}delsession
 │ ▫ ${prefix}delsampah / ${prefix}deltemp
 │ ▫ ${prefix}backup ‹all/auto/session/database›
+│ ▫ ${prefix}bd / ${prefix}backdata ‹auto/status›
+│ ▫ ${prefix}impd / ${prefix}importdata ‹reply file json›
 │ ▫ ${prefix}addcase / ${prefix}getcase / ${prefix}delcase
 │ ▫ ${prefix}upsw
 │ ▫ $ / > / <
@@ -7333,6 +7362,8 @@ break
 │ ▫ ${prefix}getsession / ${prefix}delsession
 │ ▫ ${prefix}delsampah / ${prefix}deltemp
 │ ▫ ${prefix}backup ‹all/auto/session/database›
+│ ▫ ${prefix}bd / ${prefix}backdata ‹auto/status›
+│ ▫ ${prefix}impd / ${prefix}importdata ‹reply file json›
 │ ▫ ${prefix}addcase / ${prefix}getcase / ${prefix}delcase
 │ ▫ ${prefix}upsw
 │ ▫ $ / > / <

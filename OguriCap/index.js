@@ -43,6 +43,7 @@ import { GroupParticipantsUpdate, MessagesUpsert, Solving } from './src/message.
 import { getSentBotMessage } from './src/botGuard.js';
 import { startSholatScheduler } from './lib/sholat.js';
 import { initScheduleLockTimer } from './group/kunci.js';
+import { initAutoBackup48hScheduler } from './plugins/userBackupManager.js';
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -536,25 +537,23 @@ async function startNazeBot() {
 				if (naze.authState.creds.registered) return;
 				console.log('Requesting Pairing Code...')
 				
-				// WhatsApp Crockford Base32 characters: 1-9, A-Z excluding 0, O, I, L, U
-				const CROCKFORD_VALID = /^[1-9A-HJ-KM-NP-TV-Z]{8}$/;
-				let customCode = (process.env.CUSTOM_PAIRING_CODE || global.custom_pairing_code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+				// Kode pairing kustom resmi OguriCap (8 karakter)
+				let customCode = (process.env.CUSTOM_PAIRING_CODE || global.custom_pairing_code || 'OGURICAP').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+				if (!customCode || customCode.length !== 8) {
+					customCode = 'OGURICAP';
+				}
 				let code;
 				
-				if (customCode && CROCKFORD_VALID.test(customCode)) {
+				try {
+					console.log(chalk.cyan(`[PAIRING] Menggunakan kode pairing kustom: ${customCode}`));
+					code = await naze.requestPairingCode(phoneNumber.trim(), customCode);
+				} catch (err) {
+					console.log(chalk.yellow('[PAIRING] Request pairing code kustom error:'), err?.message || err);
 					try {
-						console.log(chalk.cyan(`[PAIRING] Mencoba custom code: ${customCode}`));
-						code = await naze.requestPairingCode(phoneNumber.trim(), customCode);
-					} catch (err) {
-						console.log(chalk.yellow('[PAIRING] Custom code gagal, beralih ke kode standar Baileys:'), err?.message || err);
 						code = await naze.requestPairingCode(phoneNumber.trim());
+					} catch (e2) {
+						console.error(chalk.red('[PAIRING] Fallback pairing code error:'), e2?.message || e2);
 					}
-				} else {
-					if (customCode) {
-						console.log(chalk.yellow(`[PAIRING] Custom code "${customCode}" dilewati (harus 8 karakter Crockford Base32 tanpa 0/O/I/L/U). Menggunakan kode resmi WhatsApp.`));
-					}
-					// Gunakan standar Baileys (100% kompatibel dan resmi didukung WhatsApp)
-					code = await naze.requestPairingCode(phoneNumber.trim());
 				}
 				
 				const formatted = (code && typeof code === 'string') ? (code.match(/.{1,4}/g)?.join(' - ') || code) : code;
@@ -603,6 +602,11 @@ async function startNazeBot() {
 				initScheduleLockTimer(naze);
 			} catch (eLock) {
 				console.warn('⚠️ [LOCK SCHEDULER] Init error:', eLock?.message || eLock);
+			}
+			try {
+				initAutoBackup48hScheduler(naze, () => global.db, () => global.owner);
+			} catch (eBk) {
+				console.warn('⚠️ [AUTO BACKUP 48H] Init error:', eBk?.message || eBk);
 			}
 		}
 		if (qr) {

@@ -34,8 +34,8 @@ export const PairingCard: React.FC<PairingCardProps> = ({
   isActionLoading,
 }) => {
   const [phoneNumber, setPhoneNumber] = useState(state.botNumber || '');
-  const [useCustomCode, setUseCustomCode] = useState(Boolean(state.customCode));
-  const [customCode, setCustomCode] = useState(state.customCode || '');
+  const [useCustomCode, setUseCustomCode] = useState(true);
+  const [customCode, setCustomCode] = useState(state.customCode || 'OGURICAP');
   const [hasCopied, setHasCopied] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
 
@@ -48,15 +48,12 @@ export const PairingCard: React.FC<PairingCardProps> = ({
 
   const isRunning = state.status !== 'stopped' && state.status !== 'error';
 
-  // Check if custom code has disallowed characters (0, O, I, L, U are excluded from WhatsApp Base32)
-  const hasInvalidChars = /[0OILU]/i.test(customCode);
-
   const handleStartSubmit = () => {
-    onStart(phoneNumber, useCustomCode ? customCode : '');
+    onStart(phoneNumber, useCustomCode ? (customCode || 'OGURICAP') : '');
   };
 
   const handleRestartSubmit = () => {
-    onRestart(phoneNumber, useCustomCode ? customCode : '');
+    onRestart(phoneNumber, useCustomCode ? (customCode || 'OGURICAP') : '');
   };
 
   return (
@@ -239,8 +236,8 @@ export const PairingCard: React.FC<PairingCardProps> = ({
                 </span>
                 <span className="text-[11px] text-slate-500 block mt-0.5">
                   {useCustomCode
-                    ? 'Kustom 8 karakter (Eksperimental)'
-                    : 'Kode Resmi WhatsApp Standar (Rekomendasi Utama — 100% Berhasil)'}
+                    ? 'Kode Pairing Kustom: OGURICAP (Didukung Penuh)'
+                    : 'Kode Resmi WhatsApp Standar (Acak)'}
                 </span>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
@@ -262,7 +259,7 @@ export const PairingCard: React.FC<PairingCardProps> = ({
                   htmlFor="bot-custom-code-input"
                   className="block text-xs font-semibold text-slate-700 mb-1.5"
                 >
-                  Custom Pairing Code (Tepat 8 Karakter)
+                  Custom Pairing Code (8 Karakter)
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
@@ -274,17 +271,15 @@ export const PairingCard: React.FC<PairingCardProps> = ({
                     maxLength={8}
                     value={customCode}
                     onChange={(e) => setCustomCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-                    placeholder="Contoh: 8K7W2M9P"
+                    placeholder="OGURICAP"
                     disabled={isRunning}
                     className="w-full pl-9 pr-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 uppercase tracking-wider font-mono font-bold disabled:bg-slate-50 disabled:text-slate-500"
                   />
                 </div>
-                {hasInvalidChars && (
-                  <p className="text-[11px] text-amber-600 mt-1 font-medium flex items-center gap-1">
-                    <Info className="w-3.5 h-3.5 shrink-0" />
-                    Perhatian: Karakter 0, O, I, L, U tidak didukung WhatsApp Base32 dan dapat menyebabkan pairing gagal. Sistem akan otomatis beralih ke kode standar jika ditolak.
-                  </p>
-                )}
+                <p className="text-[11px] text-emerald-600 mt-1.5 font-medium flex items-center gap-1">
+                  <Sparkles className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                  Kode pairing default resmi: <strong>OGURICAP</strong> (8 karakter, didukung penuh).
+                </p>
               </div>
             )}
           </div>
