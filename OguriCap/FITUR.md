@@ -156,6 +156,8 @@ Sesuai konfigurasi keamanan akun dan aturan limit:
 | `.klaimdino` | `.klaimdino <kode>` | 🆓 **Gratis** | Klaim hadiah koin & XP resmi dari hasil bermain game Chrome Dino (anti-farming) |
 | `.bayardinoauto` | `.bayardinoauto` | 🆓 **Gratis** | Beli aktivasi Mode Automatic Dino (150rb Koin masuk ke Kas Bank) agar AI memainkan game anti gagal |
 | `.sonic` | `.sonic` | 🆓 **Gratis** | Balapan Sonic Dash mini-game |
+| `.snake` / `.ular` | `.snake` | 🆓 **Gratis** | Game klasik Ular Rimba inline HTML interaktif dengan D-pad sentuh |
+| `.snake2` / `.ular2` | `.snake2` | 🆓 **Gratis** | Game Ular Rimba 2 eksperimen: Peta luas ~1000m², Minimap radar pojok kiri atas (titik hijau = pengguna, warna-warni = 6-9 makanan), pembatas garis merah laser mematikan, kamera viewport anti-lag |
 | `.blackjack` | `.blackjack` | 🆓 **Gratis** | Permainan kartu 21 Blackjack |
 | `.dadu` | `.dadu` | 🆓 **Gratis** | Lempar dadu angka 1-6 |
 | `.catur` / `.chess` | `.catur` | 🆓 **Gratis** | Papan catur visual interaktif 2 pemain via chat grup |
@@ -164,7 +166,8 @@ Sesuai konfigurasi keamanan akun dan aturan limit:
 | `.tebakbom` | `.tebakbom` | 🆓 **Gratis** | Permainan ranjau bom (Minesweeper) interaktif |
 | `.suitpvp` | `.suitpvp @lawan` | 🆓 **Gratis** | Duel suit batu-gunting-kertas melawan teman |
 | `.rampok` | `.rampok @user` | 🆓 **Gratis** | Coba rampok uang Trainer lain dengan risiko tertangkap |
-| `.begal` | `.begal @user` | 🆓 **Gratis** | Begal Trainer di jalanan akademi |
+| `.begal` | `.begal @user` | 🆓 **Gratis** | Begal modern: Gada CD jika sukses, CD 30m jika gagal/mokad, sticker Polisi Oguri Cap jika tertangkap |
+| `.brankas` | `.brankas <1-5>` | 🆓 **Gratis** | Sistem pertahanan keuangan dompet (Tingkat 1 Biasa s/d Tingkat 5 Militer Lv 25) |
 | `.tekateki` | `.tekateki` | 🆓 **Gratis** | Kuis tebak teka-teki logika |
 | `.tebaklirik` | `.tebaklirik` | 🆓 **Gratis** | Kuis tebak judul lagu dari penggalan lirik |
 | `.tebakkata` | `.tebakkata` | 🆓 **Gratis** | Kuis tebak kata berpetunjuk |

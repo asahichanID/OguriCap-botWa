@@ -10,12 +10,13 @@ import { HdTestTab } from './components/HdTestTab';
 import { CaturTab } from './components/CaturTab';
 import { TebakBomTab } from './components/TebakBomTab';
 import { DinoTab } from './components/DinoTab';
+import { Snake2Tab } from './components/Snake2Tab';
 import { DownloadZipModal } from './components/DownloadZipModal';
 import { BotState, LogEntry, SystemStats } from './types';
 import { safeFetchJson, safeJsonParse } from './lib/safeJson';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'catur' | 'tebakbom' | 'dino' | 'guide'>('control');
+  const [activeTab, setActiveTab] = useState<'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'catur' | 'tebakbom' | 'dino' | 'snake2' | 'guide'>('control');
   const [isDownloadZipOpen, setIsDownloadZipOpen] = useState(false);
   const [botState, setBotState] = useState<BotState>({
     status: 'stopped',
@@ -50,6 +51,8 @@ export default function App() {
       setActiveTab('tebakbom');
     } else if (tabParam === 'dino' || tabParam === 'chromedino' || tabParam === 'dinorun') {
       setActiveTab('dino');
+    } else if (tabParam === 'snake2' || tabParam === 'ular2' || tabParam === 'snake' || tabParam === 'mmo') {
+      setActiveTab('snake2');
     }
   }, []);
 
@@ -334,6 +337,8 @@ export default function App() {
         {activeTab === 'tebakbom' && <TebakBomTab />}
 
         {activeTab === 'dino' && <DinoTab />}
+
+        {activeTab === 'snake2' && <Snake2Tab />}
 
         {activeTab === 'guide' && (
           <GuideTab onOpenDownloadZip={() => setIsDownloadZipOpen(true)} />

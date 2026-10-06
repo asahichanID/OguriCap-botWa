@@ -52,7 +52,7 @@ import { GroupUpdate, LoadDataBase } from './src/message.js';
 import { getSholatConfig, updateSholatGroupState, generateRamadanPrayerCanvas, getRealtimePrayerSchedule, buildPrayerMessageCaption, sendPrayerNotification, sendPrayerAudioVN, ADZAN_REGULAR_PATH, ADZAN_SUBUH_PATH } from './lib/sholat.js';
 import { JadiBot, StopJadiBot, ListJadiBot } from './src/jadibot.js';
 import { cmdAdd, cmdAddHit, addExpired, getPosition, getExpired, getStatus, checkStatus, getAllExpired, checkExpired } from './src/database.js';
-import { rdGame, iGame, tGame, gameMerampok, gameBegal, daily, buy, setLimit, addLimit, addMoney, setMoney, transfer, Blackjack, SnakeLadder } from './lib/game.js';
+import { rdGame, iGame, tGame, gameMerampok, gameBegal, gameBrankas, gameBegalShop, gameBegalSkill, gameBegalSkillInfo, daily, buy, setLimit, addLimit, addMoney, setMoney, transfer, Blackjack, SnakeLadder } from './lib/game.js';
 import { kirimCatur } from './game/catur.js';
 import { kirimSonic } from './game/sonic.js';
 import { kirimTebakBom } from './game/tebakbom.js';
@@ -76,6 +76,7 @@ import { kirimBalap } from './game/balap.js';
 import { kirimDino } from './game/dino.js';
 import { verifyAndClaimDinoCode, unlockDinoAuto, isDinoAutoUnlocked } from './game/dinoData.js';
 import { kirimSnake } from './game/snake.js';
+import { kirimSnake2 } from './game/snake2.js';
 import { kirimStickman } from './game/stickman.js';
 import { kirimSuperMario } from './game/supermario.js';
 import { kirimTetris } from './game/tetris.js';
@@ -262,6 +263,28 @@ const naze = async (naze, m, msg, store) => {
 		(m.type == 'protocolMessage') ? (m.message.protocolMessage?.editedMessage?.extendedTextMessage?.text || m.message.protocolMessage?.editedMessage?.conversation || m.message.protocolMessage?.editedMessage?.imageMessage?.caption || m.message.protocolMessage?.editedMessage?.videoMessage?.caption || '') : '') || '';
 		
 		const budy = (typeof m.text == 'string' ? m.text : '')
+
+		// Pastikan sender dan quoted.sender selalu nomor telepon asli canonical (@s.whatsapp.net), bukan format LID
+		if (m.sender && m.sender.endsWith('@lid') && typeof naze.findJidByLid === 'function') {
+			const realJid = naze.findJidByLid(m.sender, store, false);
+			if (realJid) {
+				m.sender = realJid;
+				if (m.key) m.key.participant = realJid;
+				m.participant = realJid;
+			}
+		}
+		if (m.quoted && m.quoted.sender && m.quoted.sender.endsWith('@lid') && typeof naze.findJidByLid === 'function') {
+			const realJid = naze.findJidByLid(m.quoted.sender, store, false);
+			if (realJid) {
+				m.quoted.sender = realJid;
+				if (m.quoted.key) m.quoted.key.participant = realJid;
+				m.quoted.participant = realJid;
+			}
+		}
+		if (!m.pushName || m.pushName === 'undefined') {
+			m.pushName = store?.contacts?.[m.sender]?.name || store?.contacts?.[m.sender]?.notify || global.db?.users?.[m.sender]?.name || '';
+		}
+
 		const senderNum = m.sender ? m.sender.split('@')[0] : '';
 		const senderNormalized = m.sender ? jidNormalizedUser(m.sender) : '';
 		const isCreator = Boolean(
@@ -5783,6 +5806,15 @@ break
 				}
 			}
 			break
+			case 'snake2': case 'ular2': case 'snake2game': case 'snakemap': case 'ularrimba2': {
+				try {
+					await kirimSnake2(naze, m.chat)
+				} catch (e) {
+					console.error('[SNAKE2]', e?.message || e)
+					await m.reply('❌ Gagal mengirim game Snake 2: ' + (e?.message || e))
+				}
+			}
+			break
 			case 'stickman': case 'stick': case 'stickgame': {
 				try {
 					await kirimStickman(naze, m.chat)
@@ -5815,7 +5847,23 @@ break
 			}
 			break
 			case 'begal': {
-				await gameBegal(naze, m, db)
+				await gameBegal(naze, m, db, text, args, store);
+			}
+			break
+			case 'brankas': case 'vault': {
+				await gameBrankas(naze, m, db, text, args);
+			}
+			break
+			case 'begalshop': case 'tokobegal': case 'shopbegal': case 'belisenjata': case 'buyweapon': {
+				await gameBegalShop(naze, m, db, text, args);
+			}
+			break
+			case 'begalskill': case 'latihskill': case 'asahskill': {
+				await gameBegalSkill(naze, m, db, text, args);
+			}
+			break
+			case 'begalskillinfo': case 'skillbegal': case 'infobegalskill': {
+				await gameBegalSkillInfo(naze, m, db, text, args);
 			}
 			break
 			case 'suitpvp': case 'suit': {
@@ -6841,7 +6889,7 @@ break
 │ ▫ ${prefix}angrybirds
 │ ▫ ${prefix}balap
 │ ▫ ${prefix}dino
-│ ▫ ${prefix}snake
+│ ▫ ${prefix}snake / ${prefix}snake2 ‹1000m² Radar›
 │ ▫ ${prefix}stickman
 │ ▫ ${prefix}supermario
 │ ▫ ${prefix}tetris
@@ -6850,7 +6898,8 @@ break
 │ ▫ ${prefix}suit ‹@tag›
 │ ▫ ${prefix}delsuit
 │ ▫ ${prefix}math ‹level 1-11›
-│ ▫ ${prefix}begal
+│ ▫ ${prefix}begal ‹@tag›
+│ ▫ ${prefix}brankas ‹1-5›
 │ ▫ ${prefix}rampok ‹@tag›
 │ ▫ ${prefix}blackjack
 │ ▫ ${prefix}tekateki
@@ -7272,7 +7321,7 @@ break
 │ ▫ ${prefix}angrybirds
 │ ▫ ${prefix}balap
 │ ▫ ${prefix}dino
-│ ▫ ${prefix}snake
+│ ▫ ${prefix}snake / ${prefix}snake2 ‹1000m² Radar›
 │ ▫ ${prefix}stickman
 │ ▫ ${prefix}supermario
 │ ▫ ${prefix}tetris
@@ -7281,7 +7330,8 @@ break
 │ ▫ ${prefix}suit ‹@tag›
 │ ▫ ${prefix}delsuit
 │ ▫ ${prefix}math ‹level 1-11›
-│ ▫ ${prefix}begal
+│ ▫ ${prefix}begal ‹@tag›
+│ ▫ ${prefix}brankas ‹1-5›
 │ ▫ ${prefix}rampok ‹@tag›
 │ ▫ ${prefix}blackjack
 │ ▫ ${prefix}tekateki

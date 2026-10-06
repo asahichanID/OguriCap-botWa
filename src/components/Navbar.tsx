@@ -4,8 +4,8 @@ import { BotState } from '../types';
 
 interface NavbarProps {
   state: BotState;
-  activeTab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'catur' | 'tebakbom' | 'dino' | 'guide';
-  setActiveTab: (tab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'catur' | 'tebakbom' | 'dino' | 'guide') => void;
+  activeTab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'catur' | 'tebakbom' | 'dino' | 'snake2' | 'guide';
+  setActiveTab: (tab: 'control' | 'logs' | 'config' | 'sholat' | 'hdTest' | 'catur' | 'tebakbom' | 'dino' | 'snake2' | 'guide') => void;
   onRefresh: () => void;
   isRefreshing: boolean;
   onOpenDownloadZip: () => void;
@@ -209,6 +209,18 @@ export const Navbar: React.FC<NavbarProps> = ({
               Chrome Dino
             </button>
             <button
+              id="tab-snake2-btn"
+              onClick={() => setActiveTab('snake2')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                activeTab === 'snake2'
+                  ? 'bg-teal-100 text-teal-950 shadow-xs font-bold ring-1 ring-teal-500'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+              }`}
+            >
+              <span className="text-sm">🐍</span>
+              Snake 2 MMO
+            </button>
+            <button
               id="tab-guide-btn"
               onClick={() => setActiveTab('guide')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
@@ -292,6 +304,15 @@ export const Navbar: React.FC<NavbarProps> = ({
             }`}
           >
             💣 Tebak Bom
+          </button>
+          <button
+            id="tab-snake2-mobile-btn"
+            onClick={() => setActiveTab('snake2')}
+            className={`px-2 py-1 rounded-md text-xs font-medium shrink-0 ${
+              activeTab === 'snake2' ? 'bg-teal-100 text-teal-950 font-bold ring-1 ring-teal-400' : 'text-slate-600'
+            }`}
+          >
+            🐍 Snake 2
           </button>
           <button
             onClick={() => setActiveTab('logs')}

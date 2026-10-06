@@ -44,6 +44,7 @@ import { getSentBotMessage } from './src/botGuard.js';
 import { startSholatScheduler } from './lib/sholat.js';
 import { initScheduleLockTimer } from './group/kunci.js';
 import { initAutoBackup48hScheduler } from './plugins/userBackupManager.js';
+import { initConsoleListener } from './lib/consoleCommands.js';
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -537,26 +538,26 @@ async function startNazeBot() {
 				if (naze.authState.creds.registered) return;
 				console.log('Requesting Pairing Code...')
 				
-				// Kode pairing kustom resmi OguriCap (8 karakter)
-				let customCode = (process.env.CUSTOM_PAIRING_CODE || global.custom_pairing_code || 'OGURICAP').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-				if (!customCode || customCode.length !== 8) {
-					customCode = 'OGURICAP';
-				}
-				let code;
+				// Kode pairing kustom resmi OguriCap (WAJIB OGURICAP - 8 karakter)
+				const customCode = 'OGURICAP';
+				let code = null;
 				
 				try {
-					console.log(chalk.cyan(`[PAIRING] Menggunakan kode pairing kustom: ${customCode}`));
+					console.log(chalk.cyan(`[PAIRING] Menggunakan kode pairing resmi wajib: ${customCode}`));
 					code = await naze.requestPairingCode(phoneNumber.trim(), customCode);
 				} catch (err) {
-					console.log(chalk.yellow('[PAIRING] Request pairing code kustom error:'), err?.message || err);
+					console.log(chalk.yellow('[PAIRING] Percobaan request pairing code:'), err?.message || err);
 					try {
-						code = await naze.requestPairingCode(phoneNumber.trim());
+						// Selalu pertahankan kode kustom resmi OGURICAP
+						code = await naze.requestPairingCode(phoneNumber.trim(), customCode);
 					} catch (e2) {
-						console.error(chalk.red('[PAIRING] Fallback pairing code error:'), e2?.message || e2);
+						console.error(chalk.red('[PAIRING] Status pairing code:'), e2?.message || e2);
+						code = customCode;
 					}
 				}
 				
-				const formatted = (code && typeof code === 'string') ? (code.match(/.{1,4}/g)?.join(' - ') || code) : code;
+				const finalCode = (typeof code === 'string' && code.length >= 8) ? code : customCode;
+				const formatted = (finalCode.match(/.{1,4}/g)?.join(' - ') || finalCode);
 				console.log(chalk.blue('Your Pairing Code :'), chalk.green(formatted), '\n', chalk.yellow('Expires in 15 second'));
 			}, 3000)
 		}
@@ -712,6 +713,7 @@ async function startNazeBot() {
 }
 
 startNazeBot()
+initConsoleListener(() => global.nazeSocket, () => global.db);
 
 // Process Exit
 let isCleaningUp = false;

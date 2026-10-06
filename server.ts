@@ -2,6 +2,7 @@ import express from 'express';
 import http from 'http';
 import path from 'path';
 import fs from 'fs';
+import readline from 'readline';
 import { spawn, ChildProcess } from 'child_process';
 import { createServer as createViteServer } from 'vite';
 import { sanitizeSairidev } from './scripts/clean-sairidev.js';
@@ -10,7 +11,10 @@ import { getUlarTanggaHtml } from './OguriCap/game/ulartangga.js';
 import { buildTebakBomHTML } from './OguriCap/game/tebakbom.js';
 import { getTopLeaderboard } from './OguriCap/game/tebakbomData.js';
 import { CaturManager } from './OguriCap/game/caturWs.js';
+import { initSnake2Ws, Snake2WsManager } from './OguriCap/game/snake2Ws.js';
 import { DINO_HTML } from './OguriCap/game/dino.js';
+import { SNAKE_HTML } from './OguriCap/game/snake.js';
+import { SNAKE2_HTML } from './OguriCap/game/snake2.js';
 import {
   getSholatConfig,
   saveSholatConfig,
@@ -395,6 +399,48 @@ app.post('/api/bot/reset-session', (req, res) => {
 app.get('/api/bot/logs', (req, res) => {
   const limit = parseInt(req.query.limit as string, 10) || 200;
   res.json(logHistory.slice(-limit));
+});
+
+// Console Command API (untuk menjalankan tes console seperti tesstcpolis dari web dashboard)
+app.post('/api/console/command', async (req, res) => {
+  const { command } = req.body || {};
+  const cmd = String(command || '').trim();
+  if (!cmd) {
+    return res.status(400).json({ success: false, message: 'Command tidak boleh kosong' });
+  }
+
+  addLog('stdout', `> ${cmd}`);
+
+  // Teruskan ke botProcess stdin jika proses bot sedang berjalan
+  if (botProcess && !botProcess.killed && botProcess.stdin) {
+    try {
+      botProcess.stdin.write(cmd + '\n');
+    } catch (e: any) {
+      addLog('stderr', `[CONSOLE PIPE ERROR] ${e?.message || e}`);
+    }
+  }
+
+  const parts = cmd.split(/\s+/);
+  const mainCmd = parts[0].toLowerCase();
+  const args = parts.slice(1);
+
+  if (['tesstcpolis', 'tesstcpolisi', 'testpolis', 'testpolisi', 'testcpolis', 'tespolis'].includes(mainCmd)) {
+    try {
+      const { testPoliceConsole } = await import('./OguriCap/lib/consoleCommands.js');
+      const testResult = await testPoliceConsole(null, args, null);
+      if (testResult && testResult.logs) {
+        testResult.logs.split('\n').forEach((line: string) => {
+          if (line.trim()) addLog('stdout', line);
+        });
+      }
+      return res.json({ success: true, message: 'Command tesstcpolis berhasil dijalankan', result: testResult });
+    } catch (err: any) {
+      addLog('stderr', `[TEST ERROR] ${err?.message || err}`);
+      return res.status(500).json({ success: false, message: err?.message || err });
+    }
+  }
+
+  return res.json({ success: true, message: `Command '${cmd}' dikirim ke console proses` });
 });
 
 // SSE Live Events (status & logs)
@@ -1189,10 +1235,25 @@ app.get('/game/dino', (_req, res) => {
   res.send(DINO_HTML);
 });
 
+app.get(['/snake', '/game/snake', '/ular'], (_req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(SNAKE_HTML);
+});
+
+app.get(['/snake2', '/game/snake2', '/ular2', '/snakemap'], (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  const proto = req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https' ? 'wss:' : 'ws:';
+  const host = req.get('host') || 'localhost:3000';
+  const wsUrl = `${proto}//${host}/ws/snake2`;
+  const html = SNAKE2_HTML.replace(/__INJECTED_WS_URL__/g, wsUrl);
+  res.send(html);
+});
+
 async function startServer() {
   const httpServer = http.createServer(app);
   const utWss = initUlarTanggaWs(httpServer);
   const caturWss = CaturManager.init(httpServer);
+  const snake2Wss = initSnake2Ws(httpServer);
 
   // Centralized WebSocket Upgrade Dispatcher
   httpServer.on('upgrade', (req, socket, head) => {
@@ -1206,6 +1267,10 @@ async function startServer() {
       } else if (pathname === '/ws/ulartangga') {
         utWss.handleUpgrade(req, socket, head, (ws: any) => {
           utWss.emit('connection', ws, req);
+        });
+      } else if (pathname === '/ws/snake2' || pathname === '/ws/snake') {
+        snake2Wss.handleUpgrade(req, socket, head, (ws: any) => {
+          snake2Wss.emit('connection', ws, req);
         });
       }
     } catch (err) {
@@ -1271,6 +1336,39 @@ async function startServer() {
 
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+  // Console Interactive CLI listener (untuk menerima input langsung di console terminal server/pterodactyl)
+  try {
+    const serverStdinRl = readline.createInterface({
+      input: process.stdin,
+      terminal: false,
+    });
+
+    serverStdinRl.on('line', async (line) => {
+      const raw = line.trim();
+      if (!raw) return;
+      addLog('stdout', `> ${raw}`);
+      if (botProcess && !botProcess.killed && botProcess.stdin) {
+        try {
+          botProcess.stdin.write(raw + '\n');
+        } catch {}
+      }
+      const parts = raw.split(/\s+/);
+      if (['tesstcpolis', 'tesstcpolisi', 'testpolis', 'testpolisi', 'testcpolis', 'tespolis'].includes(parts[0].toLowerCase())) {
+        try {
+          const { testPoliceConsole } = await import('./OguriCap/lib/consoleCommands.js');
+          const res = await testPoliceConsole(null, parts.slice(1), null);
+          if (res?.logs) {
+            res.logs.split('\n').forEach((l: string) => {
+              if (l.trim()) addLog('stdout', l);
+            });
+          }
+        } catch (e: any) {
+          console.error('[CONSOLE-TEST-ERROR]', e);
+        }
+      }
+    });
+  } catch {}
 }
 
 startServer();

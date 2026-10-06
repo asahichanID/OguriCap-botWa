@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal, Copy, Trash2, Search, ArrowDown, Check, Filter } from 'lucide-react';
+import { Terminal, Copy, Trash2, Search, ArrowDown, Check, Filter, Send, ShieldAlert } from 'lucide-react';
 import { LogEntry } from '../types';
 
 interface LogsConsoleProps {
@@ -13,7 +13,29 @@ export const LogsConsole: React.FC<LogsConsoleProps> = ({ logs, onClearLogs, isR
   const [searchQuery, setSearchQuery] = useState('');
   const [autoScroll, setAutoScroll] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [cliInput, setCliInput] = useState('');
+  const [isExecutingCli, setIsExecutingCli] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const handleExecuteCli = async (commandToSend?: string) => {
+    const cmd = (commandToSend !== undefined ? commandToSend : cliInput).trim();
+    if (!cmd || isExecutingCli) return;
+    setIsExecutingCli(true);
+    try {
+      await fetch('/api/console/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: cmd }),
+      });
+      if (commandToSend === undefined) {
+        setCliInput('');
+      }
+    } catch (e) {
+      console.error('Gagal mengirim command console:', e);
+    } finally {
+      setIsExecutingCli(false);
+    }
+  };
 
   useEffect(() => {
     if (autoScroll && scrollRef.current) {
@@ -191,6 +213,66 @@ export const LogsConsole: React.FC<LogsConsoleProps> = ({ logs, onClearLogs, isR
             </div>
           ))
         )}
+      </div>
+
+      {/* Interactive Console CLI Input (Command Console Langsung & Tes Polisi) */}
+      <div className="mt-3 pt-3 border-t border-slate-100 flex flex-col gap-2">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+          <div className="relative flex-1">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-slate-400 text-xs font-bold select-none">&gt;</span>
+            <input
+              type="text"
+              placeholder="Ketik command console (contoh: tesstcpolis, tesstcpolis berondong)..."
+              value={cliInput}
+              onChange={(e) => setCliInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleExecuteCli();
+                }
+              }}
+              className="w-full pl-7 pr-3 py-2 text-xs font-mono bg-slate-900 text-slate-100 placeholder:text-slate-500 rounded-xl border border-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <button
+            onClick={() => handleExecuteCli()}
+            disabled={isExecutingCli || !cliInput.trim()}
+            className="flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors shrink-0"
+          >
+            <Send className="w-3.5 h-3.5" />
+            <span>{isExecutingCli ? 'Menjalankan...' : 'Jalankan'}</span>
+          </button>
+        </div>
+
+        {/* Quick Test Console Command Shortcuts */}
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="text-slate-400 text-[11px] font-medium mr-1 select-none">Quick Test:</span>
+          <button
+            onClick={() => handleExecuteCli('tesstcpolis')}
+            disabled={isExecutingCli}
+            className="flex items-center gap-1 px-2.5 py-1 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-semibold rounded-lg text-[11px] transition-colors"
+            title="Uji coba penuh command tesstcpolis (Teks Tertangkap/Diberondong + Sticker Polisi)"
+          >
+            <ShieldAlert className="w-3 h-3 text-amber-600" />
+            <span>🚨 tesstcpolis (Semua)</span>
+          </button>
+          <button
+            onClick={() => handleExecuteCli('tesstcpolis berondong')}
+            disabled={isExecutingCli}
+            className="flex items-center gap-1 px-2.5 py-1 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-800 font-medium rounded-lg text-[11px] transition-colors"
+            title="Uji coba skenario diberondong peluru polisi + sticker"
+          >
+            <span>💥 Skenario Diberondong</span>
+          </button>
+          <button
+            onClick={() => handleExecuteCli('tesstcpolis tangkap')}
+            disabled={isExecutingCli}
+            className="flex items-center gap-1 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 font-medium rounded-lg text-[11px] transition-colors"
+            title="Uji coba skenario resmi tertangkap polisi + sticker"
+          >
+            <span>👮 Skenario Tertangkap</span>
+          </button>
+        </div>
       </div>
     </div>
   );

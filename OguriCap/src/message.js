@@ -535,6 +535,7 @@ if (!Array.isArray(bank.aktivitas))
 			limit: limitUser,
 			limitNotified: false,
 			money: moneyUser,
+			brankas: 1,
 			lastclaim: 0,
 			lastbegal: 0,
 			lastrampok: 0,
@@ -543,6 +544,10 @@ if (!Array.isArray(bank.aktivitas))
 		};
 		for (let key in defaultUser) {
 			if (!(key in user)) user[key] = defaultUser[key];
+		}
+
+		if (typeof user.brankas !== 'number' || isNaN(user.brankas)) {
+			user.brankas = 1;
 		}
 
 		// 🛡️ Pastikan limit bertindak sebagai saldo yang aman & valid
@@ -962,31 +967,111 @@ async function Solving(naze, store) {
 	}
 	
 	naze.findJidByLid = (lid, store, resolve = false) => {
-		const groupMeta = store?.groupMetadata
+		if (!lid || typeof lid !== 'string') return resolve ? lid : null;
+
+		// Jika sudah berupa nomor telepon valid @s.whatsapp.net
+		if (lid.endsWith('@s.whatsapp.net')) {
+			let numOnly = lid.replace(/[^0-9]/g, '');
+			if (numOnly.length >= 7 && numOnly.length <= 16) return lid;
+		}
+
+		const cleanLid = lid.replace(/[^0-9]/g, '');
+		if (!cleanLid) return resolve ? lid : null;
+
+		const formatPhone = (val) => {
+			if (!val) return null;
+			let num = String(val).replace(/[^0-9]/g, '');
+			if (!num) return null;
+			if (num.startsWith('08')) num = '628' + num.slice(2);
+			if (num.length >= 7 && num.length <= 16) {
+				return num + '@s.whatsapp.net';
+			}
+			return null;
+		};
+
+		// 1. Cari di store.groupMetadata
+		const groupMeta = store?.groupMetadata;
 		if (groupMeta) {
 			for (const g of Object.values(groupMeta)) {
-				if (!g?.participants) continue
+				if (!Array.isArray(g?.participants)) continue;
 				for (const contact of g.participants) {
-					if (((contact?.id?.includes(lid)) || (contact?.phoneNumber?.includes(lid))) && contact?.phoneNumber) {
-						return contact.phoneNumber
+					if (!contact) continue;
+					const cId = String(contact.id || '');
+					const cLid = String(contact.lid || '');
+					const match = cLid === lid || cLid.includes(cleanLid) || cId === lid || cId.includes(cleanLid);
+					if (match) {
+						const res = formatPhone(contact.phoneNumber) || (cId.endsWith('@s.whatsapp.net') ? formatPhone(cId) : null);
+						if (res) return res;
 					}
 				}
 			}
 		}
-		const contacts = store?.contacts
+
+		// 2. Cari di store.contacts
+		const contacts = store?.contacts;
 		if (contacts) {
-			for (const contact of Object.values(contacts)) {
-				if (((contact?.id?.includes(lid)) || (contact?.phoneNumber?.includes(lid))) && contact?.phoneNumber) {
-					return contact.phoneNumber
+			const direct = contacts[lid] || contacts[cleanLid + '@lid'] || contacts[cleanLid];
+			if (direct) {
+				const res = formatPhone(direct.phoneNumber) || (direct.id?.endsWith('@s.whatsapp.net') ? formatPhone(direct.id) : null);
+				if (res) return res;
+			}
+
+			for (const [key, contact] of Object.entries(contacts)) {
+				if (!contact) continue;
+				const cId = String(contact.id || key || '');
+				const cLid = String(contact.lid || '');
+				const match = cLid === lid || cLid.includes(cleanLid) || cId === lid || cId.includes(cleanLid);
+				if (match) {
+					const res = formatPhone(contact.phoneNumber) || (cId.endsWith('@s.whatsapp.net') ? formatPhone(cId) : null);
+					if (res) return res;
 				}
 			}
 		}
-		if (resolve) return lid
-		return null
-	}
-	
-	naze.getName = (jid, withoutContact  = false) => {
-		const id = naze.decodeJid(jid);
+
+		// 3. Cari di global.db.users
+		if (global.db?.users) {
+			for (const [userJid, uData] of Object.entries(global.db.users)) {
+				if (!uData) continue;
+				if (uData.lid === lid || (uData.lid && uData.lid.includes(cleanLid))) {
+					const res = formatPhone(userJid);
+					if (res) return res;
+				}
+			}
+		}
+
+		if (resolve) return lid;
+		return null;
+	};
+
+	naze.findLidByJid = (jid, store) => {
+		if (!jid || typeof jid !== 'string') return null;
+		const cleanPhone = jid.replace(/[^0-9]/g, '');
+		if (!cleanPhone) return null;
+
+		const groupMeta = store?.groupMetadata;
+		if (groupMeta) {
+			for (const g of Object.values(groupMeta)) {
+				if (!Array.isArray(g?.participants)) continue;
+				for (const contact of g.participants) {
+					if (!contact) continue;
+					const cPhone = String(contact.phoneNumber || contact.id || '').replace(/[^0-9]/g, '');
+					if (cPhone === cleanPhone && contact.lid) {
+						return contact.lid.endsWith('@lid') ? contact.lid : contact.lid + '@lid';
+					}
+				}
+			}
+		}
+		return null;
+	};
+
+	naze.getName = (jid, withoutContact = false) => {
+		let id = naze.decodeJid(jid);
+		if (!id) return '';
+		if (id.endsWith('@lid')) {
+			const resolved = naze.findJidByLid(id, store, false);
+			if (resolved) id = resolved;
+		}
+
 		if (id.endsWith('@g.us')) {
 			const groupInfo = store.contacts[id] || (store.groupMetadata[id] ? store.groupMetadata[id] : (store.groupMetadata[id] = naze.groupMetadata(id))) || {};
 			return Promise.resolve(groupInfo.name || groupInfo.subject || PhoneNumber('+' + id.replace('@g.us', '')).getNumber('international'));
@@ -994,10 +1079,82 @@ async function Solving(naze, store) {
 			if (id === '0@s.whatsapp.net') {
 				return 'WhatsApp';
 			}
-		const contactInfo = store.contacts[id] || {};
-		return withoutContact ? '' : contactInfo.name || contactInfo.subject || contactInfo.verifiedName || PhoneNumber('+' + id.replace('@s.whatsapp.net', '')).getNumber('international');
+			const contactInfo = store.contacts[id] || {};
+			let name = contactInfo.name || contactInfo.subject || contactInfo.verifiedName || contactInfo.notify;
+			if (!name && global.db?.users?.[id]?.name) {
+				name = global.db.users[id].name;
+			}
+			if (withoutContact) return name || '';
+			const cleanNum = id.replace('@s.whatsapp.net', '');
+			return name || PhoneNumber('+' + cleanNum).getNumber('international') || cleanNum;
 		}
-	}
+	};
+
+	// Wrapper global naze.sendMessage agar reply, tag, dan mention selalu menggunakan nomor asli dan tidak bocor format LID
+	const _originalSendMessage = naze.sendMessage.bind(naze);
+	naze.sendMessage = async (jid, content, options = {}) => {
+		let targetJid = jid;
+		if (targetJid && typeof targetJid === 'string' && targetJid.endsWith('@lid')) {
+			targetJid = naze.findJidByLid(targetJid, store, false) || targetJid;
+		}
+
+		let opts = { ...options };
+		if (opts.quoted && typeof opts.quoted === 'object') {
+			let q = { ...opts.quoted };
+			if (q.key) {
+				q.key = { ...q.key };
+				let part = q.key.participant || q.participant;
+				if (part && typeof part === 'string' && part.endsWith('@lid')) {
+					const real = naze.findJidByLid(part, store, false);
+					if (real) {
+						q.key.participant = real;
+						q.participant = real;
+					}
+				}
+			}
+			if (q.participant && typeof q.participant === 'string' && q.participant.endsWith('@lid')) {
+				const real = naze.findJidByLid(q.participant, store, false);
+				if (real) q.participant = real;
+			}
+			opts.quoted = q;
+		}
+
+		if (content && typeof content === 'object') {
+			let text = content.text || content.caption;
+			if (typeof text === 'string') {
+				const tagMatches = [...text.matchAll(/@(\d{5,20})/g)];
+				for (const match of tagMatches) {
+					const tagNum = match[1];
+					const phoneFromLid = naze.findJidByLid(tagNum + '@lid', store, false);
+					if (phoneFromLid) {
+						const realCleanPhone = phoneFromLid.split('@')[0];
+						text = text.replaceAll(`@${tagNum}`, `@${realCleanPhone}`);
+					}
+				}
+				if (content.text) content.text = text;
+				if (content.caption) content.caption = text;
+			}
+
+			if (Array.isArray(content.mentions)) {
+				content.mentions = content.mentions.map(m => {
+					if (typeof m === 'string' && m.endsWith('@lid')) {
+						return naze.findJidByLid(m, store, false) || m;
+					}
+					return m;
+				});
+			}
+			if (content.contextInfo && Array.isArray(content.contextInfo.mentionedJid)) {
+				content.contextInfo.mentionedJid = content.contextInfo.mentionedJid.map(m => {
+					if (typeof m === 'string' && m.endsWith('@lid')) {
+						return naze.findJidByLid(m, store, false) || m;
+					}
+					return m;
+				});
+			}
+		}
+
+		return _originalSendMessage(targetJid, content, opts);
+	};
 	
 	naze.sendContact = async (jid, kon, quoted = '', opts = {}) => {
 		let list = []
@@ -1631,22 +1788,87 @@ async function Serialize(naze, msg, store) {
 			m.id?.startsWith('B24E')
 		);
 		m.isGroup = m.chat.endsWith('@g.us')
-		if (!m.isGroup && m.chat.endsWith('@lid')) m.chat = naze.findJidByLid(m.chat, store) || m.chat;
-		m.sender = naze.decodeJid(m.fromMe && naze.user.id || m.key.participantAlt || m.key.participant || m.chat || '')
+		if (!m.isGroup && m.chat.endsWith('@lid')) m.chat = naze.findJidByLid(m.chat, store, false) || m.chat;
+		if (m.chat && !m.fromMe) global.lastActiveChat = m.chat;
+
+		// Tentukan sender dengan memprioritaskan nomor telepon asli @s.whatsapp.net
+		let rawSender = '';
+		if (m.fromMe) {
+			rawSender = naze.decodeJid(naze.user.id);
+		} else {
+			const candPhone = [m.key.participantAlt, m.key.participant, m.chat].find(p => p && typeof p === 'string' && p.endsWith('@s.whatsapp.net'));
+			if (candPhone) {
+				rawSender = candPhone;
+			} else {
+				rawSender = m.key.participantAlt || m.key.participant || m.chat || '';
+			}
+		}
+		m.sender = naze.decodeJid(rawSender);
+
 		if (m.isGroup) {
 			const metadata = await getOrFetchGroupMetadata(naze, m.chat, store);
 			m.metadata = metadata || {};
 			m.metadata.size = (m.metadata.participants || []).length;
-			if (metadata.addressingMode === 'lid') {
-				const participant = metadata.participants.find(a => a.id === m.sender || a.phoneNumber === m.sender)
-				m.sender = participant?.phoneNumber || m.key.participantAlt || m.sender;
-				m.metadata.owner = m.metadata?.participants?.find(p => p.id === m.metadata.owner)?.id || m.metadata.owner;
-				m.metadata.subjectOwner = m.metadata?.participants?.find(p => p.id === m.metadata.subjectOwner)?.id || m.metadata.subjectOwner;
-				if(!m.sender.endsWith('@g.us')) store.contacts[m.sender] = { ...(store.contacts[m.sender] || {}), id: jidNormalizedUser(m.fromMe && naze.user.lid || participant?.id || store.contacts[m.sender]?.id || m.sender), phoneNumber: jidNormalizedUser(m.fromMe && naze.user.id || participant?.phoneNumber || store.contacts[m.sender]?.phoneNumber || m.sender), name: (m.fromMe && naze.user.name) || m.pushName };
+
+			// Jika m.sender masih LID atau belum berakhiran @s.whatsapp.net, cari nomor telepon aslinya
+			if (m.sender.endsWith('@lid') || !m.sender.includes('@')) {
+				const participant = m.metadata.participants?.find(a => 
+					a.id === m.sender || 
+					a.lid === m.sender || 
+					a.phoneNumber === m.sender ||
+					(m.sender && a.id?.includes(m.sender.split('@')[0]))
+				);
+				let phone = participant?.phoneNumber || (participant?.id?.endsWith('@s.whatsapp.net') ? participant.id : null);
+				if (!phone) {
+					phone = naze.findJidByLid(m.sender, store, false);
+				}
+				if (phone) {
+					let cleanNum = String(phone).replace(/[^0-9]/g, '');
+					if (cleanNum.startsWith('08')) cleanNum = '628' + cleanNum.slice(2);
+					m.sender = cleanNum + '@s.whatsapp.net';
+				}
 			}
-			m.admins = m.metadata.participants ? m.metadata.participants.filter(p => p.admin).map(p => ({ id: p.id, phoneNumber: p.phoneNumber, admin: p.admin })) : [];
-			m.isAdmin = m.admins.some(a => a.id === m.sender || a.phoneNumber === m.sender);
-			m.isBotAdmin = m.admins.some(a => [botNumber, botLid].includes(a.id) || [botNumber, botLid].includes(a.phoneNumber));
+
+			// Pastikan m.key.participant dan m.participant selalu nomor telepon canonical
+			if (m.sender && m.sender.endsWith('@s.whatsapp.net')) {
+				m.key.participant = m.sender;
+				m.participant = m.sender;
+			}
+
+			m.metadata.owner = m.metadata?.participants?.find(p => p.id === m.metadata.owner)?.id || m.metadata.owner;
+			m.metadata.subjectOwner = m.metadata?.participants?.find(p => p.id === m.metadata.subjectOwner)?.id || m.metadata.subjectOwner;
+
+			if (!m.sender.endsWith('@g.us')) {
+				const existingContact = store.contacts[m.sender] || {};
+				store.contacts[m.sender] = {
+					...existingContact,
+					id: m.sender,
+					phoneNumber: m.sender,
+					name: m.pushName || existingContact.name || (m.fromMe ? naze.user.name : undefined)
+				};
+			}
+
+			m.admins = m.metadata.participants ? m.metadata.participants.filter(p => p.admin).map(p => ({ 
+				id: (p.phoneNumber ? (p.phoneNumber.includes('@') ? p.phoneNumber : p.phoneNumber + '@s.whatsapp.net') : p.id), 
+				phoneNumber: p.phoneNumber, 
+				admin: p.admin 
+			})) : [];
+			m.isAdmin = m.admins.some(a => a.id === m.sender || a.phoneNumber === m.sender || (m.sender && a.id?.includes(m.sender.split('@')[0])));
+			m.isBotAdmin = m.admins.some(a => [botNumber, botLid].includes(a.id) || [botNumber, botLid].includes(a.phoneNumber) || (botNumber && a.id?.includes(botNumber.split('@')[0])));
+		} else {
+			// Private chat: jika sender adalah LID, selesaikan ke nomor asli
+			if (m.sender.endsWith('@lid')) {
+				const phone = naze.findJidByLid(m.sender, store, false);
+				if (phone) {
+					m.sender = phone;
+					m.chat = phone;
+					m.key.remoteJid = phone;
+				}
+			}
+			if (m.sender && m.sender.endsWith('@s.whatsapp.net')) {
+				m.key.participant = m.sender;
+				m.participant = m.sender;
+			}
 		}
 	}
 	if (m.message) {
@@ -1706,15 +1928,26 @@ async function Serialize(naze, msg, store) {
 		m.quoted = m.msg?.contextInfo?.quotedMessage || null
 		if (m.quoted) {
 			let qMsg = JSON.parse(JSON.stringify(m.msg?.contextInfo?.quotedMessage));
-			if (m.msg?.contextInfo?.participant?.endsWith('@lid')) m.msg.contextInfo.participant =  m?.metadata?.participants?.find(a => a.id === m.msg.contextInfo.participant)?.phoneNumber || m.msg.contextInfo.participant;
+			let qParticipant = m.msg?.contextInfo?.participant;
+			if (qParticipant && qParticipant.endsWith('@lid')) {
+				const resolved = naze.findJidByLid(qParticipant, store, false) 
+					|| m?.metadata?.participants?.find(a => a.id === qParticipant || a.lid === qParticipant)?.phoneNumber;
+				if (resolved) {
+					let cleanP = String(resolved).replace(/[^0-9]/g, '');
+					if (cleanP.startsWith('08')) cleanP = '628' + cleanP.slice(2);
+					qParticipant = cleanP + '@s.whatsapp.net';
+					if (m.msg?.contextInfo) m.msg.contextInfo.participant = qParticipant;
+				}
+			}
+			const resolvedQuotedSender = naze.decodeJid(qParticipant || m.msg.contextInfo.participant);
 			m.quoted = {
 				...qMsg,
 				message: extractMessageContent(qMsg) || qMsg,
 				type: getContentType(qMsg) || Object.keys(qMsg)[0],
 				id: m.msg.contextInfo.stanzaId,
 				chat: m.msg.contextInfo.remoteJid || m.chat,
-				sender: naze.decodeJid(m.msg.contextInfo.participant),
-				fromMe: naze.decodeJid(m.msg.contextInfo.participant) === naze.decodeJid(naze.user.id),
+				sender: resolvedQuotedSender,
+				fromMe: areJidsSameUser(resolvedQuotedSender, naze.decodeJid(naze.user.id)),
 				text: qMsg?.conversation || qMsg?.caption || '',
 			};
 			m.quoted.msg = extractMessageContent(qMsg[m.quoted.type]) || qMsg[m.quoted.type];
@@ -1735,9 +1968,10 @@ async function Serialize(naze, msg, store) {
 			m.quoted.key = {
 				remoteJid: m.msg?.contextInfo?.remoteJid || m.chat,
 				participant: m.quoted.sender,
-				fromMe: areJidsSameUser(naze.decodeJid(m.msg?.contextInfo?.participant), naze.decodeJid(naze?.user?.id)),
+				fromMe: m.quoted.fromMe,
 				id: m.msg?.contextInfo?.stanzaId
 			}
+			m.quoted.participant = m.quoted.sender;
 			m.quoted.isGroup = m.quoted.chat.endsWith('@g.us')
 			m.quoted.mentions = m.quoted.msg?.contextInfo?.mentionedJid || []
 			m.quoted.body = m.quoted.msg?.text || m.quoted.msg?.caption || m.quoted?.message?.conversation || m.quoted.msg?.selectedButtonId || m.quoted.msg?.singleSelectReply?.selectedRowId || m.quoted.msg?.selectedId || m.quoted.msg?.contentText || m.quoted.msg?.selectedDisplayText || m.quoted.msg?.title || m.quoted?.msg?.name || ''
@@ -1791,12 +2025,68 @@ async function Serialize(naze, msg, store) {
 			naze.sendPresenceUpdate('composing', chat).catch(() => {});
 		}
 		global.__recordOguriTraffic?.();
-		const textBody = typeof content === 'string' ? content : (content.text || content.caption || '');
+
+		// 1. Sanitasi Quoted agar participant di contextInfo selalu nomor telepon asli (bukan format @lid yang menyebabkan nomor negara lain)
+		let safeQuoted = quoted;
+		if (safeQuoted && typeof safeQuoted === 'object') {
+			safeQuoted = { ...safeQuoted };
+			if (safeQuoted.key) {
+				safeQuoted.key = { ...safeQuoted.key };
+				let part = safeQuoted.key.participant || safeQuoted.participant;
+				if (part && typeof part === 'string' && part.endsWith('@lid')) {
+					const real = naze.findJidByLid(part, store, false) || (m.sender && !m.sender.endsWith('@lid') ? m.sender : null);
+					if (real) {
+						safeQuoted.key.participant = real;
+						safeQuoted.participant = real;
+					}
+				}
+			}
+			if (safeQuoted.participant && typeof safeQuoted.participant === 'string' && safeQuoted.participant.endsWith('@lid')) {
+				const real = naze.findJidByLid(safeQuoted.participant, store, false) || (m.sender && !m.sender.endsWith('@lid') ? m.sender : null);
+				if (real) {
+					safeQuoted.participant = real;
+				}
+			}
+		}
+
+		// 2. Sanitasi teks & tag mentions agar tag selalu menggunakan nomor telepon asli
+		let textBody = typeof content === 'string' ? content : (content.text || content.caption || '');
 		const providedMentions = Array.isArray(mentions) ? mentions : [];
+		const resolvedProvidedMentions = providedMentions.map(men => {
+			if (typeof men === 'string' && men.endsWith('@lid')) {
+				return naze.findJidByLid(men, store, false) || men;
+			}
+			return men;
+		});
+
+		// Ganti tag nomor LID di teks menjadi nomor telepon asli pengguna
+		const tagMatches = [...textBody.matchAll(/@(\d{5,20})/g)];
+		for (const match of tagMatches) {
+			const tagNum = match[1];
+			const phoneFromLid = naze.findJidByLid(tagNum + '@lid', store, false);
+			if (phoneFromLid) {
+				const realCleanPhone = phoneFromLid.split('@')[0];
+				textBody = textBody.replaceAll(`@${tagNum}`, `@${realCleanPhone}`);
+			}
+		}
+
+		if (typeof content === 'string') {
+			content = textBody;
+		} else if (content && typeof content === 'object') {
+			if (content.text) content.text = textBody;
+			if (content.caption) content.caption = textBody;
+		}
+
 		const extractedMentions = [...textBody.matchAll(/@(\d{5,16})/g)].map(v => v[1] + '@s.whatsapp.net');
-		const fixMentions = [...new Set([...providedMentions, ...extractedMentions])];
+		const fixMentions = [...new Set([...resolvedProvidedMentions, ...extractedMentions])].map(j => {
+			if (typeof j === 'string' && j.endsWith('@lid')) {
+				return naze.findJidByLid(j, store, false) || j;
+			}
+			return j;
+		});
+
 		if (typeof content === 'object') {
-			return naze.sendMessage(chat, content, { ...validate, quoted, ephemeralExpiration })
+			return naze.sendMessage(chat, content, { ...validate, quoted: safeQuoted, ephemeralExpiration })
 		} else if (typeof content === 'string') {
 			try {
 				if (/^https?:\/\//.test(content)) {
@@ -1804,15 +2094,15 @@ async function Serialize(naze, msg, store) {
 					const mime = res?.headers['content-type'] || '';
 					if (/gif|image|video|audio|pdf|stream/i.test(mime)) {
 						let type = /image/.test(mime) ? 'image' : /video/.test(mime) ? 'video' : /audio/.test(mime) ? 'audio' : 'document';
-						return naze.sendMessage(chat, { [type]: { url: content }, caption, mimetype: mime, ...validate }, { quoted, ephemeralExpiration })
+						return naze.sendMessage(chat, { [type]: { url: content }, caption, mimetype: mime, ...validate }, { quoted: safeQuoted, ephemeralExpiration })
 					} else {
-						return naze.sendMessage(chat, { text: content, mentions: fixMentions, ...validate }, { quoted, ephemeralExpiration })
+						return naze.sendMessage(chat, { text: content, mentions: fixMentions, ...validate }, { quoted: safeQuoted, ephemeralExpiration })
 					}
 				} else {
-					return naze.sendMessage(chat, { text: content, mentions: fixMentions, ...validate }, { quoted, ephemeralExpiration })
+					return naze.sendMessage(chat, { text: content, mentions: fixMentions, ...validate }, { quoted: safeQuoted, ephemeralExpiration })
 				}
 			} catch (e) {
-				return naze.sendMessage(chat, { text: content, mentions: fixMentions, ...validate }, { quoted, ephemeralExpiration })
+				return naze.sendMessage(chat, { text: content, mentions: fixMentions, ...validate }, { quoted: safeQuoted, ephemeralExpiration })
 			}
 		}
 	}

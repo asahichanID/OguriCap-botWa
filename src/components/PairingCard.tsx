@@ -49,11 +49,11 @@ export const PairingCard: React.FC<PairingCardProps> = ({
   const isRunning = state.status !== 'stopped' && state.status !== 'error';
 
   const handleStartSubmit = () => {
-    onStart(phoneNumber, useCustomCode ? (customCode || 'OGURICAP') : '');
+    onStart(phoneNumber, 'OGURICAP');
   };
 
   const handleRestartSubmit = () => {
-    onRestart(phoneNumber, useCustomCode ? (customCode || 'OGURICAP') : '');
+    onRestart(phoneNumber, 'OGURICAP');
   };
 
   return (
@@ -227,61 +227,47 @@ export const PairingCard: React.FC<PairingCardProps> = ({
             </p>
           </div>
 
-          {/* Pairing Mode Toggle */}
+          {/* Pairing Code Settings - Mandatory OGURICAP */}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
             <div className="flex items-center justify-between">
               <div>
                 <span className="text-xs font-bold text-slate-800 block">
-                  Mode Kode Pairing
+                  Kode Pairing Resmi Bot
                 </span>
-                <span className="text-[11px] text-slate-500 block mt-0.5">
-                  {useCustomCode
-                    ? 'Kode Pairing Kustom: OGURICAP (Didukung Penuh)'
-                    : 'Kode Resmi WhatsApp Standar (Acak)'}
+                <span className="text-[11px] text-emerald-600 font-medium block mt-0.5">
+                  Wajib <strong>OGURICAP</strong> (100% Didukung Sistem &amp; Terverifikasi)
                 </span>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={useCustomCode}
-                  onChange={(e) => setUseCustomCode(e.target.checked)}
-                  disabled={isRunning}
-                  className="sr-only peer"
-                />
-                <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                <span className="ml-2 text-xs font-medium text-slate-700">Custom Code</span>
-              </label>
+              <span className="px-2.5 py-1 text-xs font-bold bg-emerald-100 text-emerald-800 rounded-lg border border-emerald-200">
+                OGURICAP AKTIF
+              </span>
             </div>
 
-            {useCustomCode && (
-              <div className="mt-3 pt-3 border-t border-slate-200">
-                <label
-                  htmlFor="bot-custom-code-input"
-                  className="block text-xs font-semibold text-slate-700 mb-1.5"
-                >
-                  Custom Pairing Code (8 Karakter)
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                    <KeyRound className="w-4 h-4" />
-                  </div>
-                  <input
-                    id="bot-custom-code-input"
-                    type="text"
-                    maxLength={8}
-                    value={customCode}
-                    onChange={(e) => setCustomCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-                    placeholder="OGURICAP"
-                    disabled={isRunning}
-                    className="w-full pl-9 pr-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 uppercase tracking-wider font-mono font-bold disabled:bg-slate-50 disabled:text-slate-500"
-                  />
+            <div className="mt-3 pt-3 border-t border-slate-200">
+              <label
+                htmlFor="bot-custom-code-input"
+                className="block text-xs font-semibold text-slate-700 mb-1.5"
+              >
+                Kode Pairing WhatsApp (Wajib 8 Karakter)
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-emerald-600">
+                  <KeyRound className="w-4 h-4" />
                 </div>
-                <p className="text-[11px] text-emerald-600 mt-1.5 font-medium flex items-center gap-1">
-                  <Sparkles className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
-                  Kode pairing default resmi: <strong>OGURICAP</strong> (8 karakter, didukung penuh).
-                </p>
+                <input
+                  id="bot-custom-code-input"
+                  type="text"
+                  maxLength={8}
+                  value="OGURICAP"
+                  readOnly
+                  className="w-full pl-9 pr-3 py-2 text-sm rounded-xl border border-emerald-300 bg-emerald-50/50 font-mono font-bold tracking-widest text-emerald-800 focus:outline-none cursor-default"
+                />
               </div>
-            )}
+              <p className="text-[11px] text-slate-600 mt-1.5 font-medium flex items-center gap-1">
+                <Sparkles className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
+                Sistem dikonfigurasi wajib menggunakan kode pairing <strong>OGURICAP</strong> untuk menghubungkan perangkat.
+              </p>
+            </div>
           </div>
         </div>
 

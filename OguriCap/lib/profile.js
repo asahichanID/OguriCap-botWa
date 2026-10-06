@@ -175,6 +175,17 @@ export const profile = async (
     const levelInfo = getLevelInfo(infoUser.exp || 0);
     const progressBar = makeProgressBar(levelInfo.progressPercent);
 
+    // 5.1 Status Keamanan Brankas
+    const brankasLevel = Math.min(5, Math.max(1, Number(infoUser.brankas) || 1));
+    const brankasNames = {
+      1: 'Tingkat 1 (Biasa)',
+      2: 'Tingkat 2 (Normal)',
+      3: 'Tingkat 3 (Standar)',
+      4: 'Tingkat 4 (Baik)',
+      5: 'Tingkat 5 (Militer 🎖️)'
+    };
+    const brankasDisplay = brankasNames[brankasLevel] || 'Tingkat 1 (Biasa)';
+
     // 6. Last Feature
     const lastFeatureDisplay = infoUser.lastFeature || '-';
 
@@ -201,6 +212,7 @@ export const profile = async (
 │ 🔮 *XP*         : ${levelInfo.currentLevelExp.toLocaleString('id-ID')} / ${levelInfo.expNeededForNextLevel.toLocaleString('id-ID')} XP (${levelInfo.progressPercent}%)
 │    [${progressBar}]
 │ 🥕 *Carrot*     : ${(infoUser.money || 0).toLocaleString('id-ID')} Carats
+│ 🏦 *Brankas*    : ${brankasDisplay}
 │ 🎫 *Limit*      : ${infoUser.limit ?? 0} Saldo
 │ ⚡ *Last Fitur* : ${lastFeatureDisplay}
 │

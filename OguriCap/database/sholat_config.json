@@ -4,17 +4,17 @@
   "timezone": "Asia/Jakarta",
   "tzLabel": "WIB",
   "schedule": {
-    "Imsak": "04:11",
-    "Subuh": "04:21",
-    "Terbit": "05:39",
-    "Dzuhur": "11:43",
-    "Ashar": "14:50",
-    "Maghrib": "17:47",
-    "Isya": "18:57"
+    "Imsak": "04:08",
+    "Subuh": "04:18",
+    "Terbit": "05:35",
+    "Dzuhur": "11:41",
+    "Ashar": "14:43",
+    "Maghrib": "17:46",
+    "Isya": "18:56"
   },
   "enabledGroups": {
     "120363024829384729@g.us": false
   },
   "updatedAt": 1788861879877,
-  "lastSyncedDate": "2026-09-29"
+  "lastSyncedDate": "2026-10-06"
 }
