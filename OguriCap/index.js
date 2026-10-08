@@ -646,6 +646,39 @@ async function startNazeBot() {
 		global.__recordOguriTraffic?.();
 		await GroupParticipantsUpdate(naze, update, global.store);
 	});
+
+	naze.ev.on('contacts.upsert', (contacts) => {
+		global.__recordOguriTraffic?.();
+		global.store.contacts ??= {};
+		for (const contact of contacts) {
+			if (!contact?.id) continue;
+			global.store.contacts[contact.id] = Object.assign(global.store.contacts[contact.id] || {}, contact);
+			if (typeof global.recordLidMapping === 'function') {
+				const lid = contact.lid || (String(contact.id).endsWith('@lid') ? contact.id : null);
+				const phone = contact.phoneNumber || (String(contact.id).endsWith('@s.whatsapp.net') ? contact.id : null);
+				if (lid && phone) {
+					global.recordLidMapping(lid, phone, contact.name || contact.notify);
+				}
+			}
+		}
+	});
+
+	naze.ev.on('contacts.update', (updates) => {
+		global.__recordOguriTraffic?.();
+		global.store.contacts ??= {};
+		for (const update of updates) {
+			if (!update?.id) continue;
+			global.store.contacts[update.id] = Object.assign(global.store.contacts[update.id] || {}, update);
+			if (typeof global.recordLidMapping === 'function') {
+				const contact = global.store.contacts[update.id];
+				const lid = contact?.lid || (String(contact?.id || '').endsWith('@lid') ? contact.id : null);
+				const phone = contact?.phoneNumber || (String(contact?.id || '').endsWith('@s.whatsapp.net') ? contact.id : null);
+				if (lid && phone) {
+					global.recordLidMapping(lid, phone, contact.name || contact.notify);
+				}
+			}
+		}
+	});
 	
 	naze.ev.on('groups.update', (update) => {
 		global.__recordOguriTraffic?.();
@@ -653,6 +686,22 @@ async function startNazeBot() {
 			if (global.store.groupMetadata[n.id]) {
 				Object.assign(global.store.groupMetadata[n.id], n);
 			} else global.store.groupMetadata[n.id] = n;
+			if (n?.participants && typeof global.recordGroupParticipants === 'function') {
+				global.recordGroupParticipants(n.participants);
+			}
+		}
+	});
+
+	naze.ev.on('groups.upsert', (groups) => {
+		global.__recordOguriTraffic?.();
+		for (const g of groups) {
+			if (!g?.id) continue;
+			if (global.store.groupMetadata[g.id]) {
+				Object.assign(global.store.groupMetadata[g.id], g);
+			} else global.store.groupMetadata[g.id] = g;
+			if (g?.participants && typeof global.recordGroupParticipants === 'function') {
+				global.recordGroupParticipants(g.participants);
+			}
 		}
 	});
 	

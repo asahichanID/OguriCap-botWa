@@ -4,11 +4,11 @@
   "timezone": "Asia/Jakarta",
   "tzLabel": "WIB",
   "schedule": {
-    "Imsak": "04:08",
-    "Subuh": "04:18",
-    "Terbit": "05:35",
-    "Dzuhur": "11:41",
-    "Ashar": "14:43",
+    "Imsak": "04:07",
+    "Subuh": "04:17",
+    "Terbit": "05:34",
+    "Dzuhur": "11:40",
+    "Ashar": "14:42",
     "Maghrib": "17:46",
     "Isya": "18:56"
   },
@@ -16,5 +16,5 @@
     "120363024829384729@g.us": false
   },
   "updatedAt": 1788861879877,
-  "lastSyncedDate": "2026-10-06"
+  "lastSyncedDate": "2026-10-08"
 }

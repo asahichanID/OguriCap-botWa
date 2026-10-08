@@ -3,6 +3,10 @@ import { getYtmp4Thumb } from '../lib/mediahelper.js'
 import { handleOguriError } from '../lib/oguri-error.js'
 import { convertToMp3 } from './convertManager.js'
 import axios from 'axios'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
+import { spawn } from 'child_process'
 
 import {
   apiYoutubeDownload,
@@ -374,6 +378,134 @@ async function downloadValidTikTokAudio(candidates = []) {
   return null;
 }
 
+/**
+ * Memproses video TikTok dengan resolusi tertentu (720, 1080, 1440, 2k, 4k)
+ * dan/atau volume custom (misal 170%, 150%, 200%).
+ * Jika format/volume tidak ditentukan, buffer original HD tetap utuh tanpa disentuh sama sekali.
+ */
+async function processTikTokVideo(inputBuffer, { requestedFormat, requestedVolume } = {}) {
+  if (!requestedFormat && (!requestedVolume || requestedVolume === 1.0)) {
+    return inputBuffer;
+  }
+
+  const tmpId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const inputPath = path.join(os.tmpdir(), `tt_in_${tmpId}.mp4`);
+  const outputPath = path.join(os.tmpdir(), `tt_out_${tmpId}.mp4`);
+
+  try {
+    await fs.promises.writeFile(inputPath, inputBuffer);
+
+    let ffmpegArgs = ['-y', '-i', inputPath];
+
+    let targetRes = null;
+    if (requestedFormat) {
+      const f = String(requestedFormat).toLowerCase().replace(/p$/, '');
+      if (f === '720') targetRes = 720;
+      else if (f === '1080') targetRes = 1080;
+      else if (f === '1440' || f === '2k') targetRes = 1440;
+      else if (f === '4k' || f === '2160') targetRes = 2160;
+    }
+
+    if (targetRes) {
+      // Skala video HD sesuai orientasi (potret atau lanskap) dengan preset ultrafast & bicubic (super cepat < 3 detik)
+      ffmpegArgs.push(
+        '-vf', `scale=w='if(gt(ih,iw),${targetRes},-2)':h='if(gt(ih,iw),-2,${targetRes})':flags=bicubic`,
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-tune', 'fastdecode',
+        '-threads', '0',
+        '-flags:v', '+fast',
+        '-crf', '22',
+        '-pix_fmt', 'yuv420p'
+      );
+    } else {
+      // Pertahankan video original tanpa re-encoding (kecepatan kilat 0 ms, zero loss)
+      ffmpegArgs.push('-c:v', 'copy');
+    }
+
+    if (requestedVolume && requestedVolume !== 1.0) {
+      // Tingkatkan volume audio (misal 170% -> volume=1.7) tanpa mengompres kualitas video
+      ffmpegArgs.push(
+        '-filter:a', `volume=${requestedVolume}`,
+        '-c:a', 'aac',
+        '-b:a', '192k'
+      );
+    } else {
+      ffmpegArgs.push('-c:a', 'copy');
+    }
+
+    ffmpegArgs.push('-movflags', '+faststart', outputPath);
+
+    await new Promise((resolve, reject) => {
+      const proc = spawn('ffmpeg', ffmpegArgs);
+      let stderr = '';
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      const timer = setTimeout(() => {
+        try { proc.kill('SIGKILL'); } catch {}
+        reject(new Error('FFmpeg video timeout (20s)'));
+      }, 20000);
+
+      proc.on('close', code => {
+        clearTimeout(timer);
+        if (code === 0) resolve();
+        else reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-300)}`));
+      });
+      proc.on('error', err => {
+        clearTimeout(timer);
+        reject(err);
+      });
+    });
+
+    const outputBuffer = await fs.promises.readFile(outputPath);
+    return outputBuffer;
+  } finally {
+    try { if (fs.existsSync(inputPath)) await fs.promises.unlink(inputPath); } catch {}
+    try { if (fs.existsSync(outputPath)) await fs.promises.unlink(outputPath); } catch {}
+  }
+}
+
+/**
+ * Memproses audio TikTok MP3 dengan peningkatan volume jika diminta (misal 170%).
+ */
+async function processTikTokAudio(inputBuffer, { requestedVolume } = {}) {
+  if (!requestedVolume || requestedVolume === 1.0) {
+    return inputBuffer;
+  }
+  const tmpId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const inputPath = path.join(os.tmpdir(), `tt_ain_${tmpId}.mp3`);
+  const outputPath = path.join(os.tmpdir(), `tt_aout_${tmpId}.mp3`);
+  try {
+    await fs.promises.writeFile(inputPath, inputBuffer);
+    const ffmpegArgs = [
+      '-y', '-i', inputPath,
+      '-filter:a', `volume=${requestedVolume}`,
+      '-c:a', 'libmp3lame',
+      '-b:a', '192k',
+      outputPath
+    ];
+    await new Promise((resolve, reject) => {
+      const proc = spawn('ffmpeg', ffmpegArgs);
+      const timer = setTimeout(() => {
+        try { proc.kill('SIGKILL'); } catch {}
+        reject(new Error('FFmpeg audio timeout (20s)'));
+      }, 20000);
+      proc.on('close', code => {
+        clearTimeout(timer);
+        if (code === 0) resolve();
+        else reject(new Error(`FFmpeg audio code ${code}`));
+      });
+      proc.on('error', err => {
+        clearTimeout(timer);
+        reject(err);
+      });
+    });
+    return await fs.promises.readFile(outputPath);
+  } finally {
+    try { if (fs.existsSync(inputPath)) await fs.promises.unlink(inputPath); } catch {}
+    try { if (fs.existsSync(outputPath)) await fs.promises.unlink(outputPath); } catch {}
+  }
+}
+
 // ==============================================
 // TIKTOK - Unduh Video TikTok
 // ==============================================
@@ -381,11 +513,42 @@ export const tiktok = async (naze, m, text) => {
   if (!text)
     return m.reply(`Contoh:\n.tt https://vt.tiktok.com/xxxx`)
 
+  // Parsing parameter url, format grafis (720/1080/1440/2k/4k), dan volume %
+  const tokens = (text || '').trim().split(/\s+/).filter(Boolean);
+  const urlIndex = tokens.findIndex(t => /^https?:\/\//i.test(t));
+  if (urlIndex === -1 && !tokens[0]?.startsWith('http')) {
+    return m.reply(`Contoh:\n.tt https://vt.tiktok.com/xxxx`);
+  }
+  const targetUrl = urlIndex !== -1 ? tokens[urlIndex] : tokens[0];
+  const extraArgs = tokens.filter((_, idx) => idx !== (urlIndex !== -1 ? urlIndex : 0));
+
+  let requestedFormat = null;
+  let requestedVolume = null;
+
+  for (const arg of extraArgs) {
+    const clean = arg.toLowerCase().trim();
+    if (/^(720p?|1080p?|1440p?|2kp?|4kp?|2160p?)$/i.test(clean)) {
+      let f = clean.replace(/p$/, '');
+      if (f === '2160') f = '4k';
+      requestedFormat = f;
+    } else if (/^(\d{1,3})%$/.test(clean)) {
+      const pct = parseInt(clean, 10);
+      if (pct > 0 && pct <= 500) {
+        requestedVolume = pct / 100;
+      }
+    } else if (/^\d{1,3}$/.test(clean)) {
+      const val = parseInt(clean, 10);
+      if (val >= 50 && val <= 300) {
+        requestedVolume = val / 100;
+      }
+    }
+  }
+
   try {
     m.react('⏳')
 
     const uma = getUmaQuote()
-    const { result } = await apiTiktokScrapDownload(text, { withMetadata: true })
+    const { result } = await apiTiktokScrapDownload(targetUrl, { withMetadata: true })
     
     if (!result)
       return m.reply('❌ Video tidak ditemukan')
@@ -532,8 +695,8 @@ const photoList = Array.isArray(images)
     }
 
     const candidateUrls = [
-      result.download?.video?.nowm_hd,
-      result.download?.video?.nowm,
+      requestedFormat ? result.download?.video?.nowm_hd : result.download?.video?.nowm,
+      requestedFormat ? result.download?.video?.nowm : result.download?.video?.nowm_hd,
       result.download?.video?.wm,
       result.video?.playUrl,
       result.video?.url,
@@ -557,9 +720,7 @@ const photoList = Array.isArray(images)
 • ❤️ Likes: ${formatNumber(likes)}
 • 💬 Comments: ${formatNumber(comments)}
 • 🔄 Shares: ${formatNumber(shares)}
-• ⭐ Saved: ${formatNumber(saved)}
-
-⚡ *Status:* Media & Audio MP3 otomatis dikirim secepat kilat`
+• ⭐ Saved: ${formatNumber(saved)}`
 
     // ==============================================
     // 1. TASK PENGIRIMAN MEDIA (VIDEO / FOTO SLIDE)
@@ -632,7 +793,7 @@ const photoList = Array.isArray(images)
           // Jika seluruh kandidat scraper utama gagal, coba dari provider backup
           if (!validVideo) {
             try {
-              const backup = await apiTiktokDownload(text, { withMetadata: true })
+              const backup = await apiTiktokDownload(targetUrl, { withMetadata: true })
               const backupCandidates = [
                 backup.result?.download?.video?.nowm_hd,
                 backup.result?.download?.video?.nowm,
@@ -645,11 +806,21 @@ const photoList = Array.isArray(images)
           const cleanFileName = (result.author?.nickname || result.author?.name || 'tiktok').replace(/[^\w\s-]/gi, '').trim() || 'tiktok'
 
           if (validVideo?.buffer) {
-            // Kirimkan buffer MP4 asli yang telah tervalidasi via native WhatsApp Video Message
+            let finalVideoBuffer = validVideo.buffer;
+            if (requestedFormat || (requestedVolume && requestedVolume !== 1.0)) {
+              try {
+                finalVideoBuffer = await processTikTokVideo(validVideo.buffer, { requestedFormat, requestedVolume });
+              } catch (errProc) {
+                console.error('❌ Error processing TikTok video:', errProc.message);
+                finalVideoBuffer = validVideo.buffer;
+              }
+            }
+
+            // Kirimkan buffer MP4 asli / HD yang telah diproses via native WhatsApp Video Message
             await naze.sendMessage(
               m.chat,
               {
-                video: validVideo.buffer,
+                video: finalVideoBuffer,
                 caption,
                 mimetype: 'video/mp4',
                 fileName: `${cleanFileName}.mp4`
@@ -694,7 +865,7 @@ const photoList = Array.isArray(images)
         // Jika belum ada audio URL, coba ambil dari API backup
         if (audioCandidates.length === 0) {
           try {
-            const backup = await apiTiktokDownload(text, { withMetadata: false })
+            const backup = await apiTiktokDownload(targetUrl, { withMetadata: false })
             if (backup?.result?.download?.music) audioCandidates.push(backup.result.download.music)
             if (backup?.result?.download?.audio) audioCandidates.push(backup.result.download.audio)
           } catch {}
@@ -714,10 +885,20 @@ const photoList = Array.isArray(images)
         const validAudio = await downloadValidTikTokAudio(audioCandidates)
 
         if (validAudio?.buffer) {
+          let finalAudioBuffer = validAudio.buffer;
+          if (requestedVolume && requestedVolume !== 1.0) {
+            try {
+              finalAudioBuffer = await processTikTokAudio(validAudio.buffer, { requestedVolume });
+            } catch (errAudioProc) {
+              console.error('❌ Error processing TikTok audio:', errAudioProc.message);
+              finalAudioBuffer = validAudio.buffer;
+            }
+          }
+
           await naze.sendMessage(
             m.chat,
             {
-              audio: validAudio.buffer,
+              audio: finalAudioBuffer,
               mimetype: 'audio/mpeg',
               fileName: `${audioTitle}.mp3`,
               ptt: false
@@ -742,8 +923,12 @@ const photoList = Array.isArray(images)
       }
     }
 
-    // Jalankan media (video/foto) dan audio secara paralel (bersamaan) tanpa saling membatasi!
-    await Promise.allSettled([sendMediaTask(), sendAudioTask()])
+    // Jalankan pengiriman media secepat kilat. Jika foto slide, audio otomatis disertakan.
+    if (isPhoto) {
+      await Promise.allSettled([sendMediaTask(), sendAudioTask()]);
+    } else {
+      await sendMediaTask();
+    }
 
     await m.react('✅')
 
@@ -779,21 +964,61 @@ export const ttmp3 = async (naze, m, text) => {
     )
   }
 
+  const tokens = (text || '').trim().split(/\s+/).filter(Boolean);
+  const urlIndex = tokens.findIndex(t => /^https?:\/\//i.test(t));
+  const targetUrl = urlIndex !== -1 ? tokens[urlIndex] : tokens[0];
+  const extraArgs = tokens.filter((_, idx) => idx !== (urlIndex !== -1 ? urlIndex : 0));
+
+  let requestedVolume = null;
+  for (const arg of extraArgs) {
+    const clean = arg.toLowerCase().trim();
+    if (/^(\d{1,3})%$/.test(clean)) {
+      const pct = parseInt(clean, 10);
+      if (pct > 0 && pct <= 500) requestedVolume = pct / 100;
+    } else if (/^\d{1,3}$/.test(clean)) {
+      const val = parseInt(clean, 10);
+      if (val >= 50 && val <= 300) requestedVolume = val / 100;
+    }
+  }
+
   m.react('⏳')
 
   try {
-    const { result } = await apiTiktokScrapDownload(text, { withMetadata: false })
-    const audioUrl = result?.download?.music || result?.download?.audio || result?.music?.playUrl || result?.audio
+    const { result } = await apiTiktokScrapDownload(targetUrl, { withMetadata: false })
+    const audioCandidates = [
+      result?.download?.music,
+      result?.download?.audio,
+      result?.music?.playUrl,
+      result?.audio
+    ].filter(Boolean)
 
-    if (!audioUrl) {
+    if (audioCandidates.length === 0) {
       return m.reply('❌ Audio tidak ditemukan')
     }
 
-    await naze.sendMessage(m.chat, {
-      audio: { url: audioUrl },
-      mimetype: 'audio/mpeg',
-      fileName: `${result?.download?.music_info?.title || result?.music?.title || 'TikTok Audio'}.mp3`
-    }, { quoted: m })
+    const validAudio = await downloadValidTikTokAudio(audioCandidates)
+    let finalAudioBuffer = validAudio?.buffer;
+    if (finalAudioBuffer && requestedVolume && requestedVolume !== 1.0) {
+      try {
+        finalAudioBuffer = await processTikTokAudio(finalAudioBuffer, { requestedVolume });
+      } catch (e) {}
+    }
+
+    const audioTitle = (result?.download?.music_info?.title || result?.music?.title || 'TikTok Audio').replace(/[^\w\s-]/gi, '').trim() || 'TikTok Audio';
+
+    if (finalAudioBuffer) {
+      await naze.sendMessage(m.chat, {
+        audio: finalAudioBuffer,
+        mimetype: 'audio/mpeg',
+        fileName: `${audioTitle}.mp3`
+      }, { quoted: m })
+    } else {
+      await naze.sendMessage(m.chat, {
+        audio: { url: audioCandidates[0] },
+        mimetype: 'audio/mpeg',
+        fileName: `${audioTitle}.mp3`
+      }, { quoted: m })
+    }
 
     console.log('🎵 TTMP3')
   } catch (err) {

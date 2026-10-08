@@ -60,11 +60,14 @@ export async function getOrFetchGroupMetadata(naze, jid, store) {
 			metadataCacheTime.set(jid, now);
 			Promise.race([
 				naze.groupMetadata(jid),
-				new Promise((_, r) => setTimeout(() => r(new Error('bg_timeout')), 3000))
+				new Promise((_, r) => setTimeout(() => r(new Error('bg_timeout')), 5000))
 			]).then((data) => {
 				if (data && Array.isArray(data.participants) && data.participants.length > 0) {
 					store.groupMetadata[jid] = data;
 					metadataCacheTime.set(jid, Date.now());
+					if (typeof global.recordGroupParticipants === 'function') {
+						global.recordGroupParticipants(data.participants);
+					}
 				}
 			}).catch(() => {});
 		}
@@ -76,16 +79,19 @@ export async function getOrFetchGroupMetadata(naze, jid, store) {
 		return await metadataFetchPromises.get(jid);
 	}
 
-	// 3. Jika belum pernah ada cache sama sekali, fetch dengan batas timeout ketat (maksimal 1.5 detik)
+	// 3. Jika belum pernah ada cache sama sekali, fetch dengan batas timeout aman (4.5 detik)
 	const promise = (async () => {
 		try {
 			const data = await Promise.race([
 				naze.groupMetadata(jid),
-				new Promise((_, reject) => setTimeout(() => reject(new Error('Metadata timeout')), 1500))
+				new Promise((_, reject) => setTimeout(() => reject(new Error('Metadata timeout')), 4500))
 			]);
 			if (data && Array.isArray(data.participants) && data.participants.length > 0) {
 				store.groupMetadata[jid] = data;
 				metadataCacheTime.set(jid, Date.now());
+				if (typeof global.recordGroupParticipants === 'function') {
+					global.recordGroupParticipants(data.participants);
+				}
 				return data;
 			}
 			return cached || data || { id: jid, participants: [] };
@@ -693,10 +699,41 @@ async function MessagesUpsert(naze, message, store) {
 			}
 			if (global.db?.set?.[botNumber]?.readsw && msg.key.remoteJid === 'status@broadcast') {
 				await naze.readMessages([msg.key]).catch(() => {});
-				if (/protocolMessage/i.test(type)) await naze.sendFromOwner(global.db?.set?.[botNumber]?.owner || global.owner, 'Status dari @' + msg.key.participant.split('@')[0] + ' Telah dihapus', msg, { mentions: [msg.key.participant] }).catch(() => {});
-				if (/(audioMessage|imageMessage|videoMessage|extendedTextMessage)/i.test(type)) {
-					let keke = (type == 'extendedTextMessage') ? `Story Teks Berisi : ${msg.message.extendedTextMessage.text ? msg.message.extendedTextMessage.text : ''}` : (type == 'imageMessage') ? `Story Gambar ${msg.message.imageMessage.caption ? 'dengan Caption : ' + msg.message.imageMessage.caption : ''}` : (type == 'videoMessage') ? `Story Video ${msg.message.videoMessage.caption ? 'dengan Caption : ' + msg.message.videoMessage.caption : ''}` : (type == 'audioMessage') ? 'Story Audio' : '\nTidak diketahui cek saja langsung'
-					await naze.sendFromOwner(global.db?.set?.[botNumber]?.owner || global.owner, `Melihat story dari @${msg.key.participant.split('@')[0]}\n${keke}`, msg, { mentions: [msg.key.participant] }).catch(() => {});
+				const rawPart = msg.key.participant || msg.participant || '';
+				const resolvedJid = (naze.resolveRealJid ? naze.resolveRealJid(rawPart, store) : (naze.findJidByLid ? naze.findJidByLid(rawPart, store) : null)) || rawPart;
+				const cleanPhone = (resolvedJid && resolvedJid.includes('@s.whatsapp.net')) ? resolvedJid.split('@')[0] : (rawPart.includes('@s.whatsapp.net') ? rawPart.split('@')[0] : '');
+				const pushName = await naze.getName(resolvedJid || rawPart).catch(() => '') || '';
+				const displayName = pushName ? `${pushName}${cleanPhone ? ' (@' + cleanPhone + ')' : ''}` : (cleanPhone ? `@${cleanPhone}` : 'User');
+				const mentionList = [resolvedJid, rawPart].filter(j => j && j.includes('@s.whatsapp.net'));
+				const ownerTarget = global.db?.set?.[botNumber]?.owner || global.owner;
+
+				if (/protocolMessage/i.test(type)) {
+					await naze.sendFromOwner(ownerTarget, `🗑️ *Status dari ${displayName} Telah Dihapus*`, msg, { mentions: mentionList }).catch(() => {});
+				}
+				if (/(audioMessage|imageMessage|videoMessage)/i.test(type)) {
+					try {
+						const mediaBuffer = await naze.downloadMediaMessage(msg.message[type]).catch(() => null);
+						const caption = msg.message[type]?.caption || '';
+						const captionText = `📥 *Status WhatsApp (Intip SW)*\n👤 *Dari:* ${displayName}${caption ? '\n📝 *Caption:* ' + caption : ''}`;
+						if (mediaBuffer && mediaBuffer.length > 0) {
+							if (type === 'imageMessage') {
+								await naze.sendFromOwner(ownerTarget, { image: mediaBuffer, caption: captionText, mentions: mentionList }, msg).catch(() => {});
+							} else if (type === 'videoMessage') {
+								await naze.sendFromOwner(ownerTarget, { video: mediaBuffer, caption: captionText, mentions: mentionList }, msg).catch(() => {});
+							} else if (type === 'audioMessage') {
+								await naze.sendFromOwner(ownerTarget, { audio: mediaBuffer, mimetype: msg.message.audioMessage?.mimetype || 'audio/mp4', ptt: true, mentions: mentionList }, msg).catch(() => {});
+							}
+						} else {
+							let keke = (type === 'imageMessage') ? `Story Gambar ${caption ? 'dengan Caption : ' + caption : ''}` : (type === 'videoMessage') ? `Story Video ${caption ? 'dengan Caption : ' + caption : ''}` : 'Story Audio';
+							await naze.sendFromOwner(ownerTarget, `Melihat story dari ${displayName}\n${keke}`, msg, { mentions: mentionList }).catch(() => {});
+						}
+					} catch (eMedia) {
+						let keke = (type === 'imageMessage') ? 'Story Gambar' : (type === 'videoMessage') ? 'Story Video' : 'Story Audio';
+						await naze.sendFromOwner(ownerTarget, `Melihat story dari ${displayName}\n${keke}`, msg, { mentions: mentionList }).catch(() => {});
+					}
+				} else if (/(extendedTextMessage|conversation)/i.test(type)) {
+					const textContent = msg.message.extendedTextMessage?.text || msg.message.conversation || '';
+					await naze.sendFromOwner(ownerTarget, `📥 *Status WhatsApp (Teks)*\n👤 *Dari:* ${displayName}\n\n📝 *Isi:* \n${textContent}`, msg, { mentions: mentionList }).catch(() => {});
 				}
 			}
 		}
@@ -958,6 +995,40 @@ async function Solving(naze, store) {
 	installOutgoingGuard(naze);
 	naze.serializeM = (m) => MessagesUpsert(naze, m, store)
 	
+	global.lidPhoneRegistry ??= {
+		lidToPhone: new Map(),
+		phoneToLid: new Map(),
+		lidToName: new Map()
+	};
+
+	global.recordLidMapping = (lid, phone, name = null) => {
+		if (!lid || !phone) return;
+		const cleanLid = String(lid).replace(/[^0-9]/g, '');
+		let cleanPhone = String(phone).replace(/[^0-9]/g, '');
+		if (cleanPhone.startsWith('08')) cleanPhone = '628' + cleanPhone.slice(2);
+		if (!cleanLid || !cleanPhone || cleanLid === cleanPhone) return;
+		if (cleanPhone.length >= 8 && cleanPhone.length <= 15) {
+			const phoneJid = cleanPhone + '@s.whatsapp.net';
+			global.lidPhoneRegistry.lidToPhone.set(cleanLid, phoneJid);
+			global.lidPhoneRegistry.phoneToLid.set(cleanPhone, cleanLid + '@lid');
+			if (name && typeof name === 'string' && name.trim()) {
+				global.lidPhoneRegistry.lidToName.set(cleanLid, name.trim());
+			}
+		}
+	};
+
+	global.recordGroupParticipants = (participants) => {
+		if (!Array.isArray(participants)) return;
+		for (const p of participants) {
+			if (!p) continue;
+			const pLid = p.lid || (String(p.id || '').endsWith('@lid') ? p.id : null);
+			const pPhone = p.phoneNumber || (String(p.id || '').endsWith('@s.whatsapp.net') ? p.id : null);
+			if (pLid && pPhone) {
+				global.recordLidMapping(pLid, pPhone, p.name || p.notify);
+			}
+		}
+	};
+
 	naze.decodeJid = (jid) => {
 		if (!jid) return jid
 		if (/:\d+@/gi.test(jid)) {
@@ -965,25 +1036,108 @@ async function Solving(naze, store) {
 			return decode.user && decode.server && decode.user + '@' + decode.server || jid
 		} else return jid
 	}
-	
+
+	naze.resolveRealJid = (jid, m = null) => {
+		if (!jid || typeof jid !== 'string') return jid;
+		jid = naze.decodeJid(jid);
+		if (jid === '0@s.whatsapp.net') return jid;
+		if (naze?.user?.id && areJidsSameUser(jid, naze.decodeJid(naze.user.id))) {
+			return naze.decodeJid(naze.user.id);
+		}
+
+		// Jika sudah berakhiran @s.whatsapp.net
+		if (jid.endsWith('@s.whatsapp.net')) {
+			const clean = jid.replace(/[^0-9]/g, '');
+			// Periksa apakah ini sebenarnya LID yang salah diberi domain @s.whatsapp.net
+			if (global.lidPhoneRegistry?.lidToPhone?.has(clean)) {
+				return global.lidPhoneRegistry.lidToPhone.get(clean);
+			}
+			return jid;
+		}
+
+		const cleanLid = jid.replace(/[^0-9]/g, '');
+		if (!cleanLid) return jid;
+
+		// 1. Cek fast in-memory map
+		if (global.lidPhoneRegistry?.lidToPhone?.has(cleanLid)) {
+			return global.lidPhoneRegistry.lidToPhone.get(cleanLid);
+		}
+
+		// 2. Cek message context jika ada
+		if (m) {
+			if (m.key?.participantAlt && typeof m.key.participantAlt === 'string' && m.key.participantAlt.endsWith('@s.whatsapp.net')) {
+				const altNum = m.key.participantAlt.replace(/[^0-9]/g, '');
+				if (m.key.participant && m.key.participant.includes(cleanLid)) {
+					const res = altNum + '@s.whatsapp.net';
+					global.recordLidMapping(cleanLid, res, m.pushName);
+					return res;
+				}
+			}
+			if (m.msg?.contextInfo?.participantAlt && typeof m.msg.contextInfo.participantAlt === 'string' && m.msg.contextInfo.participantAlt.endsWith('@s.whatsapp.net')) {
+				const altNum = m.msg.contextInfo.participantAlt.replace(/[^0-9]/g, '');
+				if (m.msg.contextInfo.participant && m.msg.contextInfo.participant.includes(cleanLid)) {
+					const res = altNum + '@s.whatsapp.net';
+					global.recordLidMapping(cleanLid, res, null);
+					return res;
+				}
+			}
+			if (Array.isArray(m.metadata?.participants)) {
+				for (const p of m.metadata.participants) {
+					if (!p) continue;
+					const pLid = String(p.lid || '').replace(/[^0-9]/g, '');
+					const pId = String(p.id || '').replace(/[^0-9]/g, '');
+					const pPhone = p.phoneNumber ? String(p.phoneNumber).replace(/[^0-9]/g, '') : (p.id?.endsWith('@s.whatsapp.net') ? pId : null);
+					if ((pLid === cleanLid || pId === cleanLid) && pPhone) {
+						let cleanP = pPhone;
+						if (cleanP.startsWith('08')) cleanP = '628' + cleanP.slice(2);
+						const res = cleanP + '@s.whatsapp.net';
+						global.recordLidMapping(cleanLid, res, p.name || p.notify);
+						return res;
+					}
+				}
+			}
+		}
+
+		// 3. Panggil findJidByLid
+		const fromLid = naze.findJidByLid(jid, store, false);
+		if (fromLid && fromLid.endsWith('@s.whatsapp.net')) {
+			return fromLid;
+		}
+
+		return jid;
+	};
+
 	naze.findJidByLid = (lid, store, resolve = false) => {
 		if (!lid || typeof lid !== 'string') return resolve ? lid : null;
 
 		// Jika sudah berupa nomor telepon valid @s.whatsapp.net
 		if (lid.endsWith('@s.whatsapp.net')) {
 			let numOnly = lid.replace(/[^0-9]/g, '');
-			if (numOnly.length >= 7 && numOnly.length <= 16) return lid;
+			if (numOnly.length >= 7 && numOnly.length <= 16) {
+				if (global.lidPhoneRegistry?.lidToPhone?.has(numOnly)) {
+					return global.lidPhoneRegistry.lidToPhone.get(numOnly);
+				}
+				return lid;
+			}
 		}
 
 		const cleanLid = lid.replace(/[^0-9]/g, '');
 		if (!cleanLid) return resolve ? lid : null;
 
+		if (global.lidPhoneRegistry?.lidToPhone?.has(cleanLid)) {
+			return global.lidPhoneRegistry.lidToPhone.get(cleanLid);
+		}
+
 		const formatPhone = (val) => {
 			if (!val) return null;
 			let num = String(val).replace(/[^0-9]/g, '');
 			if (!num) return null;
+			if (num === cleanLid || String(val).endsWith('@lid')) return null;
+			if (global.lidPhoneRegistry?.lidToPhone?.has(num)) {
+				return global.lidPhoneRegistry.lidToPhone.get(num);
+			}
 			if (num.startsWith('08')) num = '628' + num.slice(2);
-			if (num.length >= 7 && num.length <= 16) {
+			if (num.length >= 8 && num.length <= 15) {
 				return num + '@s.whatsapp.net';
 			}
 			return null;
@@ -1001,7 +1155,10 @@ async function Solving(naze, store) {
 					const match = cLid === lid || cLid.includes(cleanLid) || cId === lid || cId.includes(cleanLid);
 					if (match) {
 						const res = formatPhone(contact.phoneNumber) || (cId.endsWith('@s.whatsapp.net') ? formatPhone(cId) : null);
-						if (res) return res;
+						if (res) {
+							global.recordLidMapping(cleanLid, res, contact.name || contact.notify);
+							return res;
+						}
 					}
 				}
 			}
@@ -1013,7 +1170,10 @@ async function Solving(naze, store) {
 			const direct = contacts[lid] || contacts[cleanLid + '@lid'] || contacts[cleanLid];
 			if (direct) {
 				const res = formatPhone(direct.phoneNumber) || (direct.id?.endsWith('@s.whatsapp.net') ? formatPhone(direct.id) : null);
-				if (res) return res;
+				if (res) {
+					global.recordLidMapping(cleanLid, res, direct.name || direct.notify);
+					return res;
+				}
 			}
 
 			for (const [key, contact] of Object.entries(contacts)) {
@@ -1023,7 +1183,10 @@ async function Solving(naze, store) {
 				const match = cLid === lid || cLid.includes(cleanLid) || cId === lid || cId.includes(cleanLid);
 				if (match) {
 					const res = formatPhone(contact.phoneNumber) || (cId.endsWith('@s.whatsapp.net') ? formatPhone(cId) : null);
-					if (res) return res;
+					if (res) {
+						global.recordLidMapping(cleanLid, res, contact.name || contact.notify);
+						return res;
+					}
 				}
 			}
 		}
@@ -1034,7 +1197,10 @@ async function Solving(naze, store) {
 				if (!uData) continue;
 				if (uData.lid === lid || (uData.lid && uData.lid.includes(cleanLid))) {
 					const res = formatPhone(userJid);
-					if (res) return res;
+					if (res) {
+						global.recordLidMapping(cleanLid, res, uData.name);
+						return res;
+					}
 				}
 			}
 		}
@@ -1048,6 +1214,10 @@ async function Solving(naze, store) {
 		const cleanPhone = jid.replace(/[^0-9]/g, '');
 		if (!cleanPhone) return null;
 
+		if (global.lidPhoneRegistry?.phoneToLid?.has(cleanPhone)) {
+			return global.lidPhoneRegistry.phoneToLid.get(cleanPhone);
+		}
+
 		const groupMeta = store?.groupMetadata;
 		if (groupMeta) {
 			for (const g of Object.values(groupMeta)) {
@@ -1056,7 +1226,9 @@ async function Solving(naze, store) {
 					if (!contact) continue;
 					const cPhone = String(contact.phoneNumber || contact.id || '').replace(/[^0-9]/g, '');
 					if (cPhone === cleanPhone && contact.lid) {
-						return contact.lid.endsWith('@lid') ? contact.lid : contact.lid + '@lid';
+						const lidRes = contact.lid.endsWith('@lid') ? contact.lid : contact.lid + '@lid';
+						global.recordLidMapping(lidRes, jid);
+						return lidRes;
 					}
 				}
 			}
@@ -1067,26 +1239,35 @@ async function Solving(naze, store) {
 	naze.getName = (jid, withoutContact = false) => {
 		let id = naze.decodeJid(jid);
 		if (!id) return '';
-		if (id.endsWith('@lid')) {
-			const resolved = naze.findJidByLid(id, store, false);
-			if (resolved) id = resolved;
+		if (id.endsWith('@lid') || !id.includes('@')) {
+			const resolved = naze.resolveRealJid(id, null);
+			if (resolved && resolved.endsWith('@s.whatsapp.net')) id = resolved;
 		}
 
 		if (id.endsWith('@g.us')) {
-			const groupInfo = store.contacts[id] || (store.groupMetadata[id] ? store.groupMetadata[id] : (store.groupMetadata[id] = naze.groupMetadata(id))) || {};
-			return Promise.resolve(groupInfo.name || groupInfo.subject || PhoneNumber('+' + id.replace('@g.us', '')).getNumber('international'));
+			const groupInfo = store?.contacts?.[id] || store?.groupMetadata?.[id] || {};
+			return Promise.resolve(groupInfo.name || groupInfo.subject || 'Group');
 		} else {
 			if (id === '0@s.whatsapp.net') {
 				return 'WhatsApp';
 			}
-			const contactInfo = store.contacts[id] || {};
+			const cleanNum = id.replace(/[^0-9]/g, '');
+			const contactInfo = store?.contacts?.[id] || store?.contacts?.[cleanNum + '@s.whatsapp.net'] || store?.contacts?.[cleanNum + '@lid'] || {};
 			let name = contactInfo.name || contactInfo.subject || contactInfo.verifiedName || contactInfo.notify;
 			if (!name && global.db?.users?.[id]?.name) {
 				name = global.db.users[id].name;
 			}
+			if (!name && global.lidPhoneRegistry?.lidToName?.has(cleanNum)) {
+				name = global.lidPhoneRegistry.lidToName.get(cleanNum);
+			}
 			if (withoutContact) return name || '';
-			const cleanNum = id.replace('@s.whatsapp.net', '');
-			return name || PhoneNumber('+' + cleanNum).getNumber('international') || cleanNum;
+			// JANGAN PERNAH parsing nomor LID sebagai international phone number (agar tidak muncul nomor palsu negara lain)
+			if (id.endsWith('@lid') || (!id.endsWith('@s.whatsapp.net') && cleanNum.length > 13 && !cleanNum.startsWith('62'))) {
+				return name || 'User';
+			}
+			const pn = PhoneNumber('+' + cleanNum);
+			const formattedIntl = pn?.number?.international || (typeof pn?.getNumber === 'function' ? pn.getNumber('international') : null);
+			return name || formattedIntl || cleanNum;
 		}
 	};
 
@@ -1095,7 +1276,7 @@ async function Solving(naze, store) {
 	naze.sendMessage = async (jid, content, options = {}) => {
 		let targetJid = jid;
 		if (targetJid && typeof targetJid === 'string' && targetJid.endsWith('@lid')) {
-			targetJid = naze.findJidByLid(targetJid, store, false) || targetJid;
+			targetJid = naze.resolveRealJid(targetJid, null) || targetJid;
 		}
 
 		let opts = { ...options };
@@ -1103,32 +1284,49 @@ async function Solving(naze, store) {
 			let q = { ...opts.quoted };
 			if (q.key) {
 				q.key = { ...q.key };
-				let part = q.key.participant || q.participant;
-				if (part && typeof part === 'string' && part.endsWith('@lid')) {
-					const real = naze.findJidByLid(part, store, false);
-					if (real) {
-						q.key.participant = real;
-						q.participant = real;
+				if (q.key.fromMe || q.fromMe) {
+					q.key.participant = naze.decodeJid(naze.user.id);
+					q.participant = naze.decodeJid(naze.user.id);
+				} else {
+					let part = q.key.participant || q.participant;
+					if (part) {
+						const real = naze.resolveRealJid(part, null);
+						if (real && real.endsWith('@s.whatsapp.net')) {
+							q.key.participant = real;
+							q.participant = real;
+						}
 					}
 				}
 			}
-			if (q.participant && typeof q.participant === 'string' && q.participant.endsWith('@lid')) {
-				const real = naze.findJidByLid(q.participant, store, false);
-				if (real) q.participant = real;
+			if (q.participant) {
+				const real = naze.resolveRealJid(q.participant, null);
+				if (real && real.endsWith('@s.whatsapp.net')) q.participant = real;
 			}
 			opts.quoted = q;
 		}
 
 		if (content && typeof content === 'object') {
+			if (content.contextInfo) {
+				content.contextInfo = { ...content.contextInfo };
+				if (content.contextInfo.participant) {
+					const real = naze.resolveRealJid(content.contextInfo.participant, null);
+					if (real && real.endsWith('@s.whatsapp.net')) {
+						content.contextInfo.participant = real;
+					}
+				}
+			}
 			let text = content.text || content.caption;
 			if (typeof text === 'string') {
 				const tagMatches = [...text.matchAll(/@(\d{5,20})/g)];
 				for (const match of tagMatches) {
 					const tagNum = match[1];
-					const phoneFromLid = naze.findJidByLid(tagNum + '@lid', store, false);
-					if (phoneFromLid) {
+					const phoneFromLid = naze.resolveRealJid(tagNum + '@lid', null);
+					if (phoneFromLid && phoneFromLid.endsWith('@s.whatsapp.net')) {
 						const realCleanPhone = phoneFromLid.split('@')[0];
 						text = text.replaceAll(`@${tagNum}`, `@${realCleanPhone}`);
+					} else if (global.lidPhoneRegistry?.lidToName?.has(tagNum)) {
+						const userName = global.lidPhoneRegistry.lidToName.get(tagNum);
+						text = text.replaceAll(`@${tagNum}`, `${userName}`);
 					}
 				}
 				if (content.text) content.text = text;
@@ -1137,16 +1335,18 @@ async function Solving(naze, store) {
 
 			if (Array.isArray(content.mentions)) {
 				content.mentions = content.mentions.map(m => {
-					if (typeof m === 'string' && m.endsWith('@lid')) {
-						return naze.findJidByLid(m, store, false) || m;
+					if (typeof m === 'string') {
+						const real = naze.resolveRealJid(m, null);
+						if (real && real.endsWith('@s.whatsapp.net')) return real;
 					}
 					return m;
 				});
 			}
 			if (content.contextInfo && Array.isArray(content.contextInfo.mentionedJid)) {
 				content.contextInfo.mentionedJid = content.contextInfo.mentionedJid.map(m => {
-					if (typeof m === 'string' && m.endsWith('@lid')) {
-						return naze.findJidByLid(m, store, false) || m;
+					if (typeof m === 'string') {
+						const real = naze.resolveRealJid(m, null);
+						if (real && real.endsWith('@s.whatsapp.net')) return real;
 					}
 					return m;
 				});
@@ -1805,28 +2005,26 @@ async function Serialize(naze, msg, store) {
 		}
 		m.sender = naze.decodeJid(rawSender);
 
+		// Catat mapping dua arah dari key jika ada
+		if (m.key?.participant && m.key?.participantAlt) {
+			const p1 = String(m.key.participant);
+			const p2 = String(m.key.participantAlt);
+			if (p1.endsWith('@lid') && p2.endsWith('@s.whatsapp.net')) global.recordLidMapping?.(p1, p2, m.pushName);
+			else if (p2.endsWith('@lid') && p1.endsWith('@s.whatsapp.net')) global.recordLidMapping?.(p2, p1, m.pushName);
+		}
+
 		if (m.isGroup) {
 			const metadata = await getOrFetchGroupMetadata(naze, m.chat, store);
 			m.metadata = metadata || {};
 			m.metadata.size = (m.metadata.participants || []).length;
+			if (typeof global.recordGroupParticipants === 'function' && Array.isArray(m.metadata.participants)) {
+				global.recordGroupParticipants(m.metadata.participants);
+			}
 
-			// Jika m.sender masih LID atau belum berakhiran @s.whatsapp.net, cari nomor telepon aslinya
-			if (m.sender.endsWith('@lid') || !m.sender.includes('@')) {
-				const participant = m.metadata.participants?.find(a => 
-					a.id === m.sender || 
-					a.lid === m.sender || 
-					a.phoneNumber === m.sender ||
-					(m.sender && a.id?.includes(m.sender.split('@')[0]))
-				);
-				let phone = participant?.phoneNumber || (participant?.id?.endsWith('@s.whatsapp.net') ? participant.id : null);
-				if (!phone) {
-					phone = naze.findJidByLid(m.sender, store, false);
-				}
-				if (phone) {
-					let cleanNum = String(phone).replace(/[^0-9]/g, '');
-					if (cleanNum.startsWith('08')) cleanNum = '628' + cleanNum.slice(2);
-					m.sender = cleanNum + '@s.whatsapp.net';
-				}
+			// Selesaikan m.sender ke nomor telepon asli @s.whatsapp.net
+			const resolvedSender = naze.resolveRealJid(m.sender, m);
+			if (resolvedSender && resolvedSender.endsWith('@s.whatsapp.net')) {
+				m.sender = resolvedSender;
 			}
 
 			// Pastikan m.key.participant dan m.participant selalu nomor telepon canonical
@@ -1856,14 +2054,12 @@ async function Serialize(naze, msg, store) {
 			m.isAdmin = m.admins.some(a => a.id === m.sender || a.phoneNumber === m.sender || (m.sender && a.id?.includes(m.sender.split('@')[0])));
 			m.isBotAdmin = m.admins.some(a => [botNumber, botLid].includes(a.id) || [botNumber, botLid].includes(a.phoneNumber) || (botNumber && a.id?.includes(botNumber.split('@')[0])));
 		} else {
-			// Private chat: jika sender adalah LID, selesaikan ke nomor asli
-			if (m.sender.endsWith('@lid')) {
-				const phone = naze.findJidByLid(m.sender, store, false);
-				if (phone) {
-					m.sender = phone;
-					m.chat = phone;
-					m.key.remoteJid = phone;
-				}
+			// Private chat: selesaikan sender ke nomor telepon asli
+			const resolvedSender = naze.resolveRealJid(m.sender, m);
+			if (resolvedSender && resolvedSender.endsWith('@s.whatsapp.net')) {
+				m.sender = resolvedSender;
+				m.chat = resolvedSender;
+				m.key.remoteJid = resolvedSender;
 			}
 			if (m.sender && m.sender.endsWith('@s.whatsapp.net')) {
 				m.key.participant = m.sender;
@@ -1929,23 +2125,20 @@ async function Serialize(naze, msg, store) {
 		if (m.quoted) {
 			let qMsg = JSON.parse(JSON.stringify(m.msg?.contextInfo?.quotedMessage));
 			let qParticipant = m.msg?.contextInfo?.participant;
-			if (qParticipant && qParticipant.endsWith('@lid')) {
-				const resolved = naze.findJidByLid(qParticipant, store, false) 
-					|| m?.metadata?.participants?.find(a => a.id === qParticipant || a.lid === qParticipant)?.phoneNumber;
-				if (resolved) {
-					let cleanP = String(resolved).replace(/[^0-9]/g, '');
-					if (cleanP.startsWith('08')) cleanP = '628' + cleanP.slice(2);
-					qParticipant = cleanP + '@s.whatsapp.net';
+			if (qParticipant) {
+				const resolved = naze.resolveRealJid(qParticipant, m);
+				if (resolved && resolved.endsWith('@s.whatsapp.net')) {
+					qParticipant = resolved;
 					if (m.msg?.contextInfo) m.msg.contextInfo.participant = qParticipant;
 				}
 			}
-			const resolvedQuotedSender = naze.decodeJid(qParticipant || m.msg.contextInfo.participant);
+			const resolvedQuotedSender = naze.decodeJid(qParticipant || m.msg?.contextInfo?.participant);
 			m.quoted = {
 				...qMsg,
 				message: extractMessageContent(qMsg) || qMsg,
 				type: getContentType(qMsg) || Object.keys(qMsg)[0],
-				id: m.msg.contextInfo.stanzaId,
-				chat: m.msg.contextInfo.remoteJid || m.chat,
+				id: m.msg?.contextInfo?.stanzaId,
+				chat: m.msg?.contextInfo?.remoteJid || m.chat,
 				sender: resolvedQuotedSender,
 				fromMe: areJidsSameUser(resolvedQuotedSender, naze.decodeJid(naze.user.id)),
 				text: qMsg?.conversation || qMsg?.caption || '',
@@ -2032,19 +2225,25 @@ async function Serialize(naze, msg, store) {
 			safeQuoted = { ...safeQuoted };
 			if (safeQuoted.key) {
 				safeQuoted.key = { ...safeQuoted.key };
-				let part = safeQuoted.key.participant || safeQuoted.participant;
-				if (part && typeof part === 'string' && part.endsWith('@lid')) {
-					const real = naze.findJidByLid(part, store, false) || (m.sender && !m.sender.endsWith('@lid') ? m.sender : null);
-					if (real) {
-						safeQuoted.key.participant = real;
+			}
+			if (safeQuoted === m || (!safeQuoted.key?.fromMe && !safeQuoted.fromMe)) {
+				const userTarget = (m.sender && m.sender.endsWith('@s.whatsapp.net')) ? m.sender : (naze.resolveRealJid(m.sender, m) || m.sender);
+				if (userTarget && userTarget.endsWith('@s.whatsapp.net')) {
+					if (safeQuoted.key) safeQuoted.key.participant = userTarget;
+					safeQuoted.participant = userTarget;
+				}
+			} else if (safeQuoted.key?.fromMe || safeQuoted.fromMe) {
+				const botTarget = naze.decodeJid(naze.user.id);
+				if (safeQuoted.key) safeQuoted.key.participant = botTarget;
+				safeQuoted.participant = botTarget;
+			} else {
+				let part = safeQuoted.key?.participant || safeQuoted.participant;
+				if (part) {
+					const real = naze.resolveRealJid(part, m);
+					if (real && real.endsWith('@s.whatsapp.net')) {
+						if (safeQuoted.key) safeQuoted.key.participant = real;
 						safeQuoted.participant = real;
 					}
-				}
-			}
-			if (safeQuoted.participant && typeof safeQuoted.participant === 'string' && safeQuoted.participant.endsWith('@lid')) {
-				const real = naze.findJidByLid(safeQuoted.participant, store, false) || (m.sender && !m.sender.endsWith('@lid') ? m.sender : null);
-				if (real) {
-					safeQuoted.participant = real;
 				}
 			}
 		}
@@ -2053,20 +2252,21 @@ async function Serialize(naze, msg, store) {
 		let textBody = typeof content === 'string' ? content : (content.text || content.caption || '');
 		const providedMentions = Array.isArray(mentions) ? mentions : [];
 		const resolvedProvidedMentions = providedMentions.map(men => {
-			if (typeof men === 'string' && men.endsWith('@lid')) {
-				return naze.findJidByLid(men, store, false) || men;
-			}
-			return men;
+			const resolved = naze.resolveRealJid(men, m);
+			return (resolved && resolved.endsWith('@s.whatsapp.net')) ? resolved : men;
 		});
 
 		// Ganti tag nomor LID di teks menjadi nomor telepon asli pengguna
 		const tagMatches = [...textBody.matchAll(/@(\d{5,20})/g)];
 		for (const match of tagMatches) {
 			const tagNum = match[1];
-			const phoneFromLid = naze.findJidByLid(tagNum + '@lid', store, false);
-			if (phoneFromLid) {
+			const phoneFromLid = naze.resolveRealJid(tagNum + '@lid', m);
+			if (phoneFromLid && phoneFromLid.endsWith('@s.whatsapp.net')) {
 				const realCleanPhone = phoneFromLid.split('@')[0];
 				textBody = textBody.replaceAll(`@${tagNum}`, `@${realCleanPhone}`);
+			} else if (global.lidPhoneRegistry?.lidToName?.has(tagNum)) {
+				const userName = global.lidPhoneRegistry.lidToName.get(tagNum);
+				textBody = textBody.replaceAll(`@${tagNum}`, `${userName}`);
 			}
 		}
 
@@ -2079,10 +2279,8 @@ async function Serialize(naze, msg, store) {
 
 		const extractedMentions = [...textBody.matchAll(/@(\d{5,16})/g)].map(v => v[1] + '@s.whatsapp.net');
 		const fixMentions = [...new Set([...resolvedProvidedMentions, ...extractedMentions])].map(j => {
-			if (typeof j === 'string' && j.endsWith('@lid')) {
-				return naze.findJidByLid(j, store, false) || j;
-			}
-			return j;
+			const resolved = naze.resolveRealJid(j, m);
+			return (resolved && resolved.endsWith('@s.whatsapp.net')) ? resolved : j;
 		});
 
 		if (typeof content === 'object') {

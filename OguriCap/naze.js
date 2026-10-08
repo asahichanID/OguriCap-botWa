@@ -265,24 +265,24 @@ const naze = async (naze, m, msg, store) => {
 		const budy = (typeof m.text == 'string' ? m.text : '')
 
 		// Pastikan sender dan quoted.sender selalu nomor telepon asli canonical (@s.whatsapp.net), bukan format LID
-		if (m.sender && m.sender.endsWith('@lid') && typeof naze.findJidByLid === 'function') {
-			const realJid = naze.findJidByLid(m.sender, store, false);
-			if (realJid) {
+		if (m.sender && (m.sender.endsWith('@lid') || !m.sender.endsWith('@s.whatsapp.net'))) {
+			const realJid = typeof naze.resolveRealJid === 'function' ? naze.resolveRealJid(m.sender, m) : (typeof naze.findJidByLid === 'function' ? naze.findJidByLid(m.sender, store, false) : null);
+			if (realJid && realJid.endsWith('@s.whatsapp.net')) {
 				m.sender = realJid;
 				if (m.key) m.key.participant = realJid;
 				m.participant = realJid;
 			}
 		}
-		if (m.quoted && m.quoted.sender && m.quoted.sender.endsWith('@lid') && typeof naze.findJidByLid === 'function') {
-			const realJid = naze.findJidByLid(m.quoted.sender, store, false);
-			if (realJid) {
+		if (m.quoted && m.quoted.sender && (m.quoted.sender.endsWith('@lid') || !m.quoted.sender.endsWith('@s.whatsapp.net'))) {
+			const realJid = typeof naze.resolveRealJid === 'function' ? naze.resolveRealJid(m.quoted.sender, m) : (typeof naze.findJidByLid === 'function' ? naze.findJidByLid(m.quoted.sender, store, false) : null);
+			if (realJid && realJid.endsWith('@s.whatsapp.net')) {
 				m.quoted.sender = realJid;
 				if (m.quoted.key) m.quoted.key.participant = realJid;
 				m.quoted.participant = realJid;
 			}
 		}
-		if (!m.pushName || m.pushName === 'undefined') {
-			m.pushName = store?.contacts?.[m.sender]?.name || store?.contacts?.[m.sender]?.notify || global.db?.users?.[m.sender]?.name || '';
+		if (!m.pushName || m.pushName === 'undefined' || m.pushName === 'Trainer') {
+			m.pushName = store?.contacts?.[m.sender]?.name || store?.contacts?.[m.sender]?.notify || global.db?.users?.[m.sender]?.name || global.lidPhoneRegistry?.lidToName?.get(m.sender?.split('@')[0]) || '';
 		}
 
 		const senderNum = m.sender ? m.sender.split('@')[0] : '';
@@ -320,7 +320,15 @@ const naze = async (naze, m, msg, store) => {
             : (listMatch || '');
 
 		const isCmd = Boolean(prefix && body.startsWith(prefix));
-		const isOwnerEval = isCreator && (body.startsWith('>') || body.startsWith('<') || body.startsWith('$'));
+		const isCodeEvalStr = (str) => {
+			if (!str || typeof str !== 'string') return false;
+			const trimmed = str.trim();
+			if (!trimmed) return false;
+			const jsKeywords = /\b(await|async|return|const|let|var|function|naze|global|console|process|Math|JSON|Object|Array|db|m|store|this|new|typeof|delete|import|export|true|false|null|undefined|set)\b/;
+			const jsSymbols = /[=;{}()[\]+\-*/%&|^~<>!?:]/;
+			return jsKeywords.test(trimmed) || jsSymbols.test(trimmed) || /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(trimmed) || /^\d+(\.\d+)?$/.test(trimmed);
+		};
+		const isOwnerEval = isCreator && (body.startsWith('>>') || body.startsWith('=>') || (body.startsWith('>') && isCodeEvalStr(body.slice(1))) || (body.startsWith('<') && isCodeEvalStr(body.slice(1))) || body.startsWith('$'));
 
 		// 🛡️ CRITICAL GUARD: Cegah bot merespons pesan keluar dari bot itu sendiri (anti self-reply loop)
 		if (isBotSentMessage(m.id || m.key?.id)) {
@@ -1845,6 +1853,48 @@ break
 				m.reply(txt)
 			}
 			break
+			case 'sw': case 'getsw': case 'curisw': case 'intipsw': case 'statussw': {
+				try {
+					if (!m.quoted) {
+						return m.reply(`*📱 FITUR INTIP STATUS WA*\n\nReply pesan status / story WhatsApp dengan perintah *${prefix + command}* untuk mengunduh dan menyimpan medianya langsung!`);
+					}
+					m.react('⏳');
+					const qSender = quoted.sender || m.quoted.sender || '';
+					const realSender = (naze.resolveRealJid ? naze.resolveRealJid(qSender, store) : (naze.findJidByLid ? naze.findJidByLid(qSender, store) : null)) || qSender;
+					const senderName = await naze.getName(realSender || qSender).catch(() => '') || '';
+					const senderPhone = (realSender && realSender.includes('@s.whatsapp.net')) ? realSender.split('@')[0] : (qSender.includes('@s.whatsapp.net') ? qSender.split('@')[0] : '');
+					const senderTitle = senderName ? `${senderName}${senderPhone ? ` (@${senderPhone})` : ''}` : (senderPhone ? `@${senderPhone}` : 'User');
+					const captionInfo = `📥 *Status WA Berhasil Diambil*\n👤 *Dari:* ${senderTitle}${quoted.caption ? `\n📝 *Caption:* ${quoted.caption}` : ''}`;
+					const mentions = [realSender, qSender].filter(j => j && j.includes('@s.whatsapp.net'));
+
+					if (quoted.isMedia) {
+						let media = await naze.downloadAndSaveMediaMessage(qmsg);
+						try {
+							if (/image/.test(quoted.mime)) {
+								await naze.sendMessage(m.chat, { image: { url: media }, caption: captionInfo, mentions }, { quoted: m });
+							} else if (/video/.test(quoted.mime)) {
+								await naze.sendMessage(m.chat, { video: { url: media }, caption: captionInfo, mentions }, { quoted: m });
+							} else if (/audio/.test(quoted.mime)) {
+								await naze.sendMessage(m.chat, { audio: { url: media }, mimetype: quoted.mime || 'audio/mp4', ptt: true }, { quoted: m });
+							} else {
+								await naze.sendMessage(m.chat, { document: { url: media }, mimetype: quoted.mime, fileName: `status_${Date.now()}` }, { quoted: m });
+							}
+							m.react('✅');
+						} finally {
+							if (fs.existsSync(media)) fs.unlinkSync(media);
+						}
+					} else if (quoted.text || m.quoted.body) {
+						await m.reply(`📥 *Status WA (Teks)*\n👤 *Dari:* ${senderTitle}\n\n📝 *Isi:* \n${quoted.text || m.quoted.body}`);
+						m.react('✅');
+					} else {
+						m.reply('❌ Tidak dapat mendeteksi media atau teks dari status tersebut.');
+					}
+				} catch (e) {
+					console.error('Error intip status:', e);
+					m.reply('❌ Gagal mengambil status WA.');
+				}
+			}
+			break
 			case 'upsw': {
 				if (!isCreator) return m.reply(global.mess.owner)
 				const statusJidList = Object.keys(db.users)
@@ -3217,17 +3267,25 @@ break
 				if (!m.isBotAdmin) return m.reply(global.mess.botAdmin)
 				let setv = pickRandom(global.listv)
 				let teks = `*Tag All*\n\n*Pesan :* ${q ? q : ''}\n\n`
-				for (let mem of m.metadata.participants) {
-					teks += `${setv} @${mem.phoneNumber.split('@')[0]}\n`
+				const participantsList = Array.isArray(m.metadata?.participants) ? m.metadata.participants : [];
+				const allMentions = [];
+				for (let mem of participantsList) {
+					const resolvedJid = mem.phoneNumber ? (mem.phoneNumber.includes('@') ? mem.phoneNumber : mem.phoneNumber + '@s.whatsapp.net') : (mem.id?.endsWith('@s.whatsapp.net') ? mem.id : (naze.resolveRealJid?.(mem.lid || mem.id, m) || mem.id));
+					if (resolvedJid) {
+						allMentions.push(resolvedJid);
+						teks += `${setv} @${resolvedJid.split('@')[0]}\n`;
+					}
 				}
-				await m.reply(teks, { mentions: m.metadata.participants.map(a => a.phoneNumber) })
+				await m.reply(teks, { mentions: allMentions })
 			}
 			break
 			case 'hidetag': case 'h': {
 				if (!m.isGroup) return m.reply(global.mess.group)
 				if (!m.isAdmin) return m.reply(global.mess.admin)
 				if (!m.isBotAdmin) return m.reply(global.mess.botAdmin)
-				await m.reply(q ? q : '', { mentions: m.metadata.participants.map(a => a.phoneNumber) })
+				const participantsList = Array.isArray(m.metadata?.participants) ? m.metadata.participants : [];
+				const allMentions = participantsList.map(mem => mem.phoneNumber ? (mem.phoneNumber.includes('@') ? mem.phoneNumber : mem.phoneNumber + '@s.whatsapp.net') : (mem.id?.endsWith('@s.whatsapp.net') ? mem.id : (naze.resolveRealJid?.(mem.lid || mem.id, m) || mem.id))).filter(Boolean);
+				await m.reply(q ? q : '', { mentions: allMentions })
 			}
 			break
 			case 'totag': {
@@ -3236,7 +3294,9 @@ break
 				if (!m.isBotAdmin) return m.reply(global.mess.botAdmin)
 				if (!m.quoted) return m.reply(global.mess.quoted)
 				delete m.quoted.chat
-				await naze.sendMessage(m.chat, { forward: m.quoted.fakeObj(), mentions: m.metadata.participants.map(a => a.phoneNumber) })
+				const participantsList = Array.isArray(m.metadata?.participants) ? m.metadata.participants : [];
+				const allMentions = participantsList.map(mem => mem.phoneNumber ? (mem.phoneNumber.includes('@') ? mem.phoneNumber : mem.phoneNumber + '@s.whatsapp.net') : (mem.id?.endsWith('@s.whatsapp.net') ? mem.id : (naze.resolveRealJid?.(mem.lid || mem.id, m) || mem.id))).filter(Boolean);
+				await naze.sendMessage(m.chat, { forward: m.quoted.fakeObj(), mentions: allMentions })
 			}
 			break
 			case 'listonline': case 'liston': {
@@ -5134,8 +5194,10 @@ break
 					let business = await naze.getBusinessProfile(num)
 					let format = PhoneNum(`+${num.split('@')[0]}`)
 					let regionNames = new Intl.DisplayNames(['en'], { type: 'region' });
-					let country = regionNames.of(format.getRegionCode('international'));
-					let wea = `WhatsApp Stalk\n\n*° Country :* ${country.toUpperCase()}\n*° Name :* ${name ? name : '-'}\n*° Format Number :* ${format.getNumber('international')}\n*° Url Api :* wa.me/${num.split('@')[0]}\n*° Mentions :* @${num.split('@')[0]}\n*° Status :* ${bio?.status || '-'}\n*° Date Status :* ${bio?.setAt ? moment(bio.setAt.toDateString()).locale(global.locale).format('LL') : '-'}\n\n${business ? `*WhatsApp Business Stalk*\n\n*° BusinessId :* ${business.wid}\n*° Website :* ${business.website ? business.website : '-'}\n*° Email :* ${business.email ? business.email : '-'}\n*° Category :* ${business.category}\n*° Address :* ${business.address ? business.address : '-'}\n*° Timeone :* ${business.business_hours.timezone ? business.business_hours.timezone : '-'}\n*° Description* : ${business.description ? business.description : '-'}` : '*Standard WhatsApp Account*'}`
+					let countryCode = format.getRegionCode ? format.getRegionCode('international') : format.regionCode;
+					let country = countryCode ? regionNames.of(countryCode) : 'INDONESIA';
+					let intlPhone = format?.number?.international || (typeof format?.getNumber === 'function' ? format.getNumber('international') : `+${num.split('@')[0]}`);
+					let wea = `WhatsApp Stalk\n\n*° Country :* ${(country || 'ID').toUpperCase()}\n*° Name :* ${name ? name : '-'}\n*° Format Number :* ${intlPhone}\n*° Url Api :* wa.me/${num.split('@')[0]}\n*° Mentions :* @${num.split('@')[0]}\n*° Status :* ${bio?.status || '-'}\n*° Date Status :* ${bio?.setAt ? moment(bio.setAt.toDateString()).locale(global.locale).format('LL') : '-'}\n\n${business ? `*WhatsApp Business Stalk*\n\n*° BusinessId :* ${business.wid}\n*° Website :* ${business.website ? business.website : '-'}\n*° Email :* ${business.email ? business.email : '-'}\n*° Category :* ${business.category}\n*° Address :* ${business.address ? business.address : '-'}\n*° Timeone :* ${business.business_hours.timezone ? business.business_hours.timezone : '-'}\n*° Description* : ${business.description ? business.description : '-'}` : '*Standard WhatsApp Account*'}`
 					img ? await naze.sendMessage(m.chat, { image: { url: img }, caption: wea, mentions: [num] }, { quoted: m }) : m.reply(wea)
 				} catch (e) {
 					m.reply('Nomer Tidak ditemukan!')
@@ -7421,34 +7483,58 @@ break
 			}
 			break
 
-			default:
-			if (budy.startsWith('>')) {
-				if (!isCreator) return
+			default: {
+			const isCodeCandidate = (str) => {
+				if (!str || typeof str !== 'string') return false;
+				const trimmed = str.trim();
+				if (!trimmed) return false;
+				// Deteksi keyword atau simbol khas JavaScript
+				const jsKeywords = /\b(await|async|return|const|let|var|function|naze|global|console|process|Math|JSON|Object|Array|db|m|store|this|new|typeof|delete|import|export|true|false|null|undefined|set)\b/;
+				const jsSymbols = /[=;{}()[\]+\-*/%&|^~<>!?:]/;
+				if (jsKeywords.test(trimmed) || jsSymbols.test(trimmed)) return true;
+				// Token tunggal identifier (misal: "process" atau "m")
+				if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(trimmed)) return true;
+				// Nilai angka murni (misal: "123")
+				if (/^\d+(\.\d+)?$/.test(trimmed)) return true;
+				return false;
+			};
+
+			if (budy.startsWith('>>') || budy.startsWith('=>') || (budy.startsWith('>') && isCodeCandidate(budy.slice(1)))) {
+				if (!isCreator) return;
 				try {
-					let evaled = await eval(budy.slice(2))
-					if (typeof evaled !== 'string') evaled = util.inspect(evaled)
-					await m.reply(evaled)
+					const codeToEval = budy.startsWith('>>') ? budy.slice(2) : (budy.startsWith('=>') ? budy.slice(2) : (budy.startsWith('> ') ? budy.slice(2) : budy.slice(1)));
+					let evaled = await eval(codeToEval);
+					if (typeof evaled !== 'string') evaled = util.inspect(evaled);
+					await m.reply(evaled);
 				} catch (err) {
-					await m.reply(String(err))
+					const isSyntaxErr = err instanceof SyntaxError || err?.name === 'SyntaxError';
+					if (!isSyntaxErr || isCodeCandidate(budy.slice(1))) {
+						await m.reply(String(err));
+					}
 				}
 			}
-			if (budy.startsWith('<')) {
-				if (!isCreator) return
+			if (budy.startsWith('<') && isCodeCandidate(budy.slice(1))) {
+				if (!isCreator) return;
 				try {
-					let evaled = await eval(`(async () => { ${budy.slice(2)} })()`)
-					if (typeof evaled !== 'string') evaled = util.inspect(evaled)
-					await m.reply(evaled)
+					const codeToEval = budy.startsWith('< ') ? budy.slice(2) : budy.slice(1);
+					let evaled = await eval(`(async () => { ${codeToEval} })()`);
+					if (typeof evaled !== 'string') evaled = util.inspect(evaled);
+					await m.reply(evaled);
 				} catch (err) {
-					await m.reply(String(err))
+					const isSyntaxErr = err instanceof SyntaxError || err?.name === 'SyntaxError';
+					if (!isSyntaxErr || isCodeCandidate(budy.slice(1))) {
+						await m.reply(String(err));
+					}
 				}
 			}
 			if (budy.startsWith('$')) {
-				if (!isCreator) return
-				if (!text) return
+				if (!isCreator) return;
+				if (!text) return;
 				exec(budy.slice(2), (err, stdout) => {
-					if (err) return m.reply(`${err}`)
-					if (stdout) return m.reply(stdout)
-				})
+					if (err) return m.reply(`${err}`);
+					if (stdout) return m.reply(stdout);
+				});
+			}
 			}
 			if ((!isCmd || isCreator) && budy.toLowerCase() != undefined) {
 				if (m.chat.endsWith('broadcast')) return
